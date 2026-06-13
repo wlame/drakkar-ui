@@ -65,7 +65,7 @@
           <tr class="clickable" class:sel={openKey === `${r.ts}:${r.task_id}`} onclick={() => openSink(`${r.ts}:${r.task_id}`, r.partition, r.source_offsets ?? [])}>
             <td class="muted nowrap" title={fmtTimeMs(r.ts)}>{fmtTime(r.ts)}</td>
             <td class="mono">
-              {#if r.task_id}<a href={`/task/${encodeURIComponent(baseTaskId(r.task_id))}`} use:link onclick={(e) => e.stopPropagation()} style:color="#c084fc">{r.task_id}</a>{/if}
+              {#if r.task_id}<a href={`/task/${encodeURIComponent(baseTaskId(r.task_id))}`} use:link onclick={(e) => e.stopPropagation()} style:color="#9333ea">{r.task_id}</a>{/if}
             </td>
             <td class="mono">
               {#if r.partition != null}P{r.partition}{#if r.source_offsets?.length}:{r.source_offsets[0]}{#if r.source_offsets.length > 1}+{r.source_offsets.length - 1}{/if}<KafkaIcon partition={r.partition} offset={r.source_offsets[0]} />{/if}{/if}
@@ -73,7 +73,7 @@
             <td class="num mono">{durSec(r.exec_duration)}</td>
             <td class="num mono">{durSec(r.hook_duration)}</td>
             <td class="num mono">{r.output_message_count}</td>
-            <td><span style:color={r.status === 'failed' ? '#f87171' : r.status === 'completed' ? '#34d399' : '#8b93ad'}>{r.status ?? '?'}{#if r.status === 'failed' && r.exit_code != null} ({r.exit_code}){/if}</span></td>
+            <td><span style:color={r.status === 'failed' ? '#dc2626' : r.status === 'completed' ? '#059669' : '#6b7280'}>{r.status ?? '?'}{#if r.status === 'failed' && r.exit_code != null} ({r.exit_code}){/if}</span></td>
           </tr>
         {/each}
       {:else if kind === 'message'}
@@ -85,7 +85,7 @@
             </td>
             <td class="num mono">{durSec(r.duration)}</td>
             <td class="num mono">{fmtLatency(r.end_to_end_duration)}</td>
-            <td class="mono"><span style:color="#34d399">{r.succeeded}</span>/<span style:color="#f87171">{r.failed}</span>/<span style:color="#fbbf24">{r.replaced}</span></td>
+            <td class="mono"><span style:color="#059669">{r.succeeded}</span>/<span style:color="#dc2626">{r.failed}</span>/<span style:color="#d97706">{r.replaced}</span></td>
             <td class="num mono">{r.output_message_count}</td>
           </tr>
         {/each}
@@ -121,7 +121,7 @@
       <table>
         <tbody>
           {#each Object.entries(breakdown) as [name, count]}
-            <tr><td class="mono" style:color="#2dd4bf">{name}</td><td class="num mono">{count}</td></tr>
+            <tr><td class="mono" style:color="#0d9488">{name}</td><td class="num mono">{count}</td></tr>
           {/each}
         </tbody>
       </table>

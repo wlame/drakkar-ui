@@ -52,7 +52,7 @@
   <div class="sink-links">
     {#each links as l}
       <a href={l.ui_url} target="_blank" rel="noopener" title={`${l.sink_type}/${l.name}`} aria-label={`${l.sink_type} UI`}>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           {#if ICONS[l.sink_type]}
             <path d={ICONS[l.sink_type]} />
           {:else}
@@ -68,14 +68,14 @@
   .sink-links {
     display: flex;
     align-items: center;
-    gap: 0.6rem;
+    gap: 0.75rem;
   }
   .sink-links a {
-    color: var(--muted);
+    color: #6b7280;
     display: inline-flex;
     transition: color 120ms ease;
   }
   .sink-links a:hover {
-    color: var(--text);
+    color: #fff;
   }
 </style>

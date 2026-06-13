@@ -10,13 +10,13 @@
   let showFramework = $state(true)
 
   const TYPE_COLORS: Record<string, string> = {
-    counter: '#60a5fa',
-    gauge: '#34d399',
-    histogram: '#fbbf24',
-    info: '#c084fc',
+    counter: '#2563eb',
+    gauge: '#059669',
+    histogram: '#d97706',
+    info: '#9333ea',
     summary: '#a855f7',
   }
-  const SOURCE_COLORS: Record<string, string> = { framework: '#8b93ad', user: '#2dd4bf' }
+  const SOURCE_COLORS: Record<string, string> = { framework: '#6b7280', user: '#0d9488' }
 
   // Compact numeric formatting matching the reference's fmtVal.
   function fmtVal(v: number): string {
@@ -54,8 +54,8 @@
 </script>
 
 <div class="bar">
-  <label><input type="checkbox" bind:checked={showUser} /> user</label>
-  <label><input type="checkbox" bind:checked={showFramework} /> framework</label>
+  <label><input type="checkbox" bind:checked={showUser} /> User</label>
+  <label><input type="checkbox" bind:checked={showFramework} /> Framework</label>
   <button onclick={load}>Refresh</button>
 </div>
 
@@ -68,7 +68,7 @@
   <p class="muted">{metrics.length === 0 ? 'No metrics registered' : 'All metrics hidden by filters'}</p>
 {:else}
   {#each sections as sec}
-    <h2 style:color={SOURCE_COLORS[sec.source]}>{sec.source} metrics ({sec.families.length})</h2>
+    <h2 class="section" style:color={SOURCE_COLORS[sec.source]}>{sec.source} metrics ({sec.families.length})</h2>
     <table>
       <thead>
         <tr><th>Name</th><th>Type</th><th>Description</th><th>Values</th></tr>
@@ -119,5 +119,12 @@
   }
   .vals div {
     font-size: 0.8rem;
+  }
+  .section {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 1.5rem 0 0.5rem;
   }
 </style>

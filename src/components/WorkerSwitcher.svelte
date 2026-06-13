@@ -107,29 +107,28 @@
   .trigger {
     display: inline-flex;
     align-items: center;
-    gap: 0.3rem;
-    font-size: 0.85rem;
-    color: var(--muted);
+    gap: 0.25rem;
+    font-size: 0.875rem;
+    font-family: var(--mono);
+    color: #9ca3af;
     background: transparent;
-    border: 1px solid var(--line);
-    padding: 0.3rem 0.6rem;
+    border: none;
+    padding: 0;
   }
   .trigger:hover {
-    color: var(--text);
-    border-color: var(--accent);
+    color: #fff;
   }
   .trigger svg {
-    opacity: 0.6;
+    opacity: 0.5;
   }
   .menu {
     position: absolute;
     right: 0;
     margin-top: 0.35rem;
-    min-width: 15rem;
-    background: var(--panel-2);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    min-width: 14rem;
+    background: #3d3d3d;
+    border-radius: 6px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
     z-index: 50;
     padding: 0.25rem 0;
     overflow: hidden;
@@ -137,9 +136,10 @@
   .cluster-head {
     padding: 0.4rem 0.75rem 0.2rem;
     font-size: 0.68rem;
+    font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: var(--muted);
+    color: #6b7280;
   }
   .item {
     display: flex;
@@ -147,24 +147,26 @@
     justify-content: space-between;
     gap: 0.5rem;
     padding: 0.45rem 0.75rem;
-    color: var(--text);
+    color: #d1d5db;
     text-decoration: none;
     font-size: 0.85rem;
   }
   a.item:hover {
-    background: var(--panel);
+    background: #4b5563;
+    color: #fff;
   }
   .item.current {
-    background: var(--panel);
+    background: #4b5563;
+    color: #fff;
   }
   .tag,
   .addr {
     font-size: 0.7rem;
-    color: var(--muted);
+    color: #9ca3af;
   }
   .empty {
     padding: 0.5rem 0.75rem;
-    color: var(--muted);
+    color: #9ca3af;
     font-size: 0.85rem;
   }
 </style>

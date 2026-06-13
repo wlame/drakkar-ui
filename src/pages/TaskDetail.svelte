@@ -364,10 +364,8 @@
     gap: 0.2rem;
   }
   .field .k {
-    font-size: 0.72rem;
+    font-size: 0.75rem;
     color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
   }
   .field .v {
     font-size: 1.05rem;
@@ -400,10 +398,10 @@
     border: 1px solid var(--line);
   }
   .chip.teal {
-    color: #2dd4bf;
+    color: #0d9488;
   }
   .chip.amber {
-    color: #fbbf24;
+    color: #d97706;
   }
   .chip a {
     color: inherit;

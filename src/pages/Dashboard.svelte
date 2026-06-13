@@ -96,18 +96,16 @@
     background: var(--panel);
   }
   .tile .k {
-    font-size: 0.72rem;
+    font-size: 0.8rem;
     color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
   }
   .tile .v {
-    font-size: 1.5rem;
-    font-weight: 600;
+    font-size: 1.75rem;
+    font-weight: 700;
     font-variant-numeric: tabular-nums;
   }
   .secondary .tile .v {
-    font-size: 1.2rem;
+    font-size: 1.75rem;
   }
   .partitions {
     display: flex;
@@ -122,7 +120,7 @@
     border: 1px solid var(--line);
     border-radius: 8px;
     background: var(--panel);
-    color: #2dd4bf;
+    color: var(--accent);
     font-family: var(--mono);
     font-weight: 600;
     text-decoration: none;

@@ -41,10 +41,10 @@
   }
 
   function barColor(t: TaskView): string {
-    if (t.origin === 'http') return '#c084fc'
-    if (t.status === 'completed') return '#34d399'
-    if (t.status === 'failed') return '#f87171'
-    return '#fbbf24'
+    if (t.origin === 'http') return '#9333ea'
+    if (t.status === 'completed') return '#059669'
+    if (t.status === 'failed') return '#dc2626'
+    return '#d97706'
   }
 
   const bars = $derived.by<Bar[]>(() => {
@@ -103,9 +103,9 @@
     <span class="muted">last 10 min · {tasks.length} tasks</span>
     <span class="spacer"></span>
     <div class="legend">
-      <span><i style:background="#34d399"></i>completed</span>
-      <span><i style:background="#fbbf24"></i>running</span>
-      <span><i style:background="#f87171"></i>failed</span>
+      <span><i style:background="#059669"></i>completed</span>
+      <span><i style:background="#d97706"></i>running</span>
+      <span><i style:background="#dc2626"></i>failed</span>
     </div>
     <button onclick={zoomOut} title="Zoom out">−</button>
     <button onclick={zoomReset} title="Reset zoom">Reset</button>

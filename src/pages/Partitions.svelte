@@ -45,7 +45,7 @@
 <h1>Partitions</h1>
 
 {#if webappTile}
-  <div class="tile-wrap"><WebappTile tile={webappTile} /></div>
+  <div class="tile-wrap"><WebappTile tile={webappTile} variant="wide" /></div>
 {/if}
 
 {#if error}
@@ -76,7 +76,7 @@
     <tbody>
       {#each rows as p (p.partition)}
         <tr>
-          <td class="mono"><a href={`/partitions/${p.partition}`} use:link>{p.partition}</a></td>
+          <td class="mono"><a class="pid" href={`/partitions/${p.partition}`} use:link>{p.partition}</a></td>
           <td>
             <span class="dot" class:live={p.is_live}></span>
             <span class="muted">{p.is_live ? 'live' : 'history'}</span>
@@ -114,6 +114,12 @@
     vertical-align: middle;
   }
   .dot.live {
-    background: #34d399;
+    background: #059669;
+  }
+  .pid {
+    color: var(--accent);
+  }
+  .pid:hover {
+    text-decoration: underline;
   }
 </style>

@@ -45,19 +45,19 @@
           <td class="num mono">{t.last_duration != null ? dur3(t.last_duration) : '-'}</td>
           <td>
             {#if t.last_status === 'ok'}
-              <span style:color="#34d399">ok</span>
+              <span style:color="#059669">ok</span>
             {:else}
-              <span style:color="#f87171" title={t.last_error}>error</span>
+              <span style:color="#dc2626" title={t.last_error}>error</span>
             {/if}
           </td>
-          <td class="num mono" style:color="#34d399">{t.total_ok}</td>
-          <td class="num mono" style:color={t.total_error > 0 ? '#f87171' : 'var(--muted)'}>{t.total_error}</td>
+          <td class="num mono" style:color="#059669">{t.total_ok}</td>
+          <td class="num mono" style:color={t.total_error > 0 ? '#dc2626' : 'var(--muted)'}>{t.total_error}</td>
           <td>
             <div class="spark">
               {#each [...t.recent].reverse() as r}
                 <span
                   class="dot"
-                  style:background={r.status === 'ok' ? '#34d399' : '#f87171'}
+                  style:background={r.status === 'ok' ? '#059669' : '#dc2626'}
                   title={`${r.status}${r.error ? `: ${r.error}` : ''}${r.duration != null ? ` (${r.duration.toFixed(3)}s)` : ''}`}
                 ></span>
               {/each}

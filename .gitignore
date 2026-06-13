@@ -27,3 +27,9 @@ pydrakkar/
 
 # vibrator workspace pin — may contain plaintext prereq tokens
 .vb
+
+# Playwright MCP working dir (snapshots, console logs)
+.playwright-mcp/
+
+# Stray core dumps (e.g. from headless Chromium during verification)
+core
