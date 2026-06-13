@@ -1,11 +1,12 @@
 <script lang="ts">
-  // Task detail: the full lifecycle of one task, derived client-side from its
-  // recorded event rows (ports task_detail.html). The Python page has no JSON
-  // endpoint — it renders server-side — so the SPA fetches the task's events and
-  // reproduces the same derivation: first started/completed/failed rows, parsed
-  // metadata (source offsets, env), args→CLI, labels, http request/response bodies,
-  // and a chronological timeline. The task id may carry a `:r<ts>` retry suffix,
-  // which is stripped before querying but kept in the header.
+  // Task detail: the full lifecycle of one task (ports task_detail.html).
+  // GET /api/v1/task/{id} returns a composed object whose events[] carries the
+  // raw rows; the page derives the view client-side from those rows — the same
+  // derivation the reference renders server-side: first started/completed/failed
+  // rows, parsed metadata (source offsets, env), args→CLI, labels, http
+  // request/response bodies, and a chronological timeline. The task id may carry
+  // a `:r<ts>` retry suffix, which is stripped before querying but kept in the
+  // header.
   import { api, type EventRow } from '../lib/api'
   import { link } from '../lib/router'
   import { fmtTime, fmtTimeMs, fmtTimeFull, dur3, fmtBytes, safeJsonParse } from '../lib/format'
@@ -32,7 +33,7 @@
     events = null
     try {
       const r = await api.task(baseId)
-      if (myReq === reqId) events = r
+      if (myReq === reqId) events = r.events ?? []
     } catch (e) {
       if (myReq === reqId) error = e instanceof Error ? e.message : String(e)
     }

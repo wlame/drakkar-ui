@@ -11,11 +11,10 @@ import { svelte } from '@sveltejs/vite-plugin-svelte'
 // iterate. Point it elsewhere with DRAKKAR_BACKEND.
 const backend = process.env.DRAKKAR_BACKEND ?? 'http://127.0.0.1:8080'
 
-// The Go backend serves the versioned contract at /api/v1; the Python reference
-// (pydrakkar) serves the same shapes UNVERSIONED at /api. Set
-// DRAKKAR_API_UNVERSION=1 to strip the /v1 segment when proxying, so the SPA can
-// run against the Python reference for parity checks. Off by default (the
-// production target is the Go backend, which keeps /v1).
+// Both backends now serve the versioned contract at /api/v1 (with legacy
+// unprefixed /api aliases). DRAKKAR_API_UNVERSION=1 strips the /v1 segment when
+// proxying, which is only useful against a Python build that predates its
+// /api/v1 support — retire this flag once no such build matters.
 const unversion = process.env.DRAKKAR_API_UNVERSION === '1'
 const apiProxy = {
   target: backend,
@@ -25,6 +24,12 @@ const apiProxy = {
 
 export default defineConfig({
   plugins: [svelte()],
+  // Stamp the bundle with its release version so operators can tell which UI
+  // build a backend is serving. Set by build.sh/release.yml from the git tag;
+  // "dev" for local untagged builds.
+  define: {
+    __APP_VERSION__: JSON.stringify(process.env.DRAKKAR_UI_VERSION ?? 'dev'),
+  },
   build: {
     outDir: 'dist',
     // index.html lands at dist/ root; the release workflow tars dist/ contents
