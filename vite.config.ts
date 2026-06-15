@@ -38,6 +38,10 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    // The dev server runs inside a container and is reached by container
+    // name (docker DNS) as well as localhost — allow any Host header. Dev
+    // server only; the production bundle is static files.
+    allowedHosts: true,
     proxy: {
       '/api': apiProxy,
       '/ws': { target: backend, ws: true, changeOrigin: true },
