@@ -54,8 +54,15 @@ h2 {
   font-weight: 700;
 }
 
+/* Reference links render colored but undecorated, underlining on hover
+   (Tailwind `hover:underline` used throughout the templates). */
 a {
   color: var(--link);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
 }
 
 code {
@@ -98,7 +105,7 @@ th {
 }
 
 tbody tr:hover {
-  background: #faf9f6;
+  background: #f0eee8; /* cream-100, matching the reference hover:bg-cream-100 */
 }
 
 .num {
