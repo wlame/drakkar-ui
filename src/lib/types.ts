@@ -46,7 +46,9 @@ export interface DashboardLinkGroup {
 export interface DashboardLinks {
   card_links: Partial<Record<CardLinkKey, string>>
   worker_links: DashboardLinkGroup[]
-  cluster_links: DashboardLinkGroup[]
+  // Flat [name, url] pairs (the reference renders these as one wrap-list
+  // card, not a categorized grid like worker_links).
+  cluster_links: [string, string][]
   custom_links: Record<string, string>[]
 }
 

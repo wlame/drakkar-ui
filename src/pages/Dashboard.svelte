@@ -105,19 +105,16 @@
         {/each}
       </div>
 
+      <!-- Cluster links are flat [name, url] pairs rendered as one wrap-list
+           card (dashboard.html:93-102), unlike the categorized worker grid. -->
       {#if data.links.cluster_links.length > 0}
         <h2>Cluster-wide Metrics</h2>
-        <div class="promgrid">
-          {#each data.links.cluster_links as group}
-            <div class="promcard">
-              <div class="cat">{group.category}</div>
-              <ul>
-                {#each group.links as [name, url]}
-                  <li><a class="promlink" href={url} target="_blank" rel="noopener">{name}</a></li>
-                {/each}
-              </ul>
-            </div>
-          {/each}
+        <div class="linkcard">
+          <ul>
+            {#each data.links.cluster_links as [name, url]}
+              <li><a class="promlink" href={url} target="_blank" rel="noopener">{name}</a></li>
+            {/each}
+          </ul>
         </div>
       {/if}
     {/if}
