@@ -71,21 +71,25 @@ workflow runs `tar -czf … -C dist .` so those files land at the archive root.
 
 ## How a backend consumes a release
 
-On the Go backend the bundle host lives in `internal/uihost`, is configured with
-`DK_UI__*` settings, and is **off by default** (the backend keeps its built-in
-HTML pages until a real drakkar-ui release is pinned):
+Both backends host the bundle the same way (Go: `internal/uihost`; Python:
+`drakkar/uihost`), configured with identical `DK_UI__*` settings, and it is
+**on by default**: at startup a worker resolves the latest release, caches it
+under the shared `~/.cache/drakkar/ui/<version>` directory, and serves it.
+Release assets download through the direct `github.com` URLs (no REST-API
+rate limit); the API is only a fallback.
 
 ```bash
+# defaults — shown for completeness, nothing to set in the common case
 DK_UI__ENABLED=true
+DK_UI__CHECK_UPDATE=true
 DK_UI__RELEASE_REPO=wlame/drakkar-ui
-DK_UI__PINNED_VERSION=v1.2.0
-# optional: DK_UI__CACHE_DIR, DK_UI__CHECK_UPDATE
+# optional: DK_UI__PINNED_VERSION=v1.2.0, DK_UI__CACHE_DIR=...
 ```
 
-Resolution order is graceful and never fatal: a cached bundle for the pinned
-version → otherwise fetch that version from GitHub Releases → otherwise the
-embedded fallback baked into the binary (works fully offline). A companion CLI
-manages the cache directly:
+Resolution order is graceful and never fatal: the resolved version from cache
+→ otherwise fetch it from GitHub Releases → otherwise the newest previously
+cached release → otherwise the backend keeps its built-in HTML pages (works
+fully offline). A companion CLI manages the cache directly:
 
 ```bash
 drakkar-ui where                       # where the cache is + what would be served
