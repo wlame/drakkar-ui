@@ -3,7 +3,9 @@
   // appears when the backend has a cache engine (detected by probing
   // /api/v1/debug/cache/stats). The #trace/<partition>/<offset> deep-link activates
   // the Trace tab and prefills it — this is the target of the offset links across
-  // the app.
+  // the app. When /api/v1/identity returns a non-empty config_summary, the page
+  // title is replaced by the reference's full-width mono config banner; older
+  // backends without the endpoint gracefully keep the plain heading.
   import { onMount } from 'svelte'
   import { api } from '../lib/api'
   import { hash, setHash } from '../lib/router'
@@ -19,6 +21,7 @@
   type Tab = 'metrics' | 'periodic' | 'trace' | 'probe' | 'cache' | 'databases'
 
   let cacheEnabled = $state(false)
+  let configSummary = $state('')
 
   const TAB_LABELS: Record<Tab, string> = {
     metrics: 'Metrics',
@@ -50,6 +53,15 @@
   })
 
   onMount(async () => {
+    // Independent capability probes; each failure only disables its own feature.
+    api
+      .identity()
+      .then((id) => {
+        configSummary = id.config_summary
+      })
+      .catch(() => {
+        // 404 on older backends — keep the plain heading.
+      })
     try {
       await api.cacheStats()
       cacheEnabled = true
@@ -59,7 +71,11 @@
   })
 </script>
 
-<h1>Debug Tools</h1>
+{#if configSummary}
+  <div class="config-banner">{configSummary}</div>
+{:else}
+  <h1>Debug Tools</h1>
+{/if}
 
 <div class="tabs">
   {#each availableTabs as t}
@@ -82,6 +98,22 @@
 {/if}
 
 <style>
+  /* Config-summary banner — ports the reference's `mb-6 px-4 py-3 rounded-lg
+     border border-cream-200 font-mono text-xs text-ink-700 break-all select-all`
+     panel shown above the tab bar. */
+  .config-banner {
+    margin-bottom: 1.5rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #faf9f6;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--text);
+    word-break: break-all;
+    user-select: all;
+  }
+
   .tabs {
     display: flex;
     gap: 0.25rem;

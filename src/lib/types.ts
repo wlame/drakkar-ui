@@ -30,6 +30,26 @@ export interface WebappTile {
   path: string
 }
 
+// Stat-tile keys that can carry a Prometheus deep link next to their label.
+export type CardLinkKey = 'lag' | 'consumed' | 'completed' | 'failed' | 'produced'
+
+// One titled group of Prometheus links; each entry is a [name, url] pair
+// (the reference template iterates `{% for name, url in group.links %}`).
+export interface DashboardLinkGroup {
+  category: string
+  links: [string, string][]
+}
+
+// Optional dashboard link sections (Prometheus + custom links). Key presence on
+// the Dashboard payload is the feature flag: a backend without Prometheus/custom
+// links configured omits `links` entirely and the UI renders nothing.
+export interface DashboardLinks {
+  card_links: Partial<Record<CardLinkKey, string>>
+  worker_links: DashboardLinkGroup[]
+  cluster_links: DashboardLinkGroup[]
+  custom_links: Record<string, string>[]
+}
+
 export interface Dashboard {
   uptime: number
   stats: DashboardStats
@@ -39,6 +59,7 @@ export interface Dashboard {
   pool_max: number
   total_lag: number
   webapp_tile?: WebappTile
+  links?: DashboardLinks
 }
 
 export interface Partition {
@@ -69,6 +90,14 @@ export interface SinkStatus {
   last_delivery_duration: number | null
   last_error: string | null
   last_error_ts: number | null
+}
+
+// Worker self-identity from GET /api/v1/identity (v1.1). config_summary is the
+// one-line worker config string the reference debug page shows in its banner.
+export interface Identity {
+  worker_id: string
+  cluster: string | null
+  config_summary: string
 }
 
 export interface WorkerPeer {
