@@ -225,6 +225,33 @@ the Python reference pages:
   page's config-summary banner. Backends without it 404; the UI falls back to
   the plain heading.
 
+## v1.2 additions (2026-07-04)
+
+Version visibility and a machine-readable surface description. All additive.
+
+- `GET /api/v1/identity` gains four fields (older backends omit them; the UI
+  must tolerate absence):
+  - `backend:str` — `"python"` | `"go"`, the implementation flavor.
+  - `backend_version:str` — backend-native version string (Python: installed
+    `py-drakkar` package version; Go: git-describe build stamp, `"dev"` when
+    unstamped).
+  - `ui_version:str|null` — the drakkar-ui release tag this backend is
+    serving (e.g. `"v0.1.1"`), `null` when the built-in pages serve.
+  - `ui_source:str` — `"release"` (fetched/cached bundle) | `"builtin"`
+    (server-rendered fallback pages).
+- `GET /api/v1/openapi.json` → the OpenAPI 3.1 document describing this
+  surface, converted from the canonical `docs/openapi-v1.yaml` in this repo
+  (vendored byte-identically into both backends). Protected by the same
+  optional bearer token as every other API route.
+- `GET /docs` → human-facing Swagger UI over that document. Self-hosted
+  assets only (no CDN — deployments are often firewalled); token-protected
+  exactly like the other UI pages. Not part of the JSON API, listed here so
+  backends stay drop-in identical.
+- **Route-parity rule:** a backend's served route set — every `/api/v1/*`
+  route plus `/healthz` and `/readyz` — MUST equal the `paths` of
+  `docs/openapi-v1.yaml`. Each backend enforces this with a unit test that
+  walks its live route table, so surface drift fails CI on the drifting side.
+
 ## Appendix: divergence resolutions from the 2026-06 audit
 
 Canonical choices where the two reference backends disagreed; each backend

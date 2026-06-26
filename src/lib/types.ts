@@ -94,12 +94,18 @@ export interface SinkStatus {
   last_error_ts: number | null
 }
 
-// Worker self-identity from GET /api/v1/identity (v1.1). config_summary is the
-// one-line worker config string the reference debug page shows in its banner.
+// Worker self-identity from GET /api/v1/identity (v1.1, extended v1.2).
+// config_summary is the one-line worker config string the reference debug
+// page shows in its banner. The v1.2 fields are optional: older backends
+// omit them and the UI degrades gracefully.
 export interface Identity {
   worker_id: string
   cluster: string | null
   config_summary: string
+  backend?: string // "python" | "go"
+  backend_version?: string // backend-native: semver (py) or git-describe (go)
+  ui_version?: string | null // served drakkar-ui release tag, null = built-in pages
+  ui_source?: string // "release" | "builtin"
 }
 
 export interface WorkerPeer {
