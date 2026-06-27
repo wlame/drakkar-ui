@@ -199,12 +199,27 @@ truncated:bool}`.
 
 ## Recorder event row shape (used by /ws, /events, /trace, /trace-by-label)
 
-Currently under-specified: backends pass recorder rows through (`SELECT *`).
-Columns include `id, event, ts, dt, partition, offset, task_id, args, stdout,
-stdout_size, stderr, exit_code, duration, output_topic, metadata, pid, labels,
-origin, client_name, request_id` (presence is event-type-dependent). A dedicated
-recorder-event-schema audit + pin is a v1.x TODO; until then the UI treats every
-column as optional.
+**PINNED (v1.2).** Backends pass recorder rows through (`SELECT *`), and the
+`events` table carries exactly these 20 columns, in DDL order:
+
+```
+id, ts, dt, event, partition, offset, task_id, args, stdout_size, stdout,
+stderr, exit_code, duration, output_topic, metadata, pid, labels, origin,
+client_name, request_id
+```
+
+Both backends pin this list in code and assert it against the live table in
+a unit test (Python `drakkar/recorder/schema.py: EVENT_COLUMNS` +
+`test_event_columns_pin_matches_live_table`; Go
+`internal/recorder/schema.go: EventColumns` +
+`TestEventColumnsPinMatchesLiveTable`). Adding/removing/reordering a column
+is a contract change: update this section and BOTH backend pins together.
+
+Column *presence* is the contract; *values* stay event-type-dependent
+(nullable), so the UI keeps treating every column as optional. Framework
+datetimes embedded in `metadata` JSON use the canonical cross-backend
+format `YYYY-MM-DDTHH:MM:SS.ffffffZ` (fixed six-digit microseconds); the
+`dt` column keeps its display format `YYYY-MM-DD HH:MM:SS.mmm`.
 
 ## Capability gaps (future, not required for v1 conformance)
 
