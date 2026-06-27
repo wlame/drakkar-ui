@@ -105,7 +105,7 @@ export interface Identity {
   backend?: string // "python" | "go"
   backend_version?: string // backend-native: semver (py) or git-describe (go)
   ui_version?: string | null // served drakkar-ui release tag, null = built-in pages
-  ui_source?: string // "release" | "builtin"
+  ui_source?: string // "release" | "embedded" | "builtin"
 }
 
 export interface WorkerPeer {

@@ -251,9 +251,13 @@ Version visibility and a machine-readable surface description. All additive.
     `py-drakkar` package version; Go: git-describe build stamp, `"dev"` when
     unstamped).
   - `ui_version:str|null` — the drakkar-ui release tag this backend is
-    serving (e.g. `"v0.1.1"`), `null` when the built-in pages serve.
-  - `ui_source:str` — `"release"` (fetched/cached bundle) | `"builtin"`
-    (server-rendered fallback pages).
+    serving (e.g. `"v0.1.1"`), `null` when the built-in pages serve (or
+    when an embedded pre-release stub carries no tag).
+  - `ui_source:str` — `"release"` (fetched/cached bundle) | `"embedded"`
+    (the release baked into the backend binary/package, served when the
+    cache is empty and GitHub is unreachable) | `"builtin"`
+    (server-rendered fallback pages; only when `ui.release.enabled=false`
+    or resolution errored). The UI must tolerate unknown future values.
 - `GET /api/v1/openapi.json` → the OpenAPI 3.1 document describing this
   surface, converted from the canonical `docs/openapi-v1.yaml` in this repo
   (vendored byte-identically into both backends). Protected by the same
