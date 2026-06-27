@@ -25,13 +25,23 @@ tag vX.Y.Z → release.yml → drakkar-ui-vX.Y.Z.tar.gz (index.html at archive R
 ## The contract — this repo owns it
 
 **`docs/api-contract-v1.md` is the normative API spec** — a requirement this
-repo places on backends, not documentation of them. The UI only ever calls
+repo places on backends, not documentation of them. Its machine-readable
+twin is **`docs/openapi-v1.yaml`** (OpenAPI 3.1): both backends vendor it
+byte-identically (`just sync-openapi` copies it to
+`../drakkar/drakkar/uiserver/openapi.yaml` and
+`../drakkar-go/internal/uiserver/openapi.yaml`), serve it at
+`GET /api/v1/openapi.json` + a self-hosted Swagger page at `GET /docs`, and
+pin their live route tables to its `paths` with a parity unit test — so
+surface drift fails CI on the drifting backend. The UI only ever calls
 `/api/v1/*` and `/ws` (probes `/healthz`/`/readyz` unprefixed) and assumes
 nothing backend-specific. Changing an endpoint's shape means: update the
-contract doc, mirror the types in `src/lib/types.ts`, and land the change on
-BOTH backends. Optional features are signaled by key presence (`webapp_tile`,
-`links`) or graceful 404s (`/identity` on older backends) — the UI must
-degrade, never crash, when a key/endpoint is missing.
+contract doc AND the OpenAPI spec, mirror the types in `src/lib/types.ts`,
+re-sync the vendored copies, and land the change on BOTH backends. Optional
+features are signaled by key presence (`webapp_tile`, `links`) or graceful
+404s (`/identity` on older backends) — the UI must degrade, never crash,
+when a key/endpoint is missing. As of v1.2, `/identity` also reports
+`backend`, `backend_version`, `ui_version`, `ui_source`; the header
+`VersionBadge` popover renders them (tolerating their absence).
 
 Auth model: one optional bearer token; read from `?token=` (remembered in
 `localStorage`), sent as `Authorization: Bearer`. WS handshakes and `<a>`
@@ -107,10 +117,11 @@ src/
     ws.ts                 live WS client (reconnect, close codes 4401/4403)
     events.ts, format.ts, kafka.ts, live.ts   presentation helpers
   pages/                  one component per route (Dashboard … Live, Debug)
-  components/             chrome (WorkerSwitcher, SinkLinks, WebappTile …)
+  components/             chrome (WorkerSwitcher, SinkLinks, VersionBadge …)
     live/                 Timeline, ArrangeTab, ResultsTab
     debug/                Metrics/Periodic/Trace/Probe/Cache/Databases tabs
 docs/api-contract-v1.md   THE backend contract (normative)
+docs/openapi-v1.yaml      its OpenAPI 3.1 twin — vendored into both backends
 pydrakkar/                gitignored read-only Python backend copy (UX reference)
 build.sh, justfile        dockerized toolchain + release recipes
 .github/workflows/        ci.yml (check+build), release.yml (publish bundle)
