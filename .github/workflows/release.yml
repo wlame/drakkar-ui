@@ -46,9 +46,16 @@ jobs:
           # Fail loudly if index.html is not at the archive root.
           tar -tzf "$tarball" | grep -qx './index.html' \
             || { echo "ERROR: index.html is not at the archive root"; exit 1; }
+          # Publish a sha256 sidecar next to the bundle. Backends verify a
+          # downloaded bundle against it when present (releases without the
+          # sidecar skip verification, so this stays backward-compatible).
+          sha256sum "$tarball" > "$tarball.sha256"
+          cat "$tarball.sha256"
 
       - name: Create release and upload bundle
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.TARBALL }}
+          files: |
+            ${{ env.TARBALL }}
+            ${{ env.TARBALL }}.sha256
           generate_release_notes: true

@@ -225,8 +225,11 @@ format `YYYY-MM-DDTHH:MM:SS.ffffffZ` (fixed six-digit microseconds); the
 
 - No cache **write/delete** endpoint (the cache browser is read-only).
 - No DB-file **delete** endpoint (merged files accumulate in db_dir).
-- No checksum/signature on UI bundle release assets (backends validate
-  structurally: `index.html` at archive root).
+- ~~No checksum on UI bundle release assets~~ — the release workflow now
+  publishes a `drakkar-ui-<tag>.tar.gz.sha256` sidecar and both backends
+  verify a downloaded bundle against it when present (absent sidecar —
+  releases predating it — skips verification; structural validation of
+  `index.html` at the archive root always applies). No signature yet.
 
 ## v1.1 additions (2026-07-03)
 
