@@ -11,7 +11,7 @@
     type PlannedSinkRecord,
   } from '../../lib/api'
   import { runtimeConfig } from '../../lib/config'
-  import { durSec, safeJsonParse } from '../../lib/format'
+  import { durSec } from '../../lib/format'
   import KafkaIcon from '../KafkaIcon.svelte'
 
   // form state

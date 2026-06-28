@@ -1,0 +1,17 @@
+# Lint gate covers the app source; generated output, vendored references and
+# prose docs stay out of scope. release.yml is owned by the release pipeline.
+dist/
+pydrakkar/
+docs/
+.github/
+*.md
+bun.lock
+.claude/
+.playwright-mcp/
+
+# The hand-formatted Svelte markup predates prettier (inline <dt>/<dd> pairs,
+# long attribute rows); gating it would rewrite ~500 lines across every
+# component. prettier-plugin-svelte stays configured in .prettierrc, so opting
+# in later is a one-line change here plus one `bun run format`. Until then
+# eslint-plugin-svelte lints the .svelte sources.
+*.svelte

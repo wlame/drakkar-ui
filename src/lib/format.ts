@@ -7,10 +7,6 @@
 // Timestamps from the contract are Unix epoch *seconds* (float), except the cache
 // browser which uses *milliseconds* (see fmtDateTimeMs).
 
-function pad(n: number, width = 2): string {
-  return String(n).padStart(width, '0')
-}
-
 // fmtTime renders an epoch-seconds timestamp as UTC HH:MM:SS. Empty for nullish.
 export function fmtTime(ts: number | null | undefined): string {
   if (ts == null) return ''

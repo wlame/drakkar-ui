@@ -47,8 +47,18 @@ Node or Bun on the host. The `build.sh` wrapper drives it:
 ./build.sh dev        # Vite dev server on :5173, proxying /api + /ws to a worker
 ./build.sh build      # produce the static bundle in dist/
 ./build.sh check      # type-check the Svelte sources
+./build.sh lint       # prettier --check + eslint (no writes)
+./build.sh test       # vitest unit suite (hermetic, no backend needed)
+./build.sh format     # rewrite sources with prettier
 ./build.sh bundle v1.2.0   # build + package dist/ into a release-shaped tarball
 ```
+
+A `justfile` wraps the same commands (`just dev`, `just test`, `just lint`, …);
+`just ci` runs the full gate — image → install → check → lint → test → build —
+exactly what `.github/workflows/ci.yml` enforces.
+
+Unit tests live next to the modules they cover (`src/lib/*.test.ts`, vitest +
+happy-dom) and are fully hermetic: `fetch` is mocked, no worker required.
 
 `dev` proxies `/api`, `/ws`, `/healthz`, and `/readyz` to a running Drakkar
 worker so you iterate against live data. Point it at a specific worker with
@@ -117,7 +127,7 @@ src/
 docs/                api-contract-v1.md — the backend contract this UI consumes
 public/              static assets copied to the bundle root (favicon)
 build.sh             Dockerized Bun toolchain
-.github/workflows/   ci.yml (build + type-check), release.yml (publish bundle)
+.github/workflows/   ci.yml (check+lint+test+build), release.yml (publish bundle)
 ```
 
 ## Status
@@ -126,8 +136,10 @@ All operator pages of the Python reference UI are implemented against the v1
 contract: Dashboard, Partitions (+ detail), Task detail, History, Sinks, the
 WebSocket-fed Live pipeline view (arrange/execute timeline + completion-hook
 tabs), and the Debug tools page (metrics, periodic, trace, message probe, cache
-browser, databases). The build and release pipeline is in place; test coverage
-and a visual parity audit against the reference UI are the current focus.
+browser, databases). The build and release pipeline is in place, and CI gates
+every push on type-check, lint (prettier + eslint), the vitest unit suite, and
+the bundle build; a visual parity audit against the reference UI is the
+current focus.
 
 ## License
 

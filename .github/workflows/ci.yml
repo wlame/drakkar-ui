@@ -1,7 +1,8 @@
 name: ci
 
-# Build + type-check on every push and pull request, so a broken bundle never
-# reaches a release tag.
+# Type-check + lint + test + build on every push and pull request, so a broken
+# bundle never reaches a release tag. Mirrors `just ci` step for step (same
+# `bun run <script>` commands), so local and CI cannot disagree.
 on:
   push:
     branches: [main]
@@ -23,6 +24,12 @@ jobs:
 
       - name: Type-check
         run: bun run check
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Test
+        run: bun run test
 
       - name: Build
         run: bun run build

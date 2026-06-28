@@ -2,9 +2,9 @@
 #
 # Recipes wrap ./build.sh, which runs the whole Bun toolchain inside the
 # oven/bun Docker image so the host installs nothing (see build.sh). CI runs the
-# same `check` + `build` gates via oven-sh/setup-bun on an ephemeral runner — the
-# underlying `bun run check` / `bun run build` commands are identical either way,
-# so local and CI cannot disagree.
+# same `check` + `lint` + `test` + `build` gates via oven-sh/setup-bun on an
+# ephemeral runner — the underlying `bun run <script>` commands are identical
+# either way, so local and CI cannot disagree.
 #
 # Style: long flags use `=`, short flags use spaces.
 
@@ -36,6 +36,18 @@ dev port="5173":
 check:
     ./build.sh check
 
+# Lint: prettier --check + eslint, no writes.
+lint:
+    ./build.sh lint
+
+# Rewrite sources with prettier.
+format:
+    ./build.sh format
+
+# Run the vitest unit suite (hermetic — no network, no backend).
+test:
+    ./build.sh test
+
 # Build the static SPA into dist/.
 build:
     ./build.sh build
@@ -63,7 +75,7 @@ sync-openapi:
 # ── Gates ────────────────────────────────────────────────────────────────────
 
 # The exact gates GitHub CI enforces, in order. Run before pushing.
-ci: image install check build
+ci: image install check lint test build
 
 # ── Releasing (print-only for anything that mutates a remote) ─────────────────
 

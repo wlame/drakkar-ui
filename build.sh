@@ -34,6 +34,10 @@ run_bun() {
 install() { run_bun install; }
 build()   { run_bun run build; }
 check()   { run_bun run check; }
+lint()    { run_bun run lint; }
+fmt()     { run_bun run format; }
+# "tests", not "test": never shadow the shell builtin.
+tests()   { run_bun run test; }
 
 # dev runs the Vite dev server with hot reload. Pass a port (default 5173) and
 # DRAKKAR_BACKEND to proxy /api + /ws at a running worker. host.docker.internal
@@ -73,17 +77,23 @@ case "${1:-help}" in
     install) install ;;
     build)   build ;;
     check)   check ;;
+    lint)    lint ;;
+    format)  fmt ;;
+    test)    tests ;;
     dev)     dev "${2:-5173}" ;;
     bundle)  bundle "${2:-dev}" ;;
     shell)   shell ;;
     *)
         cat <<USAGE
-Usage: $0 {image|install|build|check|dev|bundle|shell}
+Usage: $0 {image|install|build|check|lint|format|test|dev|bundle|shell}
 
   image           build the oven/bun builder image
   install         install dependencies (bun install)
   build           build the static SPA into dist/ (bun run build)
   check           type-check the Svelte sources (svelte-check)
+  lint            prettier --check + eslint (no writes)
+  format          prettier --write (rewrites sources in place)
+  test            run the vitest unit suite (hermetic, no backend needed)
   dev [port]      run the Vite dev server (default 5173), proxying /api to a worker
   bundle [ver]    build + package dist/ into drakkar-ui-<ver>.tar.gz (release shape)
   shell           open an interactive shell in the builder image

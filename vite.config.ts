@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 
@@ -36,6 +37,14 @@ export default defineConfig({
     // at the archive root so a backend's uihost fetcher finds index.html at the
     // top level.
     emptyOutDir: true,
+  },
+  test: {
+    // happy-dom supplies window/location/localStorage/history for the router
+    // and API-client tests; everything stays hermetic (fetch is mocked, no
+    // real backend). Run with `bun run test` (vitest, not `bun test` — vitest
+    // understands this config and the Svelte transform).
+    environment: 'happy-dom',
+    include: ['src/**/*.test.ts'],
   },
   server: {
     // The dev server runs inside a container and is reached by container

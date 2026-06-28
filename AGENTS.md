@@ -40,8 +40,10 @@ re-sync the vendored copies, and land the change on BOTH backends. Optional
 features are signaled by key presence (`webapp_tile`, `links`) or graceful
 404s (`/identity` on older backends) — the UI must degrade, never crash,
 when a key/endpoint is missing. As of v1.2, `/identity` also reports
-`backend`, `backend_version`, `ui_version`, `ui_source`; the header
-`VersionBadge` popover renders them (tolerating their absence).
+`backend`, `backend_version`, `ui_version`, `ui_source`
+(`"release"` | `"embedded"` — the release baked into the backend
+binary/package — | `"builtin"`); the header `VersionBadge` popover
+renders them (tolerating their absence and unknown future values).
 
 Auth model: one optional bearer token; read from `?token=` (remembered in
 `localStorage`), sent as `Authorization: Bearer`. WS handshakes and `<a>`
@@ -77,7 +79,9 @@ The host installs neither Node nor Bun; everything runs in the
 `drakkar-ui-builder` image via `./build.sh` (thin `justfile` wraps it):
 
 ```bash
-just ci          # image → install → check (svelte-check) → build; == GitHub CI
+just ci          # image → install → check → lint → test → build; == GitHub CI
+just test        # vitest unit suite (src/lib/*.test.ts; hermetic, no backend)
+just lint        # prettier --check + eslint (no writes); `just format` rewrites
 just dev         # Vite dev server :5173, proxying /api /ws /healthz /readyz
 just bundle      # release-shaped tarball from the current tree
 just release 0.1.0   # gates + tag; PRINTS the push command (never pushes)
@@ -97,10 +101,13 @@ container is reached by docker DNS names.
 Push of tag `vX.Y.Z` → `.github/workflows/release.yml` → builds with
 `DRAKKAR_UI_VERSION=<tag>` → packages `drakkar-ui-vX.Y.Z.tar.gz` with
 **`index.html` at the archive root** (asserted; backends validate the same
-structurally) → creates the GitHub Release. Keep exactly ONE `.tar.gz` asset
-per release, named by that convention — backends construct the direct
-download URL from the tag (`releases/download/<tag>/drakkar-ui-<tag>.tar.gz`)
-without touching the rate-limited REST API. Cut releases with
+structurally) → publishes the tarball **plus a `.sha256` sidecar** (backends
+verify a downloaded bundle against it when present) → creates the GitHub
+Release. Keep exactly ONE `.tar.gz` asset per release, named by that
+convention — backends construct the direct download URL from the tag
+(`releases/download/<tag>/drakkar-ui-<tag>.tar.gz`) without touching the
+rate-limited REST API. Backends also embed a pinned release as their
+offline fallback (`just embed-ui vX.Y.Z` in each backend repo). Cut releases with
 `just release X.Y.Z` / `just bump`, then push the printed tag.
 
 ## Directory map
@@ -124,7 +131,7 @@ docs/api-contract-v1.md   THE backend contract (normative)
 docs/openapi-v1.yaml      its OpenAPI 3.1 twin — vendored into both backends
 pydrakkar/                gitignored read-only Python backend copy (UX reference)
 build.sh, justfile        dockerized toolchain + release recipes
-.github/workflows/        ci.yml (check+build), release.yml (publish bundle)
+.github/workflows/        ci.yml (check+lint+test+build), release.yml (publish bundle)
 ```
 
 ## Gotchas
@@ -132,8 +139,14 @@ build.sh, justfile        dockerized toolchain + release recipes
 - `DRAKKAR_API_UNVERSION=1` (vite proxy strips `/v1`) exists only for Python
   builds predating their `/api/v1` support — both backends serve `/api/v1`
   now; don't reach for it.
-- No test framework yet (svelte-check is the only gate) — adding vitest +
-  lint to `ci` is the known next quality step.
+- Tests are vitest (run `just test` / `bun run test` — NOT `bun test`, which
+  bypasses the vite config), colocated as `src/lib/*.test.ts`, hermetic
+  (mocked fetch, happy-dom for window/localStorage). Keep new tests that way.
+- Prettier deliberately skips `*.svelte` (see .prettierignore): the
+  hand-formatted markup predates prettier and gating it would rewrite every
+  component. prettier-plugin-svelte IS configured, so opting in later is a
+  one-line ignore change + one `bun run format`. eslint (eslint-plugin-svelte)
+  still lints all .svelte sources.
 - The SPA is served same-origin by backends; `API_BASE` is a relative
   `/api/v1` on purpose. Don't introduce absolute backend URLs.
 - Bundle assets use absolute `/assets/...` URLs so deep routes load them;

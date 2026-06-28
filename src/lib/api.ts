@@ -140,7 +140,8 @@ export const api = {
   // Live
   liveOverview: () => get<LiveOverview>('/live/overview'),
   liveTaskResults: (limit = 200) => get<TaskResult[]>(`/live/task-results${qs({ limit })}`),
-  liveMessageResults: (limit = 200) => get<MessageResult[]>(`/live/message-results${qs({ limit })}`),
+  liveMessageResults: (limit = 200) =>
+    get<MessageResult[]>(`/live/message-results${qs({ limit })}`),
   liveWindowResults: (limit = 200) => get<WindowResult[]>(`/live/window-results${qs({ limit })}`),
   arrangeTasks: (taskIds: string[]) =>
     post<Record<string, ArrangeTaskState>>('/live/arrange-tasks', { task_ids: taskIds }),
@@ -167,7 +168,15 @@ export const api = {
 
   // Debug: cache browser
   cacheStats: () => get<CacheStats>('/debug/cache/stats'),
-  cacheEntries: (q: { limit?: number; offset?: number; scope?: string; search?: string; expired_only?: boolean } = {}) =>
+  cacheEntries: (
+    q: {
+      limit?: number
+      offset?: number
+      scope?: string
+      search?: string
+      expired_only?: boolean
+    } = {},
+  ) =>
     get<CacheEntriesResponse>(
       `/debug/cache/entries${qs({
         limit: q.limit,
@@ -177,5 +186,6 @@ export const api = {
         expired_only: q.expired_only ? 'true' : undefined,
       })}`,
     ),
-  cacheEntry: (key: string) => get<CacheEntryDetail>(`/debug/cache/entry/${encodeURIComponent(key)}`),
+  cacheEntry: (key: string) =>
+    get<CacheEntryDetail>(`/debug/cache/entry/${encodeURIComponent(key)}`),
 }
