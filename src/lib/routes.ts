@@ -3,6 +3,7 @@ import Dashboard from '../pages/Dashboard.svelte'
 import Partitions from '../pages/Partitions.svelte'
 import PartitionDetail from '../pages/PartitionDetail.svelte'
 import TaskDetail from '../pages/TaskDetail.svelte'
+import History from '../pages/History.svelte'
 import Sinks from '../pages/Sinks.svelte'
 import NotFound from '../pages/NotFound.svelte'
 
@@ -44,6 +45,7 @@ export const routes: Route[] = [
   { path: '/partitions', component: Partitions },
   { path: '/partitions/:id', component: PartitionDetail },
   { path: '/task/:id', component: TaskDetail },
+  { path: '/history', component: History },
   { path: '/sinks', component: Sinks },
 ]
 
