@@ -1,6 +1,7 @@
 import type { Component } from 'svelte'
 import Dashboard from '../pages/Dashboard.svelte'
 import Partitions from '../pages/Partitions.svelte'
+import PartitionDetail from '../pages/PartitionDetail.svelte'
 import Sinks from '../pages/Sinks.svelte'
 import NotFound from '../pages/NotFound.svelte'
 
@@ -40,6 +41,7 @@ export const navItems: NavItem[] = [
 export const routes: Route[] = [
   { path: '/', component: Dashboard },
   { path: '/partitions', component: Partitions },
+  { path: '/partitions/:id', component: PartitionDetail },
   { path: '/sinks', component: Sinks },
 ]
 
