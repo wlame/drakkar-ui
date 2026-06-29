@@ -5,6 +5,7 @@ import PartitionDetail from '../pages/PartitionDetail.svelte'
 import TaskDetail from '../pages/TaskDetail.svelte'
 import History from '../pages/History.svelte'
 import Live from '../pages/Live.svelte'
+import Debug from '../pages/Debug.svelte'
 import Sinks from '../pages/Sinks.svelte'
 import NotFound from '../pages/NotFound.svelte'
 
@@ -48,6 +49,7 @@ export const routes: Route[] = [
   { path: '/task/:id', component: TaskDetail },
   { path: '/history', component: History },
   { path: '/live', component: Live },
+  { path: '/debug', component: Debug },
   { path: '/sinks', component: Sinks },
 ]
 
