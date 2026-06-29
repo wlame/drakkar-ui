@@ -1,22 +1,21 @@
 // Event-type semantics shared by the History, Trace, Partition-detail, Task-detail
 // and Live pages. The Python reference encodes these as inline Tailwind classes;
-// here they are data (a lookup table) keyed by event name, using brighter shades
-// chosen to read well on the dark ops-console theme rather than the reference's
-// light cream/ink palette.
+// here they are data (a lookup table) keyed by event name, using the reference's
+// saturated 600-level shades that read well on the light cream/ink palette.
 
-// Semantic palette — bright enough to sit on the dark surfaces in app.css.
+// Semantic palette — saturated enough to sit on the light surfaces in app.css.
 export const COLOR = {
-  blue: '#60a5fa',
-  teal: '#2dd4bf',
-  amber: '#fbbf24',
-  emerald: '#34d399',
-  red: '#f87171',
-  purple: '#c084fc',
-  violet: '#a78bfa',
-  lilac: '#c4b5fd',
-  magenta: '#d8b4fe',
-  gray: '#8b93ad',
-  http: '#c084fc',
+  blue: '#2563eb',
+  teal: '#0d9488',
+  amber: '#d97706',
+  emerald: '#059669',
+  red: '#dc2626',
+  purple: '#9333ea',
+  violet: '#7c3aed',
+  lilac: '#8b5cf6',
+  magenta: '#c026d3',
+  gray: '#6b7280',
+  http: '#9333ea',
 } as const
 
 // EVENT_COLORS maps a recorder event name to its accent color. Unknown events

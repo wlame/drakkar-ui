@@ -81,10 +81,10 @@
 
   function statusColorOf(id: string): string {
     const s = states[id]?.status
-    if (s === 'completed') return '#34d399'
-    if (s === 'failed') return '#f87171'
-    if (s === 'running') return '#fbbf24'
-    return '#8b93ad'
+    if (s === 'completed') return '#059669'
+    if (s === 'failed') return '#dc2626'
+    if (s === 'running') return '#d97706'
+    return '#6b7280'
   }
 </script>
 
@@ -112,9 +112,9 @@
           <td class="num mono"><a href={`/partitions/${a.partition}`} use:link onclick={(e) => e.stopPropagation()}>{a.partition}</a></td>
           <td class="num mono">{a.message_count}</td>
           <td class="mono">
-            {#if c.done}<span style:color="#34d399">{c.done}</span>{/if}
-            {#if c.running}<span style:color="#fbbf24"> {c.running}</span>{/if}
-            {#if c.failed}<span style:color="#f87171"> {c.failed}</span>{/if}
+            {#if c.done}<span style:color="#059669">{c.done}</span>{/if}
+            {#if c.running}<span style:color="#d97706"> {c.running}</span>{/if}
+            {#if c.failed}<span style:color="#dc2626"> {c.failed}</span>{/if}
             {#if c.unknown}<span class="muted"> {c.unknown}</span>{/if}
             <span class="muted"> / {c.total}</span>
           </td>

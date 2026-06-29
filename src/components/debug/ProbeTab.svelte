@@ -182,7 +182,7 @@
               <td>{t.precomputed ? '✓' : ''}</td>
               <td class="num mono">{durSec(t.duration_seconds)}</td>
               <td class="num mono">{t.stdout.length || ''}</td>
-              <td class="num mono" style:color={t.stderr.length ? '#f87171' : undefined}>{t.stderr.length || ''}</td>
+              <td class="num mono" style:color={t.stderr.length ? '#dc2626' : undefined}>{t.stderr.length || ''}</td>
             </tr>
           {/each}
         </tbody>
@@ -246,7 +246,7 @@
               <td class="mono">{c.op}</td>
               <td class="mono">{c.key}</td>
               <td class="mono">{c.scope ?? '-'}</td>
-              <td><span style:color={c.outcome === 'hit' ? '#34d399' : c.outcome === 'suppressed' ? '#60a5fa' : '#8b93ad'}>{c.outcome}</span></td>
+              <td><span style:color={c.outcome === 'hit' ? '#059669' : c.outcome === 'suppressed' ? '#2563eb' : '#6b7280'}>{c.outcome}</span></td>
               <td class="muted preview">{c.value_preview ?? ''}</td>
             </tr>
           {/each}
@@ -258,10 +258,10 @@
   <!-- Errors -->
   {#if report.errors.length}
     <section class="card">
-      <h3 style:color="#f87171">Errors ({report.errors.length})</h3>
+      <h3 style:color="#dc2626">Errors ({report.errors.length})</h3>
       {#each report.errors as err, i (i)}
         <details>
-          <summary><span style:color="#f87171">{err.stage}</span> — {err.exception_class}: {err.message}</summary>
+          <summary><span style:color="#dc2626">{err.stage}</span> — {err.exception_class}: {err.message}</summary>
           <pre class="block">{err.traceback}</pre>
         </details>
       {/each}
@@ -356,7 +356,7 @@
     border-radius: 8px;
     background: rgba(251, 191, 36, 0.15);
     border: 1px solid rgba(251, 191, 36, 0.4);
-    color: #fbbf24;
+    color: #d97706;
     margin-bottom: 1rem;
   }
   .toolbar {

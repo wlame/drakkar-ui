@@ -96,7 +96,7 @@
       <span class="muted">—</span>
     {:else}
       {#each allPartitions as p}
-        <button class="toggle" class:on={selected.has(p)} onclick={() => togglePartition(p)}>P{p}</button>
+        <button class="toggle" class:on={selected.has(p)} onclick={() => togglePartition(p)}>{p}</button>
       {/each}
     {/if}
   </div>
@@ -192,9 +192,7 @@
     flex-wrap: wrap;
   }
   .filter .label {
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    font-size: 0.75rem;
     color: var(--muted);
     min-width: 9rem;
   }

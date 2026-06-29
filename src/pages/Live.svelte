@@ -294,7 +294,7 @@
   <span class="badge status-{status}">WS: {statusLabel[status]}</span>
   <button class="freeze" class:on={frozen} onclick={() => setFrozen(!frozen)}>{frozen ? 'Frozen' : 'Live'}</button>
   <span class="spacer"></span>
-  <span class="pool">Pool <span class="mono">{pool.active}/{pool.max}</span>{#if pool.waiting} · waiting <span class="mono">{pool.waiting}</span>{/if}</span>
+  <span class="pool">Pool: <span class="mono">{pool.active} / {pool.max}</span> slots{#if pool.waiting}, <span class="mono">{pool.waiting}</span> waiting{/if}</span>
 </div>
 
 <div class="tabs">
@@ -311,20 +311,27 @@
   </div>
   <Timeline tasks={tasksList} {laneCount} paused={frozen} />
 
-  <h2>Finished</h2>
+  <h2>Finished <span class="count">({finished.length})</span></h2>
   {#if finished.length === 0}
     <p class="muted">No finished tasks.</p>
   {:else}
     <table>
       <thead>
-        <tr><th>Task ID</th><th class="num">Partition</th><th>Status</th><th class="num">Duration</th><th>Time</th><th>Args</th></tr>
+        <tr><th>Task ID</th><th class="num">Partition</th><th>Labels</th><th>Status</th><th class="num">Duration</th><th>Time</th><th>CLI Args</th></tr>
       </thead>
       <tbody>
         {#each finished as t (t.task_id)}
           <tr>
             <td class="mono"><a href={`/task/${encodeURIComponent(baseTaskId(t.task_id))}`} use:link>{t.task_id}</a></td>
             <td class="num mono">{t.partition ?? '-'}</td>
-            <td><span style:color={t.status === 'failed' ? '#f87171' : '#34d399'}>{t.status}</span></td>
+            <td>
+              {#if t.labels}
+                <span class="lchips">
+                  {#each Object.entries(t.labels) as [k, v]}<span class="lchip">{k}={v}</span>{/each}
+                </span>
+              {/if}
+            </td>
+            <td><span style:color={t.status === 'failed' ? '#dc2626' : '#059669'}>{t.status}</span></td>
             <td class="num mono">{t.duration != null ? dur3(t.duration) : '-'}</td>
             <td class="muted nowrap" title={fmtTimeMs(t.end_ts)}>{fmtTime(t.end_ts)}</td>
             <td>{#if t.args}<Expandable text={t.args} />{/if}</td>
@@ -342,6 +349,25 @@
 {/if}
 
 <style>
+  .count {
+    color: var(--muted);
+    font-weight: 400;
+    font-size: 0.9rem;
+  }
+  .lchips {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+  .lchip {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    color: var(--accent);
+    background: #f0fdfa;
+    border: 1px solid #99f6e4;
+    border-radius: 4px;
+    padding: 0.05rem 0.3rem;
+  }
   .head {
     display: flex;
     align-items: center;
@@ -362,16 +388,16 @@
     border: 1px solid var(--line);
   }
   .status-connected {
-    color: #34d399;
+    color: #059669;
     border-color: rgba(52, 211, 153, 0.5);
   }
   .status-connecting {
-    color: #fbbf24;
+    color: #d97706;
   }
   .status-disconnected,
   .status-unauthorized,
   .status-forbidden {
-    color: #f87171;
+    color: #dc2626;
     border-color: rgba(248, 113, 113, 0.5);
   }
   .freeze {
@@ -379,8 +405,8 @@
     padding: 0.25rem 0.7rem;
   }
   .freeze.on {
-    color: #60a5fa;
-    border-color: #60a5fa;
+    color: #2563eb;
+    border-color: #2563eb;
   }
   .pool {
     font-size: 0.85rem;
@@ -405,7 +431,7 @@
   }
   .tab.active {
     color: var(--text);
-    border-bottom-color: #2dd4bf;
+    border-bottom-color: #0d9488;
   }
   .pool-bar {
     height: 0.5rem;
@@ -416,7 +442,7 @@
   }
   .pool-fill {
     height: 100%;
-    background: #34d399;
+    background: #059669;
     transition: width 200ms ease;
   }
   .nowrap {

@@ -102,6 +102,6 @@
   }
   .tab.active {
     color: var(--text);
-    border-bottom-color: #2dd4bf;
+    border-bottom-color: #0d9488;
   }
 </style>

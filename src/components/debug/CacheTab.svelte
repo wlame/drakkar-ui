@@ -20,7 +20,7 @@
   let detail = $state<CacheEntryDetail | null>(null)
   let detailError = $state<string | null>(null)
 
-  const SCOPE_COLORS: Record<string, string> = { local: '#fbbf24', cluster: '#60a5fa', global: '#34d399' }
+  const SCOPE_COLORS: Record<string, string> = { local: '#d97706', cluster: '#2563eb', global: '#059669' }
 
   async function loadStats() {
     try {
@@ -93,8 +93,8 @@
 
 {#if stats}
   <div class="stats">
-    <div class="stat"><span class="k">Entries (memory)</span><span class="v">{stats.entries_in_memory}</span></div>
-    <div class="stat"><span class="k">Bytes (memory)</span><span class="v">{fmtBytes(stats.bytes_in_memory)}</span></div>
+    <div class="stat"><span class="k">Entries (memory)</span><span class="v" style:color="var(--accent)">{stats.entries_in_memory}</span></div>
+    <div class="stat"><span class="k">Bytes (memory)</span><span class="v" style:color="var(--accent)">{fmtBytes(stats.bytes_in_memory)}</span></div>
     <div class="stat"><span class="k">Entries (DB)</span><span class="v">{stats.entries_in_db}</span></div>
     <div class="stat"><span class="k">Bytes (DB)</span><span class="v">{fmtBytes(stats.bytes_in_db)}</span></div>
   </div>

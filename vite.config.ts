@@ -11,6 +11,18 @@ import { svelte } from '@sveltejs/vite-plugin-svelte'
 // iterate. Point it elsewhere with DRAKKAR_BACKEND.
 const backend = process.env.DRAKKAR_BACKEND ?? 'http://127.0.0.1:8080'
 
+// The Go backend serves the versioned contract at /api/v1; the Python reference
+// (pydrakkar) serves the same shapes UNVERSIONED at /api. Set
+// DRAKKAR_API_UNVERSION=1 to strip the /v1 segment when proxying, so the SPA can
+// run against the Python reference for parity checks. Off by default (the
+// production target is the Go backend, which keeps /v1).
+const unversion = process.env.DRAKKAR_API_UNVERSION === '1'
+const apiProxy = {
+  target: backend,
+  changeOrigin: true,
+  ...(unversion ? { rewrite: (p: string) => p.replace(/^\/api\/v1/, '/api') } : {}),
+}
+
 export default defineConfig({
   plugins: [svelte()],
   build: {
@@ -22,7 +34,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': { target: backend, changeOrigin: true },
+      '/api': apiProxy,
       '/ws': { target: backend, ws: true, changeOrigin: true },
       '/healthz': { target: backend, changeOrigin: true },
       '/readyz': { target: backend, changeOrigin: true },
