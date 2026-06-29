@@ -1,0 +1,50 @@
+name: release
+
+# Publish the static UI bundle when a vX.Y.Z tag is pushed. The release asset
+# is a .tar.gz whose files sit at the ARCHIVE ROOT (index.html at the top
+# level) — the exact shape every Drakkar backend's uihost fetcher expects
+# (it picks the first .tar.gz asset and requires index.html at the root).
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # create the GitHub Release and upload the asset
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      # --frozen-lockfile pins to the committed bun.lock for reproducible,
+      # supply-chain-safe installs (fails if package.json and the lockfile drift).
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build static bundle
+        run: bun run build
+
+      - name: Package bundle (index.html at archive root)
+        run: |
+          set -euo pipefail
+          tarball="drakkar-ui-${GITHUB_REF_NAME}.tar.gz"
+          tar -czf "$tarball" -C dist .
+          echo "TARBALL=$tarball" >> "$GITHUB_ENV"
+          echo "Packaged $tarball — top-level entries:"
+          tar -tzf "$tarball" | head
+          # Fail loudly if index.html is not at the archive root.
+          tar -tzf "$tarball" | grep -qx './index.html' \
+            || { echo "ERROR: index.html is not at the archive root"; exit 1; }
+
+      - name: Create release and upload bundle
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.TARBALL }}
+          generate_release_notes: true

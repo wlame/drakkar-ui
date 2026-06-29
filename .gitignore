@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+.bun/
+
+# Build output (published as a release asset, never committed)
+dist/
+
+# Local env / editor / OS
+*.local
+.env
+.env.*
+.DS_Store
+.idea/
+*.swp
+
+# Packaged bundles produced by build.sh bundle
+drakkar-ui-*.tar.gz
+
+# Agent working notes (process scaffolding, not product docs)
+.port-prompt.md
+
+# Python reference implementation — copied in for reading only, never part of this product
+pydrakkar/
+
+# Claude working files (analysis, plans, notes) — never part of this product
+.claude/
+
+# vibrator workspace pin — may contain plaintext prereq tokens
+.vb
