@@ -49,9 +49,25 @@ the appendix.
 ### Core
 - `GET /api/v1/dashboard` → `{uptime:float, stats:{<event>:int,...,
   total_events:int}, partition_count:int, partitions:[int...], pool_active:int,
-  pool_max:int, total_lag:int, webapp_tile?:{...}}`. `webapp_tile` key present
-  only when the webapp pipeline is enabled (key presence = feature flag).
-  `webapp_tile.clients[]` element: `{name:str, rpm_limit:int}`.
+  pool_max:int, total_lag:int, webapp_tile?:{...}, links?:{...}}`. `webapp_tile`
+  key present only when the webapp pipeline is enabled (key presence = feature
+  flag). `webapp_tile.clients[]` element: `{name:str, rpm_limit:int}`.
+  - `links` (optional, v1.1) — Prometheus/custom dashboard links. Key presence =
+    feature flag: a backend without Prometheus/custom links configured omits it
+    entirely and the UI renders none of the link sections. Shape:
+    `{card_links:{lag?|consumed?|completed?|failed?|produced?:str},
+    worker_links:[{category:str, links:[[name:str, url:str],...]},...],
+    cluster_links:[{category:str, links:[[name:str, url:str],...]},...],
+    custom_links:[{<key>:str,...},...]}`. `card_links` attaches an
+    external-link icon to the matching stat tile; `worker_links` /
+    `cluster_links` render as titled link-card grids; `custom_links` entries are
+    the configured dicts, typically `{name, url}`.
+- `GET /api/v1/identity` (v1.1) → `{worker_id:str, cluster:str|null,
+  config_summary:str}`. Worker self-identity; `config_summary` is the one-line
+  human-readable config string the reference debug page shows in its banner
+  (may be empty). Auth as all `/api/*` routes. v1-only — no legacy unprefixed
+  `/api/identity` alias. Older backends 404; the UI degrades gracefully (plain
+  page heading instead of the banner).
 - `GET /api/v1/partitions` → array of per-partition rows: partition-summary
   columns (`partition, last_consumed, last_committed, last_committed_offset,
   consumed_count, completed_count, failed_count`) enriched per row with
@@ -195,6 +211,18 @@ column as optional.
 - No DB-file **delete** endpoint (merged files accumulate in db_dir).
 - No checksum/signature on UI bundle release assets (backends validate
   structurally: `index.html` at archive root).
+
+## v1.1 additions (2026-07-03)
+
+Two additive, backward-compatible extensions for dashboard/debug parity with
+the Python reference pages:
+
+- dashboard `links?` key (Prometheus card/worker/cluster links + custom links) —
+  optional; key presence = feature flag. The Go backend currently omits it;
+  the Python backend emits it when Prometheus/custom links are configured.
+- `GET /api/v1/identity` (worker_id, cluster, config_summary) — feeds the debug
+  page's config-summary banner. Backends without it 404; the UI falls back to
+  the plain heading.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 

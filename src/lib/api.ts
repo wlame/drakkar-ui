@@ -13,6 +13,7 @@ import type {
   DbInfo,
   DebugReport,
   EventRow,
+  Identity,
   LiveOverview,
   MergeResult,
   MetricFamily,
@@ -126,6 +127,7 @@ export interface EventsQuery {
 export const api = {
   // Core pages
   dashboard: () => get<Dashboard>('/dashboard'),
+  identity: () => get<Identity>('/identity'),
   partitions: () => get<Partition[]>('/partitions'),
   sinks: () => get<SinkStatus[]>('/sinks'),
   workers: () => get<WorkerPeer[]>('/workers'),
