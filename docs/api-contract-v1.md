@@ -57,11 +57,12 @@ the appendix.
     entirely and the UI renders none of the link sections. Shape:
     `{card_links:{lag?|consumed?|completed?|failed?|produced?:str},
     worker_links:[{category:str, links:[[name:str, url:str],...]},...],
-    cluster_links:[{category:str, links:[[name:str, url:str],...]},...],
+    cluster_links:[[name:str, url:str],...],
     custom_links:[{<key>:str,...},...]}`. `card_links` attaches an
-    external-link icon to the matching stat tile; `worker_links` /
-    `cluster_links` render as titled link-card grids; `custom_links` entries are
-    the configured dicts, typically `{name, url}`.
+    external-link icon to the matching stat tile; `worker_links` render as a
+    titled link-card grid; `cluster_links` and `custom_links` render as single
+    flat wrap-list cards. `custom_links` entries are the configured dicts,
+    typically `{name, url}`.
 - `GET /api/v1/identity` (v1.1) → `{worker_id:str, cluster:str|null,
   config_summary:str}`. Worker self-identity; `config_summary` is the one-line
   human-readable config string the reference debug page shows in its banner
