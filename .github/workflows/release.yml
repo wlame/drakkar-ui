@@ -30,6 +30,10 @@ jobs:
 
       - name: Build static bundle
         run: bun run build
+        env:
+          # Stamp the SPA with the release tag (shown in the header, injected
+          # via vite define).
+          DRAKKAR_UI_VERSION: ${{ github.ref_name }}
 
       - name: Package bundle (index.html at archive root)
         run: |

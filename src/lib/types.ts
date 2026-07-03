@@ -215,10 +215,36 @@ export interface WsEvent {
   request_id?: string | null
 }
 
-// Optional bootstrap for the Live page (pool sizes, tuning, hook flags, kafka-ui
-// config). Not present in the Python reference (inlined into the page render); the
-// versioned contract is expected to expose it. All fields optional → graceful.
+// Composed single-task detail returned by GET /api/v1/task/{id} (contract §New
+// endpoints). The event rows carry stdout/stderr; the scalar fields are the
+// server-side derivation of the same lifecycle the page reconstructs client-side.
+export interface TaskDetailResponse {
+  task_id: string
+  events: EventRow[]
+  started: EventRow | null
+  completed: EventRow | null
+  failed: EventRow | null
+  duration: number | null
+  source_offsets?: unknown
+  args?: unknown
+  labels?: unknown
+  task_env?: unknown
+  partition: number | null
+  pid: number | null
+  exit_code: number | null
+  binary_path?: string | null
+  origin?: string
+  client_name?: string | null
+  request_id?: string | null
+  webapp_request_body?: unknown
+  webapp_response_body?: unknown
+}
+
+// Bootstrap snapshot for the whole app (pool sizes, tuning, hook flags, kafka-ui
+// config) from GET /api/v1/live/overview. Fetched once at boot to hydrate the
+// runtime config and again by the Live page. All fields optional → graceful.
 export interface LiveOverview {
+  worker_id?: string
   pool_active?: number
   pool_max?: number
   pool_waiting?: number

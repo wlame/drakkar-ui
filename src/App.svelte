@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { api } from './lib/api'
+  import { hydrateFromOverview } from './lib/config'
   import { currentPath, link } from './lib/router'
   import { navItems, resolve } from './lib/routes'
   import WorkerSwitcher from './components/WorkerSwitcher.svelte'
@@ -30,6 +32,14 @@
   }
 
   onMount(() => {
+    // Hydrate the shared runtime config (Kafka-UI deep links, row/duration
+    // tuning) once at boot so it works on every page, not just after visiting
+    // Live. Tolerates a backend without the overview endpoint.
+    api
+      .liveOverview()
+      .then(hydrateFromOverview)
+      .catch(() => {})
+
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   })
@@ -55,6 +65,7 @@
       </nav>
     </div>
     <span class="spacer"></span>
+    <span class="version" title="drakkar-ui {__APP_VERSION__}">{__APP_VERSION__}</span>
     <SinkLinks />
     <div class="tools">
       <button class="width-toggle" onclick={() => (wide = !wide)} title="Toggle full width (f)" aria-label="Toggle full width">
@@ -136,6 +147,11 @@
   }
   .spacer {
     flex: 1;
+  }
+  .version {
+    color: #6b7280;
+    font-size: 0.75rem;
+    white-space: nowrap;
   }
   .tools {
     display: flex;

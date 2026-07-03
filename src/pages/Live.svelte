@@ -8,7 +8,7 @@
   import { api } from '../lib/api'
   import type { ArrangeTaskState, TaskResult, MessageResult, WindowResult, WsEvent } from '../lib/api'
   import { hash, setHash, link } from '../lib/router'
-  import { setConfig } from '../lib/config'
+  import { hydrateFromOverview } from '../lib/config'
   import { createLiveSocket, type WsStatus, type LiveSocket } from '../lib/ws'
   import { fmtTime, fmtTimeMs, dur3, safeJsonParse } from '../lib/format'
   import {
@@ -259,13 +259,7 @@
             window_complete: !!o.hook_flags.window_complete,
           }
         }
-        setConfig({
-          ...(o.kafka_ui_base != null ? { kafkaUiBase: o.kafka_ui_base } : {}),
-          ...(o.kafka_ui_cluster != null ? { kafkaUiCluster: o.kafka_ui_cluster } : {}),
-          ...(o.kafka_source_topic != null ? { kafkaSourceTopic: o.kafka_source_topic } : {}),
-          ...(o.max_ui_rows != null ? { maxUiRows: o.max_ui_rows } : {}),
-          ...(o.ws_min_duration_ms != null ? { wsMinDurationMs: o.ws_min_duration_ms } : {}),
-        })
+        hydrateFromOverview(o)
         void reloadFeeds()
       })
       .catch(() => {})

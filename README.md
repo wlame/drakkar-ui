@@ -27,8 +27,9 @@ a small host that resolves and serves whichever bundle version it is pinned to.
 drakkar-ui is backend-agnostic because every backend implements one identical,
 versioned JSON/WS contract under **`/api/v1`** (probes `/healthz` and `/readyz`
 stay unprefixed). The UI only ever talks to `/api/v1/*` and `/ws`; it never
-assumes anything backend-specific. See the backend repo's contract specification
-for the full endpoint catalog and canonical response shapes.
+assumes anything backend-specific. The contract is a requirement this repo
+places on backends — the full endpoint catalog and canonical response shapes
+are pinned in [`docs/api-contract-v1.md`](docs/api-contract-v1.md).
 
 Auth follows the backend's opt-in model: when a bearer token is configured, the
 UI reads it from a `?token=` query parameter (remembered in `localStorage`) and
@@ -97,13 +98,19 @@ drakkar-ui update                      # download the latest release into the ca
 ```
 src/
   main.ts            SPA entry (Svelte 5 mount)
-  App.svelte         top-level layout + nav
-  app.css            global dark "ops console" theme
+  App.svelte         top-level layout + nav (boot-hydrates runtime config)
+  app.css            global light "cream + ink" theme (design tokens)
   lib/
     router.ts        minimal History-API router (store + <a use:link>)
     routes.ts        data-driven route table (path → page component)
     api.ts           typed client for the /api/v1 contract
-  pages/             one component per route (Dashboard, Partitions, Sinks, …)
+    types.ts         the contract shapes (mirrors docs/api-contract-v1.md)
+    config.ts        shared runtime config (kafka-ui links, tuning)
+    ws.ts            live WebSocket client (reconnect, freeze)
+    events.ts, format.ts, kafka.ts, live.ts   presentation helpers
+  pages/             one component per route (Dashboard … Live, Debug)
+  components/        shared chrome + live/ and debug/ tab components
+docs/                api-contract-v1.md — the backend contract this UI consumes
 public/              static assets copied to the bundle root (favicon)
 build.sh             Dockerized Bun toolchain
 .github/workflows/   ci.yml (build + type-check), release.yml (publish bundle)
@@ -111,12 +118,12 @@ build.sh             Dockerized Bun toolchain
 
 ## Status
 
-This is an early scaffold: the architecture, build, and release pipeline are in
-place, with a working Dashboard / Partitions / Sinks skeleton against the live
-contract. Remaining pages (live view, task detail, history, debug tools, cache
-browser) are added by dropping a component into `src/pages/` and a row into
-`src/lib/routes.ts` — the contract endpoints they need already exist on the
-backends.
+All operator pages of the Python reference UI are implemented against the v1
+contract: Dashboard, Partitions (+ detail), Task detail, History, Sinks, the
+WebSocket-fed Live pipeline view (arrange/execute timeline + completion-hook
+tabs), and the Debug tools page (metrics, periodic, trace, message probe, cache
+browser, databases). The build and release pipeline is in place; test coverage
+and a visual parity audit against the reference UI are the current focus.
 
 ## License
 

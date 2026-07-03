@@ -15,10 +15,12 @@ EOF
 }
 
 # run_bun executes "bun <args>" inside the container with the repo mounted.
+# DRAKKAR_UI_VERSION is forwarded so vite can stamp the bundle (see vite.config.ts).
 run_bun() {
     docker run --rm \
         -v "$(pwd):/app" \
         -w /app \
+        -e "DRAKKAR_UI_VERSION=${DRAKKAR_UI_VERSION:-dev}" \
         "$IMAGE_NAME" \
         bun "$@"
 }
@@ -45,7 +47,7 @@ dev() {
 # uploads and any Drakkar backend's uihost fetcher expects.
 bundle() {
     local version="${1:-dev}"
-    build
+    DRAKKAR_UI_VERSION="$version" build
     local tarball="drakkar-ui-${version}.tar.gz"
     tar -czf "$tarball" -C dist .
     echo "packaged ${tarball}:"

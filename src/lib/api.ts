@@ -1,8 +1,8 @@
 // Typed client for the shared Drakkar /api/v1 JSON contract. Every Drakkar
 // backend — the Python reference and the Go port — serves this identical
 // contract, which is exactly what lets one static UI work against any of them.
-// The full endpoint catalog and canonical shapes are pinned in the backend
-// repo's contract spec (api-contract-v1.md); the shapes live in ./types.
+// The full endpoint catalog and canonical shapes are pinned in this repo's
+// docs/api-contract-v1.md; the shapes live in ./types.
 
 import type {
   ArrangeTaskState,
@@ -21,6 +21,7 @@ import type {
   ProbeRequest,
   RecentTasksResponse,
   SinkStatus,
+  TaskDetailResponse,
   TaskResult,
   MessageResult,
   WindowResult,
@@ -131,7 +132,7 @@ export const api = {
 
   // Events / tasks / history
   events: (q: EventsQuery = {}) => get<EventRow[]>(`/events${qs({ ...q })}`),
-  task: (id: string) => get<EventRow[]>(`/task/${encodeURIComponent(id)}`),
+  task: (id: string) => get<TaskDetailResponse>(`/task/${encodeURIComponent(id)}`),
   recentTasks: (minutes = 2) => get<RecentTasksResponse>(`/recent-tasks${qs({ minutes })}`),
 
   // Live
