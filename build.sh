@@ -6,10 +6,16 @@ set -euo pipefail
 IMAGE_NAME="drakkar-ui-builder"
 BUN_VERSION="${BUN_VERSION:-latest}"
 
-# Build the builder image (a thin oven/bun layer) if needed.
+# Build the builder image (a thin oven/bun layer) if needed. Node is added
+# alongside Bun solely for the dev server: Bun's http compatibility layer
+# hangs vite's /ws proxy upgrade (HTTP proxying works, WebSocket frames
+# never flow), so `dev` runs vite under node while install/build/check stay
+# on bun.
 build_image() {
     docker build -t "$IMAGE_NAME" -f- . <<EOF
+FROM node:22-bookworm-slim AS node
 FROM oven/bun:${BUN_VERSION}
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
 WORKDIR /app
 EOF
 }
@@ -30,16 +36,20 @@ build()   { run_bun run build; }
 check()   { run_bun run check; }
 
 # dev runs the Vite dev server with hot reload. Pass a port (default 5173) and
-# DRAKKAR_BACKEND to proxy /api + /ws at a running worker.
+# DRAKKAR_BACKEND to proxy /api + /ws at a running worker. host.docker.internal
+# is mapped to the host gateway explicitly so the default backend URL also
+# resolves on Linux (Docker Desktop provides it out of the box, plain dockerd
+# does not).
 dev() {
     local port="${1:-5173}"
     docker run --rm -it \
         -v "$(pwd):/app" \
         -w /app \
         -p "${port}:${port}" \
+        --add-host=host.docker.internal:host-gateway \
         -e "DRAKKAR_BACKEND=${DRAKKAR_BACKEND:-http://host.docker.internal:8080}" \
         "$IMAGE_NAME" \
-        bun run dev --host=0.0.0.0 --port="$port"
+        node node_modules/vite/bin/vite.js --host=0.0.0.0 --port="$port"
 }
 
 # bundle builds the static SPA and packages dist/ into a release-shaped tarball
