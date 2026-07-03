@@ -34,9 +34,11 @@
   let reqId = 0
 
   // The partition toggle set = configured partitions ∪ any seen in the feed.
+  // Negative synthetic partitions (e.g. -1 for history/system events) get a
+  // chip too, matching the reference.
   const allPartitions = $derived.by<number[]>(() => {
     const set = new Set<number>(dashboardPartitions)
-    for (const e of rows ?? []) if (e.partition != null && e.partition >= 0) set.add(e.partition)
+    for (const e of rows ?? []) if (e.partition != null) set.add(e.partition)
     return [...set].sort((a, b) => a - b)
   })
 
@@ -184,17 +186,16 @@
 {/if}
 
 <style>
+  /* Reference stacks each filter label above its controls. */
   .filter {
     display: flex;
-    align-items: baseline;
-    gap: 0.75rem;
-    margin: 0.6rem 0;
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin: 0.9rem 0;
   }
   .filter .label {
     font-size: 0.75rem;
     color: var(--muted);
-    min-width: 9rem;
   }
   .toggles,
   .checks {
@@ -233,8 +234,7 @@
     color: #fff;
   }
   .actions .count {
-    margin-left: auto;
-    font-size: 0.85rem;
+    font-size: 0.85rem; /* sits next to Reset like the reference's row counter */
   }
   .nowrap {
     white-space: nowrap;

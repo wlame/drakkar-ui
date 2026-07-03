@@ -62,7 +62,7 @@
       {#each rows as s (`${s.sink_type}/${s.name}`)}
         <tr>
           <td class="mono">{s.sink_type}</td>
-          <td class="mono" style:color={COLOR.teal}>{s.name}</td>
+          <td class="mono name" style:color={COLOR.teal}>{s.name}</td>
           <td class="num mono" style:color={COLOR.emerald}>{s.delivered_count}</td>
           <td class="num mono">{s.delivered_payloads}</td>
           <td class="num mono" style:color={s.error_count > 0 ? COLOR.red : undefined}>{s.error_count}</td>
@@ -81,5 +81,8 @@
 <style>
   .nowrap {
     white-space: nowrap;
+  }
+  .name {
+    font-weight: 600; /* reference: font-mono font-semibold sink names */
   }
 </style>

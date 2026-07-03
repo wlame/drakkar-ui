@@ -81,10 +81,12 @@
             <span class="dot" class:live={p.is_live}></span>
             <span class="muted">{p.is_live ? 'live' : 'history'}</span>
           </td>
-          <td class="muted nowrap" title={fmtTimeMs(p.last_consumed)}>{fmtTime(p.last_consumed) || '—'}</td>
-          <td class="muted nowrap" title={fmtTimeMs(p.last_committed)}>{fmtTime(p.last_committed) || '—'}</td>
-          <td class="num mono">{p.committed_offset || '—'}</td>
-          <td class="num mono">{p.high_watermark || '—'}</td>
+          <!-- Reference leaves missing timestamps blank and prints "-" only for
+               null offsets (0 is a real offset, keep it). -->
+          <td class="muted nowrap" title={fmtTimeMs(p.last_consumed)}>{fmtTime(p.last_consumed)}</td>
+          <td class="muted nowrap" title={fmtTimeMs(p.last_committed)}>{fmtTime(p.last_committed)}</td>
+          <td class="num mono">{p.committed_offset ?? '-'}</td>
+          <td class="num mono">{p.high_watermark ?? '-'}</td>
           <td class="num mono" style:color={lagColor(p.lag)}>{p.lag}</td>
           <td class="num mono">{p.queue_size}</td>
           <td class="num mono">{p.pending_offsets}</td>

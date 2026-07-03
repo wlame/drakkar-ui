@@ -47,7 +47,7 @@
   <div class="tiles">
     <div class="tile"><span class="k">Uptime</span><span class="v">{fmtUptime(data.uptime)}</span></div>
     <div class="tile"><span class="k">Partitions</span><span class="v">{data.partition_count}</span></div>
-    <div class="tile"><span class="k">Executor Pool</span><span class="v">{data.pool_active}/{data.pool_max}</span></div>
+    <div class="tile"><span class="k">Executor Pool</span><span class="v">{data.pool_active} / {data.pool_max}</span></div>
     <div class="tile"><span class="k">Total Events</span><span class="v">{data.stats.total_events ?? 0}</span></div>
     <div class="tile"><span class="k">Consumer Lag</span><span class="v" style:color={lagColor(data.total_lag)}>{data.total_lag}</span></div>
   </div>
@@ -92,20 +92,22 @@
     gap: 0.35rem;
     padding: 1rem;
     border: 1px solid var(--line);
-    border-radius: 10px;
+    border-radius: 8px;
     background: var(--panel);
   }
   .tile .k {
     font-size: 0.8rem;
     color: var(--muted);
   }
+  /* Reference stat values are text-2xl font-mono (normal weight); the
+     secondary row steps down to text-xl. */
   .tile .v {
-    font-size: 1.75rem;
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
+    font-size: 1.5rem;
+    font-weight: 400;
+    font-family: var(--mono);
   }
   .secondary .tile .v {
-    font-size: 1.75rem;
+    font-size: 1.25rem;
   }
   .partitions {
     display: flex;

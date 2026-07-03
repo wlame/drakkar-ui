@@ -22,6 +22,14 @@ export interface TaskView {
   client_name: string | null
   request_id: string | null
   stdout_size: number | null
+  // Stdin/env/source_offsets only arrive on WS task_started frames (the
+  // /recent-tasks resync doesn't carry them) — kept nullable and merged
+  // across resyncs so the finished-table Stdin column and the timeline
+  // hover detail can render them like the reference.
+  stdin_lines: number | null
+  stdin_size: number | null
+  env: Record<string, string> | null
+  source_offsets: number[] | null
 }
 
 // baseTaskId strips a `:r<ts>` retry suffix so links and lookups use the canonical id.
@@ -46,6 +54,10 @@ export function taskFromRecent(r: RecentTask): TaskView {
     client_name: r.client_name,
     request_id: r.request_id,
     stdout_size: null,
+    stdin_lines: null,
+    stdin_size: null,
+    env: r.env,
+    source_offsets: null,
   }
 }
 

@@ -8,9 +8,9 @@
   import { api } from '../lib/api'
   import type { ArrangeTaskState, TaskResult, MessageResult, WindowResult, WsEvent } from '../lib/api'
   import { hash, setHash, link } from '../lib/router'
-  import { hydrateFromOverview } from '../lib/config'
+  import { hydrateFromOverview, runtimeConfig } from '../lib/config'
   import { createLiveSocket, type WsStatus, type LiveSocket } from '../lib/ws'
-  import { fmtTime, fmtTimeMs, dur3, safeJsonParse } from '../lib/format'
+  import { fmtTimeMs, dur2, fmtBytes, safeJsonParse } from '../lib/format'
   import {
     baseTaskId,
     taskFromRecent,
@@ -72,6 +72,31 @@
     const name = $hash.replace(/^#/, '') as Tab
     return availableTabs.includes(name) ? name : 'execute'
   })
+  // One-line explainer under the heading, switching with the active tab
+  // (verbatim from the reference's tabHints map).
+  const TAB_HINTS: Record<Tab, string> = {
+    arrange:
+      'Arrange is called after message polling for each partition. It receives a batch of messages and creates executor Tasks with CLI params to run.',
+    execute:
+      'Executors run CPU-bound Tasks as subprocesses with prepared CLI args, capturing stdout/stderr. Limited by the pool semaphore.',
+    'task-results':
+      "on_task_complete() runs after each task's subprocess exits. One row per call — shows exec runtime, hook runtime, and the number of sink payloads dispatched.",
+    'message-results':
+      "on_message_complete() runs after every task derived from one source message reaches a terminal state. Rows aggregate the message's fan-out outcomes.",
+    'window-results':
+      'on_window_complete() runs after every task in one arrange() window finishes. Rows summarize the whole window.',
+  }
+
+  // Pool utilization bar: green under 50%, amber to 80%, red above — the
+  // reference's bg-emerald-400 / bg-amber-400 / bg-red-400 thresholds.
+  const poolPct = $derived(pool.max > 0 ? Math.min(100, (pool.active / pool.max) * 100) : 0)
+  const poolColor = $derived(poolPct > 80 ? '#f87171' : poolPct > 50 ? '#fbbf24' : '#34d399')
+
+  // Stdin cell: "-" when the task read nothing, otherwise lines + byte size.
+  function fmtStdin(t: TaskView): string {
+    if (!t.stdin_size) return '-'
+    return `${t.stdin_lines ?? 0} lines, ${fmtBytes(t.stdin_size)}`
+  }
 
   const statusLabel: Record<WsStatus, string> = {
     connecting: 'connecting',
@@ -96,6 +121,9 @@
         if (existing && existing.status !== 'running') {
           allTasks[`${e.task_id}:r${existing.start_ts}`] = existing
         }
+        // The recorder's task_started metadata carries env + source_offsets
+        // (used by the timeline hover detail, like the reference).
+        const meta = safeJsonParse<Record<string, unknown>>(e.metadata ?? undefined, {})
         allTasks[e.task_id] = {
           task_id: e.task_id,
           partition: e.partition ?? null,
@@ -112,6 +140,12 @@
           client_name: e.client_name ?? null,
           request_id: e.request_id ?? null,
           stdout_size: null,
+          stdin_lines: e.stdin_lines ?? null,
+          stdin_size: e.stdin_size ?? null,
+          env: (meta.env as Record<string, string> | undefined) ?? null,
+          source_offsets: Array.isArray(meta.source_offsets)
+            ? (meta.source_offsets as number[])
+            : null,
         }
         applyPool(e)
         break
@@ -138,6 +172,10 @@
           client_name: e.client_name ?? ex?.client_name ?? null,
           request_id: e.request_id ?? ex?.request_id ?? null,
           stdout_size: e.stdout_size ?? null,
+          stdin_lines: ex?.stdin_lines ?? e.stdin_lines ?? null,
+          stdin_size: ex?.stdin_size ?? e.stdin_size ?? null,
+          env: ex?.env ?? null,
+          source_offsets: ex?.source_offsets ?? null,
         }
         applyPool(e)
         break
@@ -169,7 +207,19 @@
     try {
       const rt = await api.recentTasks(10)
       const map: Record<string, TaskView> = {}
-      for (const t of rt.tasks) map[t.task_id] = taskFromRecent(t)
+      for (const t of rt.tasks) {
+        const v = taskFromRecent(t)
+        // /recent-tasks doesn't carry stdin/env/source_offsets — keep the
+        // WS-provided values so the Stdin column and hover detail survive resyncs.
+        const prev = allTasks[t.task_id]
+        if (prev) {
+          v.stdin_lines = prev.stdin_lines
+          v.stdin_size = prev.stdin_size
+          v.env = v.env ?? prev.env
+          v.source_offsets = prev.source_offsets
+        }
+        map[t.task_id] = v
+      }
       allTasks = map
       if (rt.lane_count) laneCount = rt.lane_count
     } catch {
@@ -288,8 +338,9 @@
   <span class="badge status-{status}">WS: {statusLabel[status]}</span>
   <button class="freeze" class:on={frozen} onclick={() => setFrozen(!frozen)}>{frozen ? 'Frozen' : 'Live'}</button>
   <span class="spacer"></span>
-  <span class="pool">Pool: <span class="mono">{pool.active} / {pool.max}</span> slots{#if pool.waiting}, <span class="mono">{pool.waiting}</span> waiting{/if}</span>
+  <span class="pool">Pool: {pool.active} / {pool.max} slots, <span class="waiting">{pool.waiting}</span> waiting</span>
 </div>
+<p class="tab-hint">{TAB_HINTS[activeTab]}</p>
 
 <div class="tabs">
   {#each availableTabs as t}
@@ -301,9 +352,9 @@
   <ArrangeTab {arranges} states={arrangeStates} />
 {:else if activeTab === 'execute'}
   <div class="pool-bar">
-    <div class="pool-fill" style:width={`${pool.max ? Math.min(100, (pool.active / pool.max) * 100) : 0}%`}></div>
+    <div class="pool-fill" style:width={`${poolPct}%`} style:background={poolColor}></div>
   </div>
-  <Timeline tasks={tasksList} {laneCount} paused={frozen} />
+  <Timeline tasks={tasksList} {laneCount} paused={frozen} minDurationMs={$runtimeConfig.wsMinDurationMs} />
 
   <h2>Finished <span class="count">({finished.length})</span></h2>
   {#if finished.length === 0}
@@ -311,14 +362,14 @@
   {:else}
     <table>
       <thead>
-        <tr><th>Task ID</th><th class="num">Partition</th><th>Labels</th><th>Status</th><th class="num">Duration</th><th>Time</th><th>CLI Args</th></tr>
+        <tr><th>Task ID</th><th>Partition</th><th>Labels</th><th>Status</th><th>Duration</th><th>Time</th><th>CLI Args</th><th>Stdin</th></tr>
       </thead>
       <tbody>
         {#each finished as t (t.task_id)}
           <tr>
-            <td class="mono"><a href={`/task/${encodeURIComponent(baseTaskId(t.task_id))}`} use:link>{t.task_id}</a></td>
-            <td class="num mono">{t.partition ?? '-'}</td>
-            <td>
+            <td class="mono xs"><a href={`/task/${encodeURIComponent(baseTaskId(t.task_id))}`} use:link style:color={t.status === 'failed' ? '#dc2626' : '#059669'}>{t.task_id}</a></td>
+            <td class="mono">{t.partition ?? '-'}</td>
+            <td class="xs">
               {#if t.labels}
                 <span class="lchips">
                   {#each Object.entries(t.labels) as [k, v]}<span class="lchip">{k}={v}</span>{/each}
@@ -326,9 +377,10 @@
               {/if}
             </td>
             <td><span style:color={t.status === 'failed' ? '#dc2626' : '#059669'}>{t.status}</span></td>
-            <td class="num mono">{t.duration != null ? dur3(t.duration) : '-'}</td>
-            <td class="muted nowrap" title={fmtTimeMs(t.end_ts)}>{fmtTime(t.end_ts)}</td>
+            <td class="mono">{t.duration != null ? dur2(t.duration) : ''}</td>
+            <td class="time nowrap">{fmtTimeMs(t.end_ts)}</td>
             <td>{#if t.args}<Expandable text={t.args} />{/if}</td>
+            <td class="mono xs stdin">{fmtStdin(t)}</td>
           </tr>
         {/each}
       </tbody>
@@ -355,18 +407,35 @@
   }
   .lchip {
     font-family: var(--mono);
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     color: var(--accent);
     background: #f0fdfa;
     border: 1px solid #99f6e4;
-    border-radius: 4px;
-    padding: 0.05rem 0.3rem;
+    border-radius: 3px;
+    padding: 0 3px;
+  }
+  .xs {
+    font-size: 0.75rem;
+  }
+  .time {
+    color: #9ca3af;
+    font-size: 0.75rem;
+  }
+  .stdin {
+    color: #9ca3af;
   }
   .head {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    margin-bottom: 1rem;
+    margin-bottom: 0.25rem;
+  }
+  .tab-hint {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    line-height: 1.4;
+    margin: 0 0 0.75rem;
+    min-height: 1.4em;
   }
   .head h1 {
     margin: 0;
@@ -374,37 +443,40 @@
   .head .spacer {
     flex: 1;
   }
+  /* WS badge: green pill when connected, red for every other state —
+     matching the reference's ws.onopen/onclose inline styling. */
   .badge {
-    font-size: 0.72rem;
-    font-family: var(--mono);
-    border-radius: 999px;
-    padding: 0.15rem 0.6rem;
-    border: 1px solid var(--line);
+    font-size: 0.75rem;
+    border-radius: 0.25rem;
+    padding: 0.125rem 0.5rem;
+    background: #fecaca;
+    color: #991b1b;
+    border: 1px solid #fca5a5;
   }
   .status-connected {
-    color: #059669;
-    border-color: rgba(52, 211, 153, 0.5);
-  }
-  .status-connecting {
-    color: #d97706;
-  }
-  .status-disconnected,
-  .status-unauthorized,
-  .status-forbidden {
-    color: #dc2626;
-    border-color: rgba(248, 113, 113, 0.5);
+    background: #d1fae5;
+    color: #065f46;
+    border-color: #6ee7b7;
   }
   .freeze {
-    font-size: 0.8rem;
-    padding: 0.25rem 0.7rem;
+    font-size: 0.75rem;
+    border-radius: 0.25rem;
+    padding: 0.125rem 0.5rem;
+    background: #f5f3ee;
+    color: #6b7280;
+    border: 1px solid #ddd9ce;
   }
   .freeze.on {
-    color: #2563eb;
-    border-color: #2563eb;
+    background: #dbeafe;
+    color: #1e40af;
+    border-color: #93c5fd;
   }
   .pool {
-    font-size: 0.85rem;
+    font-size: 0.875rem;
     color: var(--muted);
+  }
+  .pool .waiting {
+    color: #b45309;
   }
   .tabs {
     display: flex;
@@ -427,17 +499,20 @@
     color: var(--text);
     border-bottom-color: #0d9488;
   }
+  /* Pool utilization bar (reference: h-3 bg-cream-200 rounded-full mb-4). */
   .pool-bar {
-    height: 0.5rem;
-    background: var(--panel-2);
+    height: 0.75rem;
+    background: var(--line);
     border-radius: 999px;
     overflow: hidden;
     margin-bottom: 1rem;
   }
   .pool-fill {
     height: 100%;
-    background: #059669;
-    transition: width 200ms ease;
+    border-radius: 999px;
+    transition:
+      width 200ms ease,
+      background 200ms ease;
   }
   .nowrap {
     white-space: nowrap;

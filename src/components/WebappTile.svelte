@@ -28,22 +28,23 @@
     </div>
   </div>
 {:else}
+  <!-- Dashboard variant: the reference shows no host line here; labels are
+       xs gray with only the numbers colored/mono. -->
   <div class="webapp">
     <div class="row head">
       <span class="title">WebApp</span>
-      <span class="muted mono">{tile.host}:{tile.port}{tile.path}</span>
     </div>
-    <div class="row">In-flight: <span class="mono">{tile.inflight_count}</span></div>
+    <div class="row">In-flight: <span class="mono ink">{tile.inflight_count}</span></div>
     <div class="row">
       Last 60s:
-      <span style:color={COLOR.emerald}>{tile.success_60s} ok</span> /
-      <span style:color={COLOR.red}>{tile.error_60s} err</span> /
-      <span style:color={COLOR.amber}>{tile.rejected_60s} rejected</span>
+      <span class="mono" style:color={COLOR.emerald}>{tile.success_60s}</span> ok /
+      <span class="mono" style:color={COLOR.red}>{tile.error_60s}</span> err /
+      <span class="mono" style:color={COLOR.amber}>{tile.rejected_60s}</span> rejected
     </div>
     {#if tile.clients.length}
-      <div class="row muted">Clients:</div>
-      <ul class="clients">
-        {#each tile.clients as c}<li>{c.name} ({c.rpm_limit} rpm)</li>{/each}
+      <div class="row">Clients:</div>
+      <ul class="clients mono">
+        {#each tile.clients as c}<li>{c.name} <span class="muted">({c.rpm_limit} rpm)</span></li>{/each}
       </ul>
     {/if}
   </div>
@@ -64,6 +65,11 @@
   }
   .row {
     margin: 0.15rem 0;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  .ink {
+    color: var(--text);
   }
   .row.head {
     display: flex;
@@ -75,8 +81,7 @@
   .title {
     color: var(--purple);
     font-weight: 700;
-  }
-  .wide .title {
+    font-family: var(--mono);
     font-size: 1.125rem;
   }
   .head .mono {
@@ -108,8 +113,10 @@
   }
   .clients {
     margin: 0.2rem 0 0;
-    padding-left: 1.1rem;
-    color: var(--muted);
+    padding: 0;
+    list-style: none;
+    font-size: 0.75rem;
+    color: var(--text);
   }
   @media (max-width: 720px) {
     .grid {
