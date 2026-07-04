@@ -6,6 +6,7 @@
   import { navItems, resolve } from './lib/routes'
   import WorkerSwitcher from './components/WorkerSwitcher.svelte'
   import SinkLinks from './components/SinkLinks.svelte'
+  import VersionBadge from './components/VersionBadge.svelte'
 
   // $derived recomputes the active page + its route params whenever the path
   // store changes ($currentPath auto-subscribes). The router has no per-route branching;
@@ -65,7 +66,7 @@
       </nav>
     </div>
     <span class="spacer"></span>
-    <span class="version" title="drakkar-ui {__APP_VERSION__}">{__APP_VERSION__}</span>
+    <VersionBadge />
     <SinkLinks />
     <div class="tools">
       <button class="width-toggle" onclick={() => (wide = !wide)} title="Toggle full width (f)" aria-label="Toggle full width">
@@ -147,11 +148,6 @@
   }
   .spacer {
     flex: 1;
-  }
-  .version {
-    color: #6b7280;
-    font-size: 0.75rem;
-    white-space: nowrap;
   }
   .tools {
     display: flex;
