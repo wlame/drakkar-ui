@@ -52,6 +52,14 @@ shell:
 clean:
     rm -rf dist node_modules drakkar-ui-*.tar.gz
 
+# Copy the canonical OpenAPI spec into both backends' vendored copies.
+# Backends pin their route tables to it with parity tests, so run their
+# suites after syncing.
+sync-openapi:
+    cp docs/openapi-v1.yaml ../drakkar/drakkar/uiserver/openapi.yaml
+    cp docs/openapi-v1.yaml ../drakkar-go/internal/uiserver/openapi.yaml
+    @echo "synced; re-run each backend's parity tests"
+
 # ── Gates ────────────────────────────────────────────────────────────────────
 
 # The exact gates GitHub CI enforces, in order. Run before pushing.
