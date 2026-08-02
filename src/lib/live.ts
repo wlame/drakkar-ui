@@ -2,6 +2,7 @@
 // timeline and finished-table render; it is built from both the /api/v1/recent-tasks
 // resync and the incremental WS frames.
 
+import { parseAnnotation } from './events'
 import type { RecentTask, WsEvent } from './types'
 
 export type TaskStatus = 'running' | 'completed' | 'failed'
@@ -71,6 +72,61 @@ export interface ArrangeView {
   task_ids: string[]
   offsets: number[]
   message_labels: string[]
+  // Per-partition monotone window counter (contract v1.3). Correlates this
+  // batch with the annotations emitted from the same arrange() call. Older
+  // backends omit it — null then, and annotations fall back to offset match.
+  window_id: number | null
+}
+
+// AnnotationView is one live handler annotation, flattened from its WS frame.
+export interface AnnotationView {
+  ts: number
+  partition: number
+  kind: string
+  scope: string
+  hook: string
+  window_id: number | null
+  offset: number | null
+  task_id: string | null
+  data: Record<string, unknown>
+}
+
+// annotationFromEvent flattens an 'annotation' WS frame, or returns null when
+// the frame is not one / its envelope is unusable.
+export function annotationFromEvent(e: WsEvent): AnnotationView | null {
+  const ann = parseAnnotation(e.event, e.metadata)
+  if (!ann) return null
+  return {
+    ts: e.ts,
+    partition: e.partition ?? -1,
+    kind: ann.kind,
+    scope: ann.scope,
+    hook: ann.hook,
+    window_id: ann.window_id,
+    offset: e.offset ?? null,
+    task_id: e.task_id ?? null,
+    data: ann.data,
+  }
+}
+
+// annotationsForArrange selects the annotations belonging to one arrange batch.
+//
+// Window-scoped rows match on window_id, which is why the arranged event
+// carries it. Message- and task-scoped rows have no window_id of their own
+// worth trusting across restarts, so they match on the batch's own offsets and
+// task ids — the identifiers the batch already owns.
+export function annotationsForArrange(
+  annotations: AnnotationView[],
+  arrange: ArrangeView,
+): AnnotationView[] {
+  const offsets = new Set(arrange.offsets)
+  const taskIds = new Set(arrange.task_ids)
+  return annotations.filter((a) => {
+    if (a.partition !== arrange.partition) return false
+    if (a.task_id != null) return taskIds.has(a.task_id)
+    if (a.offset != null) return offsets.has(a.offset)
+    return arrange.window_id != null && a.window_id === arrange.window_id
+  })
 }
 
 // arrangeFromEvent builds an ArrangeView from an 'arranged' WS frame, parsing its
@@ -79,12 +135,14 @@ export function arrangeFromEvent(e: WsEvent): ArrangeView {
   let offsets: number[] = []
   let task_ids: string[] = []
   let message_labels: string[] = e.message_labels ?? []
+  let window_id: number | null = null
   if (e.metadata) {
     try {
       const m = JSON.parse(e.metadata) as Record<string, unknown>
       if (Array.isArray(m.offsets)) offsets = m.offsets as number[]
       if (Array.isArray(m.task_ids)) task_ids = m.task_ids as string[]
       if (Array.isArray(m.message_labels)) message_labels = m.message_labels as string[]
+      if (typeof m.window_id === 'number') window_id = m.window_id
     } catch {
       // leave defaults
     }
@@ -98,5 +156,6 @@ export function arrangeFromEvent(e: WsEvent): ArrangeView {
     task_ids,
     offsets,
     message_labels,
+    window_id,
   }
 }

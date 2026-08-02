@@ -15,8 +15,10 @@
     baseTaskId,
     taskFromRecent,
     arrangeFromEvent,
+    annotationFromEvent,
     type TaskView,
     type ArrangeView,
+    type AnnotationView,
   } from '../lib/live'
   import Timeline from '../components/live/Timeline.svelte'
   import ArrangeTab from '../components/live/ArrangeTab.svelte'
@@ -37,6 +39,7 @@
   let pool = $state({ active: 0, max: 0, waiting: 0 })
   let allTasks = $state<Record<string, TaskView>>({})
   let arranges = $state<ArrangeView[]>([])
+  let annotations = $state<AnnotationView[]>([])
   let arrangeStates = $state<Record<string, ArrangeTaskState>>({})
   let taskResults = $state<TaskResult[]>([])
   let messageResults = $state<MessageResult[]>([])
@@ -184,6 +187,14 @@
         const a = arrangeFromEvent(e)
         arranges = [a, ...arranges].slice(0, maxHistory)
         if (a.task_ids.length) void refreshArrangeStates(a.task_ids)
+        break
+      }
+      case 'annotation': {
+        // Handler diagnostics. Kept in their own bounded buffer rather than
+        // folded into task state: they attach to a message or a window just as
+        // often as to a task, so there is no single record they belong on.
+        const ann = annotationFromEvent(e)
+        if (ann) annotations = [ann, ...annotations].slice(0, maxHistory)
         break
       }
       // task_complete / message_complete / window_complete drive the poll-backed
@@ -349,7 +360,7 @@
 </div>
 
 {#if activeTab === 'arrange'}
-  <ArrangeTab {arranges} states={arrangeStates} />
+  <ArrangeTab {arranges} states={arrangeStates} {annotations} />
 {:else if activeTab === 'execute'}
   <div class="pool-bar">
     <div class="pool-fill" style:width={`${poolPct}%`} style:background={poolColor}></div>

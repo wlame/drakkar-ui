@@ -216,7 +216,9 @@ a unit test (Python `drakkar/recorder/schema.py: EVENT_COLUMNS` +
 is a contract change: update this section and BOTH backend pins together.
 
 Column *presence* is the contract; *values* stay event-type-dependent
-(nullable), so the UI keeps treating every column as optional. Framework
+(nullable), so the UI keeps treating every column as optional. New event
+TYPES are additive and do not touch this list — see `annotation` under
+**v1.3 additions**. Framework
 datetimes embedded in `metadata` JSON use the canonical cross-backend
 format `YYYY-MM-DDTHH:MM:SS.ffffffZ` (fixed six-digit microseconds); the
 `dt` column keeps its display format `YYYY-MM-DD HH:MM:SS.mmm`.
@@ -273,6 +275,80 @@ Version visibility and a machine-readable surface description. All additive.
   route plus `/healthz` and `/readyz` — MUST equal the `paths` of
   `docs/openapi-v1.yaml`. Each backend enforces this with a unit test that
   walks its live route table, so surface drift fails CI on the drifting side.
+
+## v1.3 additions (2026-08-02)
+
+Handler-emitted diagnostics. Additive: a new `event` VALUE on the existing
+`events` table, no column change, no new endpoint. Older UIs that do not know
+the type render it through their generic event path; older backends simply
+never emit it.
+
+- **`event = "annotation"`** — a record the handler attached to a pipeline
+  entity from inside a hook, describing *why* it decided something. Reaches
+  the UI through the existing `/ws`, `/api/v1/events`, `/api/v1/trace`, and
+  `/api/v1/trace-by-label` surfaces.
+
+  Anchor columns encode the scope:
+
+  | scope | `partition` | `offset` | `task_id` |
+  |---|---|---|---|
+  | message | set | set | `null` |
+  | task | set | `null` | set |
+  | window | set | `null` | `null` |
+
+  `labels` follows the same convention as task rows (JSON object or `null`).
+  `metadata` is a JSON object with a fixed envelope:
+
+  ```json
+  {
+    "kind": "input_selection",
+    "scope": "message",
+    "hook": "arrange",
+    "window_id": 7,
+    "offsets": [90, 91],
+    "data": { }
+  }
+  ```
+
+  - `kind` — handler-chosen name for what this annotation describes. Free
+    text; the UI should treat it as a display/filter key, not an enum.
+  - `scope` — `"message"` | `"task"` | `"window"`. Provided so the UI can
+    label a row without inferring scope from which anchor columns are set.
+    Unknown future values must degrade gracefully.
+  - `hook` — the hook that emitted it (`"arrange"`, `"on_task_complete"`,
+    `"on_error"`, `"on_message_complete"`, `"on_window_complete"`,
+    `"arrange_http_request"`, `"on_http_request_complete"`).
+  - `window_id` — per-partition monotone counter, or `null`. Unique only
+    within one (partition, worker run); never a global id. The `arranged`
+    event's metadata carries the matching `window_id` so the two can be
+    correlated.
+  - `offsets` — **window scope only**; `[]` for message and task scope.
+    Window rows have no anchor column, so `/api/v1/trace` reaches them by
+    matching this array against the traced offset. Message and task rows must
+    leave it empty: they are already reachable through their own anchor
+    column, and a non-empty array would additionally match every SIBLING
+    offset in their emitting hook's window, putting one entity's diagnostics
+    on another's trace. The UI does not need this field.
+  - `data` — the handler's arbitrary JSON payload. Always an object, possibly
+    empty. **Never partially written**: a payload that exceeded the backend's
+    size budget is dropped whole rather than truncated, so a row that exists
+    carries a complete document.
+
+  Rendering guidance: annotations are user content, not framework telemetry —
+  show them visually distinct from task lifecycle events, with `data`
+  expandable rather than inlined (it can reach 16 KiB). `kind` is the natural
+  row title. Correlating a live annotation with the batch that produced it:
+  window rows match the `arranged` event's `metadata.window_id`, while message
+  and task rows match the batch's own offsets and task ids — a UI should not
+  rely on `window_id` for those, since older backends omit it entirely.
+
+  Backend config (identical keys/defaults on both): the feature is on by
+  default, individual payloads cap at 16 KiB, and one hook invocation may add
+  at most 256 KiB. Dropped records are counted in
+  `drakkar_recorder_annotations_dropped_total{reason}` — never silently lost.
+
+- **`arranged` event metadata gains `window_id`.** Additive key inside the
+  existing `metadata` JSON; consumers that ignore it are unaffected.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 

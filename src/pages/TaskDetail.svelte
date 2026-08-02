@@ -10,7 +10,8 @@
   import { api, type EventRow } from '../lib/api'
   import { link } from '../lib/router'
   import { fmtTime, fmtTimeMs, fmtTimeFull, dur3, fmtBytes, safeJsonParse } from '../lib/format'
-  import { eventColor, statusColor, type TaskStatus } from '../lib/events'
+  import { eventColor, parseAnnotation, statusColor, type TaskStatus } from '../lib/events'
+  import Expandable from '../components/Expandable.svelte'
   import KafkaIcon from '../components/KafkaIcon.svelte'
 
   let { params = {} }: { params?: Record<string, string> } = $props()
@@ -304,8 +305,13 @@
   {#if events && events.length}
     <div class="timeline">
       {#each events as e (e.id)}
+        {@const ann = parseAnnotation(e.event, e.metadata)}
         <div class="tl-row" style:border-left-color={eventColor(e.event)}>
           <span class="evt" style:color={eventColor(e.event)}>{e.event}</span>
+          {#if ann}
+            <span class="ann-kind mono">{ann.kind}</span>
+            <Expandable text={JSON.stringify(ann.data)} title="Click to expand annotation payload" />
+          {/if}
           {#if e.exit_code != null}<span class="muted">exit={e.exit_code}</span>{/if}
           {#if e.duration != null}<span class="muted mono">{dur3(e.duration)}</span>{/if}
           <span class="spacer"></span>
@@ -444,5 +450,11 @@
   }
   .tl-row .spacer {
     flex: 1;
+  }
+  /* The handler's own name for the record leads; the payload sits behind a
+     click because it can reach 16 KiB. */
+  .tl-row .ann-kind {
+    color: var(--text);
+    font-weight: 600;
   }
 </style>

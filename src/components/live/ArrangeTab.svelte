@@ -6,14 +6,25 @@
   import { link } from '../../lib/router'
   import { fmtTimeMs, dur3 } from '../../lib/format'
   import { durationColor } from '../../lib/events'
-  import { baseTaskId, type ArrangeView } from '../../lib/live'
+  import {
+    baseTaskId,
+    annotationsForArrange,
+    type ArrangeView,
+    type AnnotationView,
+  } from '../../lib/live'
   import type { ArrangeTaskState } from '../../lib/api'
   import KafkaIcon from '../KafkaIcon.svelte'
+  import Expandable from '../Expandable.svelte'
 
   let {
     arranges = [],
     states = {},
-  }: { arranges?: ArrangeView[]; states?: Record<string, ArrangeTaskState> } = $props()
+    annotations = [],
+  }: {
+    arranges?: ArrangeView[]
+    states?: Record<string, ArrangeTaskState>
+    annotations?: AnnotationView[]
+  } = $props()
 
   const STUCK_SEC = 30
 
@@ -73,6 +84,9 @@
   )
 
   const selected = $derived(openIdx != null ? (filtered[openIdx] ?? null) : null)
+  const selectedAnnotations = $derived(
+    selected ? annotationsForArrange(annotations, selected) : [],
+  )
 
   function labelSummary(a: ArrangeView): string {
     const first = a.message_labels.slice(0, 3).join(', ')
@@ -151,6 +165,21 @@
       </div>
     {/if}
 
+    {#if selectedAnnotations.length}
+      <h3>Annotations</h3>
+      <ul class="anns">
+        {#each selectedAnnotations as a, i (i)}
+          <li>
+            <span class="ann-kind mono">{a.kind}</span>
+            <span class="ann-scope">{a.scope}</span>
+            {#if a.offset != null}<span class="muted mono">{selected.partition}:{a.offset}</span>{/if}
+            {#if a.task_id}<span class="muted mono">{a.task_id}</span>{/if}
+            <Expandable text={JSON.stringify(a.data)} title="Click to expand annotation payload" />
+          </li>
+        {/each}
+      </ul>
+    {/if}
+
     {#if selected.task_ids.length}
       <h3>Tasks</h3>
       <ul class="tasks">
@@ -208,6 +237,33 @@
   tr.clickable:hover td,
   tr.sel td {
     background: var(--panel-2);
+  }
+  .anns {
+    list-style: none;
+    margin: 0 0 0.75rem;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+  }
+  .anns li {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
+  }
+  /* The handler's own name leads; scope is a quiet qualifier and the payload
+     sits behind a click because it can reach 16 KiB. */
+  .ann-kind {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .ann-scope {
+    padding: 0.05rem 0.35rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    font-size: 0.7rem;
+    color: var(--muted);
   }
   .sidebar {
     position: fixed;

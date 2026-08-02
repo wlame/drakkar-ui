@@ -31,6 +31,7 @@ export const EVENT_COLORS: Record<string, string> = {
   window_complete: COLOR.lilac,
   produced: COLOR.magenta,
   committed: COLOR.gray,
+  annotation: COLOR.http,
 }
 
 export function eventColor(event: string): string {
@@ -52,7 +53,49 @@ export const EVENT_TYPES = [
   'window_complete',
   'produced',
   'committed',
+  'annotation',
 ] as const
+
+// An annotation event's metadata envelope (contract v1.3). Handler-emitted
+// diagnostics: `data` is the user's arbitrary payload, never partially written
+// (a backend drops an over-budget payload whole rather than truncating it, so a
+// row that exists carries a complete document).
+export type Annotation = {
+  kind: string
+  scope: 'message' | 'task' | 'window' | string
+  hook: string
+  window_id: number | null
+  offsets: number[]
+  data: Record<string, unknown>
+}
+
+// parseAnnotation reads the envelope out of an event's metadata column, or
+// returns null when the row is not an annotation or the envelope is malformed.
+// Defensive by contract: column *presence* is pinned, values are not, and the
+// UI must tolerate an older or newer backend.
+export function parseAnnotation(
+  event: string,
+  metadata: string | null | undefined,
+): Annotation | null {
+  if (event !== 'annotation' || !metadata) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(metadata)
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object') return null
+  const env = parsed as Record<string, unknown>
+  if (typeof env.kind !== 'string') return null
+  return {
+    kind: env.kind,
+    scope: typeof env.scope === 'string' ? env.scope : 'window',
+    hook: typeof env.hook === 'string' ? env.hook : '',
+    window_id: typeof env.window_id === 'number' ? env.window_id : null,
+    offsets: Array.isArray(env.offsets) ? (env.offsets as number[]) : [],
+    data: env.data && typeof env.data === 'object' ? (env.data as Record<string, unknown>) : {},
+  }
+}
 
 export type TaskStatus = 'running' | 'completed' | 'failed' | 'unknown'
 

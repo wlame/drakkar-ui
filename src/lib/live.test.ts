@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
-import { arrangeFromEvent, baseTaskId, taskFromRecent } from './live'
+import {
+  arrangeFromEvent,
+  baseTaskId,
+  taskFromRecent,
+  annotationFromEvent,
+  annotationsForArrange,
+  type AnnotationView,
+} from './live'
 import type { RecentTask, WsEvent } from './types'
 
 describe('baseTaskId', () => {
@@ -132,5 +139,101 @@ describe('arrangeFromEvent', () => {
     expect(a.partition).toBe(-1)
     expect(a.duration).toBe(0)
     expect(a.ts).toBe(1000)
+  })
+})
+
+describe('annotationFromEvent', () => {
+  const frame = (over: Partial<WsEvent> = {}): WsEvent =>
+    ({
+      id: 1,
+      ts: 100,
+      event: 'annotation',
+      partition: 3,
+      metadata: JSON.stringify({
+        kind: 'input_selection',
+        scope: 'message',
+        hook: 'arrange',
+        window_id: 7,
+        offsets: [],
+        data: { a: 1 },
+      }),
+      ...over,
+    }) as WsEvent
+
+  it('flattens the envelope and the anchor columns', () => {
+    const a = annotationFromEvent(frame({ offset: 90 }))
+    expect(a).not.toBeNull()
+    expect(a!.kind).toBe('input_selection')
+    expect(a!.scope).toBe('message')
+    expect(a!.hook).toBe('arrange')
+    expect(a!.partition).toBe(3)
+    expect(a!.offset).toBe(90)
+    expect(a!.task_id).toBeNull()
+    expect(a!.data).toEqual({ a: 1 })
+  })
+
+  it('returns null for a frame that is not an annotation', () => {
+    expect(annotationFromEvent(frame({ event: 'task_started' }))).toBeNull()
+  })
+
+  it('returns null for a malformed envelope', () => {
+    expect(annotationFromEvent(frame({ metadata: 'not json' }))).toBeNull()
+  })
+})
+
+describe('annotationsForArrange', () => {
+  const arrange = {
+    ts: 0,
+    partition: 3,
+    duration: 0,
+    message_count: 2,
+    task_count: 1,
+    task_ids: ['t-1'],
+    offsets: [90, 91],
+    message_labels: [],
+    window_id: 7,
+  }
+  const ann = (over: Partial<AnnotationView>): AnnotationView => ({
+    ts: 0,
+    partition: 3,
+    kind: 'k',
+    scope: 'window',
+    hook: 'arrange',
+    window_id: 7,
+    offset: null,
+    task_id: null,
+    data: {},
+    ...over,
+  })
+
+  it('matches window scope on window_id', () => {
+    expect(annotationsForArrange([ann({})], arrange)).toHaveLength(1)
+  })
+
+  it('matches message scope on the batch offsets', () => {
+    const got = annotationsForArrange([ann({ scope: 'message', offset: 91 })], arrange)
+    expect(got).toHaveLength(1)
+  })
+
+  it('matches task scope on the batch task ids', () => {
+    const got = annotationsForArrange([ann({ scope: 'task', task_id: 't-1' })], arrange)
+    expect(got).toHaveLength(1)
+  })
+
+  it('excludes another window, another offset, another task and another partition', () => {
+    const others = [
+      ann({ window_id: 8 }),
+      ann({ scope: 'message', offset: 999 }),
+      ann({ scope: 'task', task_id: 't-other' }),
+      ann({ partition: 4 }),
+    ]
+    expect(annotationsForArrange(others, arrange)).toHaveLength(0)
+  })
+
+  it('excludes window rows when the backend omitted window_id', () => {
+    // Older backends predate the arranged-metadata window_id; a null on either
+    // side must not collapse into a match-everything.
+    expect(annotationsForArrange([ann({ window_id: null })], arrange)).toHaveLength(0)
+    expect(annotationsForArrange([ann({})], { ...arrange, window_id: null })).toHaveLength(0)
   })
 })

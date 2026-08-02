@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { COLOR, EVENT_COLORS, EVENT_TYPES, eventColor, statusColor, durationColor } from './events'
+import {
+  COLOR,
+  EVENT_COLORS,
+  EVENT_TYPES,
+  durationColor,
+  eventColor,
+  parseAnnotation,
+  statusColor,
+} from './events'
 
 describe('eventColor', () => {
   it('maps known recorder events to their accent color', () => {
@@ -51,5 +59,56 @@ describe('durationColor', () => {
   it('mutes nullish durations', () => {
     expect(durationColor(null)).toBe(COLOR.gray)
     expect(durationColor(undefined)).toBe(COLOR.gray)
+  })
+})
+
+describe('parseAnnotation', () => {
+  const envelope = JSON.stringify({
+    kind: 'input_selection',
+    scope: 'message',
+    hook: 'arrange',
+    window_id: 7,
+    offsets: [90, 91],
+    data: { candidates: ['a', 'b'] },
+  })
+
+  it('reads the envelope from an annotation row', () => {
+    const ann = parseAnnotation('annotation', envelope)
+    expect(ann).not.toBeNull()
+    expect(ann!.kind).toBe('input_selection')
+    expect(ann!.scope).toBe('message')
+    expect(ann!.hook).toBe('arrange')
+    expect(ann!.window_id).toBe(7)
+    expect(ann!.offsets).toEqual([90, 91])
+    expect(ann!.data).toEqual({ candidates: ['a', 'b'] })
+  })
+
+  it('ignores rows that are not annotations', () => {
+    expect(parseAnnotation('task_started', envelope)).toBeNull()
+  })
+
+  it('returns null for absent or malformed metadata', () => {
+    expect(parseAnnotation('annotation', null)).toBeNull()
+    expect(parseAnnotation('annotation', '')).toBeNull()
+    expect(parseAnnotation('annotation', 'not json')).toBeNull()
+    expect(parseAnnotation('annotation', '[]')).toBeNull()
+    expect(parseAnnotation('annotation', '{"scope":"message"}')).toBeNull()
+  })
+
+  it('fills defaults for fields an older or newer backend omitted', () => {
+    const ann = parseAnnotation('annotation', '{"kind":"k"}')
+    expect(ann).toEqual({
+      kind: 'k',
+      scope: 'window',
+      hook: '',
+      window_id: null,
+      offsets: [],
+      data: {},
+    })
+  })
+
+  it('passes through an unknown future scope rather than rejecting the row', () => {
+    const ann = parseAnnotation('annotation', '{"kind":"k","scope":"partition"}')
+    expect(ann!.scope).toBe('partition')
   })
 })

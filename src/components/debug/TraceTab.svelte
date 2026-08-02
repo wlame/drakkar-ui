@@ -6,9 +6,10 @@
   import { api, type TraceEvent } from '../../lib/api'
   import { link, setHash } from '../../lib/router'
   import { fmtTimeMs, dur3, safeJsonParse } from '../../lib/format'
-  import { eventColor, durationColor } from '../../lib/events'
+  import { eventColor, durationColor, parseAnnotation } from '../../lib/events'
   import { baseTaskId } from '../../lib/live'
   import KafkaIcon from '../KafkaIcon.svelte'
+  import Expandable from '../Expandable.svelte'
 
   let { prefill = null }: { prefill?: { partition: number; offset: number } | null } = $props()
 
@@ -59,6 +60,13 @@
       statusMsg = e instanceof Error ? e.message : String(e)
       results = []
     }
+  }
+
+  // Annotations are user content, not framework telemetry (contract v1.3), so
+  // they get their own Details cell: the handler's `kind` as the title and the
+  // payload behind a click. Inlining `data` would be wrong — it can reach 16 KiB.
+  function annotationOf(e: TraceEvent) {
+    return parseAnnotation(e.event, e.metadata)
   }
 
   // Assemble the Details cell from the same fields the reference surfaces.
@@ -137,6 +145,7 @@
       </thead>
       <tbody>
         {#each results as e (e.id)}
+          {@const ann = annotationOf(e)}
           <tr>
             <td class="muted nowrap" title={fmtTimeMs(e.ts)}>{fmtTimeMs(e.ts)}</td>
             <td class="mono">{e.worker_name}</td>
@@ -146,7 +155,16 @@
             </td>
             <td class="num mono" style:color={e.duration != null ? durationColor(e.duration) : undefined}>{e.duration != null ? dur3(e.duration) : ''}</td>
             <td class="details">
-              {details(e)}
+              {#if ann}
+                <span class="ann-kind mono">{ann.kind}</span>
+                <span class="ann-scope">{ann.scope}</span>
+                <Expandable
+                  text={JSON.stringify(ann.data)}
+                  title="Click to expand annotation payload"
+                />
+              {:else}
+                {details(e)}
+              {/if}
               {#if e.offset != null && e.partition != null}<KafkaIcon partition={e.partition} offset={e.offset} />{/if}
             </td>
           </tr>
@@ -205,5 +223,21 @@
     font-size: 0.8rem;
     color: var(--muted);
     max-width: 30rem;
+  }
+  /* Annotations read as authored content rather than telemetry: the handler's
+     own name for the record leads, with the scope as a quiet qualifier. */
+  .ann-kind {
+    color: var(--text);
+    font-weight: 600;
+    margin-right: 0.4rem;
+  }
+  .ann-scope {
+    display: inline-block;
+    padding: 0.05rem 0.35rem;
+    margin-right: 0.4rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    font-size: 0.7rem;
+    letter-spacing: 0.02em;
   }
 </style>
