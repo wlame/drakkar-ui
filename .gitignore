@@ -25,6 +25,9 @@ pydrakkar/
 # Claude working files (analysis, plans, notes) — never part of this product
 .claude/
 
+# Agent execution scratch (task ledgers, briefs, review packages)
+.superpowers/
+
 # vibrator workspace pin — may contain plaintext prereq tokens
 .vb
 
