@@ -188,8 +188,6 @@
     {#if vm.origin === 'http'}
       <span class="badge http">HTTP</span>
       {#if vm.clientName}<span class="muted">← client {vm.clientName}</span>{/if}
-    {:else if vm.partition != null}
-      <a class="back" href={`/partitions/${vm.partition}`} use:link>← partition {vm.partition}</a>
     {/if}
   {/if}
 </div>
@@ -213,7 +211,7 @@
       <div class="field">
         <span class="k">Partition</span>
         <span class="v">
-          {#if vm.partition != null}<a href={`/partitions/${vm.partition}`} use:link>{vm.partition}</a>{:else}-{/if}
+          {vm.partition ?? '-'}
         </span>
       </div>
     {/if}
@@ -347,9 +345,6 @@
     padding: 0.1rem 0.55rem;
     font-size: 0.72rem;
     font-weight: 600;
-  }
-  .back {
-    font-size: 0.85rem;
   }
   .card {
     border: 1px solid var(--line);

@@ -123,7 +123,7 @@
       {#each filtered as a, i (`${a.ts}:${a.partition}`)}
         {@const c = counts(a)}
         <tr class="clickable" class:sel={openIdx === i} onclick={() => (openIdx = i)}>
-          <td class="num mono"><a href={`/partitions/${a.partition}`} use:link onclick={(e) => e.stopPropagation()}>{a.partition}</a></td>
+          <td class="num mono">{a.partition}</td>
           <td class="num mono">{a.message_count}</td>
           <td class="mono">
             {#if c.done}<span style:color="#059669">{c.done}</span>{/if}

@@ -162,11 +162,7 @@
         <tr>
           <td class="muted nowrap" title={fmtTimeMs(e.ts)}>{fmtTime(e.ts)}</td>
           <td><span class="evt" style:color={eventColor(e.event)}>{e.event}</span></td>
-          <td class="num mono">
-            {#if e.partition != null && e.partition >= 0}
-              <a href={`/partitions/${e.partition}`} use:link>{e.partition}</a>
-            {:else if e.partition != null}{e.partition}{/if}
-          </td>
+          <td class="num mono">{e.partition ?? ''}</td>
           <td class="num mono">
             {#if e.offset != null && e.partition != null && e.partition >= 0}
               <a href={`/debug#trace/${e.partition}/${e.offset}`} use:link>{e.offset}</a>
