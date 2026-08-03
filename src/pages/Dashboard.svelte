@@ -1,56 +1,110 @@
 <script lang="ts">
-  // Dashboard: worker-at-a-glance (ports dashboard.html). Two stat rows, the
-  // assigned-partition tiles, the optional WebApp tile, and — when the payload
-  // carries the optional `links` key (key presence = feature flag) — the
-  // Prometheus stat-tile deep links plus the Prometheus/Cluster/custom-link
-  // sections. Backends without Prometheus/custom links omit `links` entirely
-  // and none of those sections render.
+  // Worker-at-a-glance. This page owns every request it needs and drives them
+  // from one tick, so the three endpoints never land in the same tick — each
+  // request costs the worker a main-loop dispatch, and a repeating burst of
+  // three is a cost the worker feels forever once the intervals align.
   import { onMount } from 'svelte'
-  import { api, type Dashboard } from '../lib/api'
-  import { link } from '../lib/router'
+  import { api, type Dashboard, type Partition, type SinkStatus } from '../lib/api'
   import { fmtUptime } from '../lib/format'
   import { COLOR } from '../lib/events'
+  import { pausableInterval } from '../lib/visibility'
+  import { dueJobs, type PollJob } from '../lib/schedule'
   import WebappTile from '../components/WebappTile.svelte'
+  import PartitionsTable from '../components/dashboard/PartitionsTable.svelte'
+  import SinksTable from '../components/dashboard/SinksTable.svelte'
 
   let { params: _params = {} }: { params?: Record<string, string> } = $props()
 
-  let data = $state<Dashboard | null>(null)
-  let error = $state<string | null>(null)
+  const POLL_TICK_MS = 500
 
-  async function load() {
-    error = null
+  // Offsets are chosen so no two jobs ever share a tick: sinks always lands on
+  // an even tick, dashboard on ticks ≡ 1 (mod 10), partitions on ≡ 3 (mod 10).
+  // A job added later must keep that property — for example everyTicks 10 with
+  // offsetTicks 5.
+  const JOBS: PollJob[] = [
+    { name: 'sinks', everyTicks: 4, offsetTicks: 0 },
+    { name: 'dashboard', everyTicks: 10, offsetTicks: 1 },
+    { name: 'partitions', everyTicks: 10, offsetTicks: 3 },
+  ]
+
+  let data = $state<Dashboard | null>(null)
+  let dataError = $state<string | null>(null)
+  let partitions = $state<Partition[] | null>(null)
+  let partitionsError = $state<string | null>(null)
+  let sinks = $state<SinkStatus[] | null>(null)
+  let sinksError = $state<string | null>(null)
+
+  // Each loader keeps the last good value on a transient failure and reports an
+  // error only before its first success. One dead endpoint therefore costs its
+  // own section, not the whole page.
+  async function loadDashboard() {
     try {
       data = await api.dashboard()
+      dataError = null
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e)
+      if (data === null) dataError = e instanceof Error ? e.message : String(e)
     }
   }
 
-  // Consumer-lag thresholds match the reference: > 100 red, > 20 amber, else green.
+  async function loadPartitions() {
+    try {
+      partitions = await api.partitions()
+      partitionsError = null
+    } catch (e) {
+      if (partitions === null) partitionsError = e instanceof Error ? e.message : String(e)
+    }
+  }
+
+  async function loadSinks() {
+    try {
+      sinks = await api.sinks()
+      sinksError = null
+    } catch (e) {
+      if (sinks === null) sinksError = e instanceof Error ? e.message : String(e)
+    }
+  }
+
+  const LOADERS: Record<string, () => Promise<void>> = {
+    dashboard: loadDashboard,
+    partitions: loadPartitions,
+    sinks: loadSinks,
+  }
+
+  function reloadAll() {
+    for (const load of Object.values(LOADERS)) void load()
+  }
+
+  // Consumer-lag thresholds for the whole-worker tile: > 100 red, > 20 amber.
   function lagColor(lag: number): string {
     if (lag > 100) return COLOR.red
     if (lag > 20) return COLOR.amber
     return COLOR.emerald
   }
 
-  onMount(load)
+  onMount(() => {
+    // Fill the page at once, then let the scheduler take over the cadence.
+    reloadAll()
+    let tick = 0
+    return pausableInterval(() => {
+      tick += 1
+      for (const name of dueJobs(JOBS, tick)) void LOADERS[name]()
+    }, POLL_TICK_MS)
+  })
 </script>
 
 <h1>Dashboard</h1>
 
 <!-- Tiny external-link arrow shown next to a stat-tile label when the backend
-     provides a Prometheus URL for it (ports the reference's `prom_icon` macro:
-     14px stroke svg, 40% opacity, full opacity on hover, inherits the gray
-     label color via currentColor). -->
+     provides a Prometheus URL for it. -->
 {#snippet promIcon(url: string, title: string)}
   <a class="promicon" href={url} target="_blank" rel="noopener" {title}>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
   </a>
 {/snippet}
 
-{#if error}
-  <p class="error">Could not reach the backend: <code>{error}</code></p>
-  <button onclick={load}>Retry</button>
+{#if dataError}
+  <p class="error">Could not reach the backend: <code>{dataError}</code></p>
+  <button onclick={loadDashboard}>Retry</button>
 {:else if !data}
   <p class="muted">Loading…</p>
 {:else}
@@ -71,24 +125,25 @@
     <div class="tile"><span class="k">Produced{#if data.links?.card_links.produced}{@render promIcon(data.links.card_links.produced, 'View rate in Prometheus')}{/if}</span><span class="v" style:color={COLOR.purple}>{data.stats.produced ?? 0}</span></div>
   </div>
 
+  <!-- WebApp sits above the partition tiles: it is a second ingress into the
+       same pipeline, not one of the partitions. -->
+  {#if data.webapp_tile}
+    <div class="tile-wrap"><WebappTile tile={data.webapp_tile} variant="wide" /></div>
+  {/if}
+
   <h2>Assigned Partitions</h2>
   <div class="partitions">
     {#if data.partitions.length === 0}
       <p class="muted">No partitions assigned</p>
     {:else}
       {#each data.partitions as pid}
-        <a class="ptile" href={`/partitions/${pid}`} use:link>P{pid}</a>
+        <span class="ptile">P{pid}</span>
       {/each}
-    {/if}
-
-    {#if data.webapp_tile}
-      <WebappTile tile={data.webapp_tile} />
     {/if}
   </div>
 
-  <!-- Prometheus link sections. Mirrors the reference nesting: the cluster-wide
-       card only renders when the per-worker grid does; custom links render
-       independently. -->
+  <!-- Prometheus link sections. The cluster-wide card only renders when the
+       per-worker grid does; custom links render independently. -->
   {#if data.links}
     {#if data.links.worker_links.length > 0}
       <h2>Prometheus Metrics</h2>
@@ -105,8 +160,6 @@
         {/each}
       </div>
 
-      <!-- Cluster links are flat [name, url] pairs rendered as one wrap-list
-           card (dashboard.html:93-102), unlike the categorized worker grid. -->
       {#if data.links.cluster_links.length > 0}
         <h2>Cluster-wide Metrics</h2>
         <div class="linkcard">
@@ -131,6 +184,14 @@
     {/if}
   {/if}
 {/if}
+
+<!-- The two tables sit outside the `data` guard: a failing /dashboard request
+     must not hide partition and sink health, which come from other endpoints. -->
+<h2>Partitions</h2>
+<PartitionsTable rows={partitions} error={partitionsError} />
+
+<h2>Sinks</h2>
+<SinksTable rows={sinks} error={sinksError} />
 
 <style>
   .tiles {
@@ -171,21 +232,20 @@
     gap: 0.5rem;
     align-items: flex-start;
   }
+  .tile-wrap {
+    margin: 1.25rem 0;
+  }
   .ptile {
+    display: inline-block;
     min-width: 3.5rem;
     text-align: center;
     padding: 0.5rem 0.6rem;
     border: 1px solid var(--line);
     border-radius: 8px;
     background: var(--panel);
-    color: var(--accent);
+    color: var(--text);
     font-family: var(--mono);
     font-weight: 600;
-    text-decoration: none;
-  }
-  .ptile:hover {
-    border-color: var(--accent);
-    background: var(--panel-2);
   }
 
   /* Stat-tile Prometheus deep link — reference: `inline -mt-0.5 ml-1 opacity-40
