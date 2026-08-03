@@ -40,11 +40,37 @@ the appendix.
   `{"status":"not_ready","reasons":[...]}`.
 
 ### Stream
-- `GET /ws` (WebSocket) — accept → token check → origin check; ≤100 events per
-  drain pass, 20ms idle backoff, one recorder-event JSON object per text frame.
-  Frame = a recorder event row (see **Recorder event row shape**). A frame is
-  always a primitive-valued object; backends MUST NOT publish non-encodable
-  values.
+- `GET /ws?events=<csv>` (WebSocket) — accept → token check → origin check.
+
+  **Frame shape** — one text frame per *drain pass*, carrying a batch:
+
+  ```json
+  {"dropped": 0, "events": [ {<event row>}, {<event row>} ]}
+  ```
+
+  - `events` — up to 100 recorder event rows (see **Recorder event row
+    shape**), in record order. May be empty. Values are always primitives;
+    backends MUST NOT publish non-encodable values.
+  - `dropped` — events discarded for *this* client since the previous frame
+    because its server-side queue was full. Non-zero means the client's
+    in-memory state has a gap; it MUST resync from the database rather than
+    continue applying deltas. Reported after the batch is drained, so a gap is
+    never announced before the events preceding it.
+
+  Batching is a server-side decision: how many events land in a frame is a
+  timing detail and consumers MUST NOT depend on frame boundaries.
+
+  **Subscription filter** — `?events=` is an optional CSV allowlist of `event`
+  names. The server never encodes, queues or sends types outside it. Omit the
+  parameter to receive every event. Clients SHOULD declare exactly the types
+  they render: on a high-fan-out workload the per-task completion hooks are the
+  largest event class by count, and most pages do not render them live.
+
+  **Captured output is never streamed.** The `stdout` and `stderr` columns are
+  persisted but omitted from every streamed event — the live views display
+  `stdout_size`, and broadcasting the text would cost
+  `len(output) x connected clients` for data nothing renders. Consumers needing
+  the text fetch it from `/api/v1/task/{id}` or `/api/v1/events`.
 
 ### Core
 - `GET /api/v1/dashboard` → `{uptime:float, stats:{<event>:int,...,
@@ -109,12 +135,20 @@ the appendix.
 - `GET /api/v1/events?limit=200&after_id=0&partitions=&event_types=` → array of
   full recorder event rows (`SELECT *`, id DESC). Malformed `partitions` CSV →
   **422**. `limit` ≤ 10000 → 422 above. No DB → `[]`.
-- `GET /api/v1/recent-tasks?minutes=2` → `{tasks:[<entry>...], lane_count:int}`
-  (no DB → `[]`). Each entry: `{task_id, partition, start_ts, end_ts, duration,
-  status, args, pid, slot, labels, env, origin, client_name, request_id}`.
-  Archived retry attempts keep the Python reference's ordering and the
-  `task_id:r<float-ts>` composite-key format; consumers must not rely on
-  positional order.
+- `GET /api/v1/recent-tasks?minutes=2` →
+  `{tasks:[<entry>...], lane_count:int, truncated:bool}` (no DB → `[]`). Each
+  entry: `{task_id, partition, start_ts, end_ts, duration, status, args, pid,
+  slot, labels, env, origin, client_name, request_id}`. Archived retry attempts
+  keep the Python reference's ordering and the `task_id:r<float-ts>`
+  composite-key format; consumers must not rely on positional order.
+
+  `minutes` is bounded to **1..60** → 422 outside. The underlying scan is
+  capped at `ui.max_rows * 3` events, keeping the **most recent**; when the cap
+  is reached `truncated` is `true` and older tasks inside the window are
+  absent. Both bounds exist because one source message can fan out to a
+  thousand tasks — without them the query cannot complete inside the
+  main-loop dispatch budget and the endpoint degrades to an empty timeline
+  with no indication anything went wrong.
 - `POST /api/v1/live/arrange-tasks` body `{task_ids:[str] (≤5000)}` → map keyed
   by task_id of `{task_id, status, start_ts, end_ts, duration, partition,
   source_offsets, pid, args, labels, exit_code, origin, client_name,

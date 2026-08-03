@@ -5,6 +5,7 @@
   import { onMount } from 'svelte'
   import { api, type CacheEntriesResponse, type CacheStats, type CacheEntryDetail } from '../../lib/api'
   import { fmtBytes, fmtDateTimeMs } from '../../lib/format'
+  import { pausableInterval } from '../../lib/visibility'
 
   const PAGE_SIZE = 200
 
@@ -84,10 +85,9 @@
   }
 
   onMount(() => {
-    loadStats()
     loadEntries()
-    const id = setInterval(loadStats, 5000)
-    return () => clearInterval(id)
+    // Polling stops while the tab is hidden and catches up on return.
+    return pausableInterval(loadStats, 5000, { immediate: true })
   })
 </script>
 

@@ -170,6 +170,12 @@ export interface RecentTask {
 export interface RecentTasksResponse {
   tasks: RecentTask[]
   lane_count: number
+  /**
+   * The server hit its row cap and older tasks inside the requested window are
+   * missing. Surfaced rather than swallowed so a partial timeline is not shown
+   * as a complete one — on a high-fan-out worker the cap is reachable.
+   */
+  truncated?: boolean
 }
 
 export interface ArrangeTaskState {

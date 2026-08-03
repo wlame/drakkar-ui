@@ -10,6 +10,7 @@
   import { hash, setHash, link } from '../lib/router'
   import { hydrateFromOverview, runtimeConfig } from '../lib/config'
   import { createLiveSocket, type WsStatus, type LiveSocket } from '../lib/ws'
+  import { pausableInterval, visibilityGate } from '../lib/visibility'
   import { fmtTimeMs, dur2, fmtBytes, safeJsonParse } from '../lib/format'
   import {
     baseTaskId,
@@ -27,6 +28,18 @@
 
   let { params: _params = {} }: { params?: Record<string, string> } = $props()
 
+  // The only event types this page renders. Declared to the server so it never
+  // encodes or queues the rest for us — on a fan-out workload the completion
+  // hooks emit one event per task, and those feeds are poll-backed here
+  // (see reloadFeeds), so receiving them live would be pure waste.
+  const LIVE_EVENT_TYPES = [
+    'task_started',
+    'task_completed',
+    'task_failed',
+    'arranged',
+    'annotation',
+  ]
+
   // --- bootstrap config (best-effort; defaults keep the page working) ---
   let hookFlags = $state({ task_complete: false, message_complete: false, window_complete: false })
   let partitionCount = $state(0)
@@ -36,6 +49,9 @@
   // --- live state ---
   let status = $state<WsStatus>('connecting')
   let frozen = $state(false)
+  // The server capped the timeline scan — say so rather than presenting a
+  // partial window as if it were the whole thing.
+  let truncated = $state(false)
   let pool = $state({ active: 0, max: 0, waiting: 0 })
   let allTasks = $state<Record<string, TaskView>>({})
   let arranges = $state<ArrangeView[]>([])
@@ -48,12 +64,21 @@
   let socket: LiveSocket | null = null
 
   const tasksList = $derived(Object.values(allTasks))
-  const finished = $derived(
+  // How many finished rows the table actually renders.
+  //
+  // This used to slice to maxHistory, which is `ui.max_rows` (5000 by
+  // default). A worker that finishes hundreds of tasks a second fills that
+  // instantly, so the page built a five-thousand-row table and rebuilt it on
+  // every resync. Nobody reads past the first screen of a live feed, and the
+  // full history is a click away on the History page.
+  const FINISHED_RENDER_LIMIT = 200
+
+  const finishedAll = $derived(
     tasksList
       .filter((t) => t.status === 'completed' || t.status === 'failed')
-      .sort((a, b) => (b.end_ts ?? 0) - (a.end_ts ?? 0))
-      .slice(0, maxHistory),
+      .sort((a, b) => (b.end_ts ?? 0) - (a.end_ts ?? 0)),
   )
+  const finished = $derived(finishedAll.slice(0, FINISHED_RENDER_LIMIT))
 
   // --- tabs (hash-routed) ---
   type Tab = 'arrange' | 'execute' | 'task-results' | 'message-results' | 'window-results'
@@ -186,7 +211,7 @@
       case 'arranged': {
         const a = arrangeFromEvent(e)
         arranges = [a, ...arranges].slice(0, maxHistory)
-        if (a.task_ids.length) void refreshArrangeStates(a.task_ids)
+        queueArrangeLookup(a.task_ids)
         break
       }
       case 'annotation': {
@@ -202,14 +227,56 @@
     }
   }
 
-  // --- POST-driven + polled data ---
-  async function refreshArrangeStates(taskIds: string[]) {
-    if (!taskIds.length) return
+  // --- Arrange task-state lookups ---
+  //
+  // One arrange() call can produce a thousand tasks, so this lookup is the
+  // heaviest request the page makes: it POSTs task IDs and the server expands
+  // them into a bind parameter each. Three things keep it bounded:
+  //
+  //   1. Terminal states are never re-requested. A task that reported
+  //      completed or failed cannot change again.
+  //   2. Requests are coalesced. Several arranged events arriving together
+  //      produce one request, not one each.
+  //   3. Each request is capped, with the remainder carried to the next tick.
+  const ARRANGE_LOOKUP_MAX = 500
+  const ARRANGE_LOOKUP_DEBOUNCE_MS = 300
+
+  let pendingArrangeIds = new Set<string>()
+  let arrangeLookupTimer: ReturnType<typeof setTimeout> | undefined
+
+  function isTerminal(id: string): boolean {
+    const s = arrangeStates[id]?.status
+    return s === 'completed' || s === 'failed'
+  }
+
+  function queueArrangeLookup(taskIds: string[]) {
+    for (const id of taskIds) {
+      if (!isTerminal(id)) pendingArrangeIds.add(id)
+    }
+    if (pendingArrangeIds.size && arrangeLookupTimer === undefined) {
+      arrangeLookupTimer = setTimeout(flushArrangeLookup, ARRANGE_LOOKUP_DEBOUNCE_MS)
+    }
+  }
+
+  async function flushArrangeLookup() {
+    arrangeLookupTimer = undefined
+    if (frozen || !pendingArrangeIds.size) return
+    const batch: string[] = []
+    for (const id of pendingArrangeIds) {
+      if (batch.length >= ARRANGE_LOOKUP_MAX) break
+      batch.push(id)
+    }
+    for (const id of batch) pendingArrangeIds.delete(id)
     try {
-      const res = await api.arrangeTasks(taskIds.slice(0, maxHistory))
+      const res = await api.arrangeTasks(batch)
       arrangeStates = { ...arrangeStates, ...res }
     } catch {
-      // best-effort
+      // best-effort — the next tick retries whatever is still non-terminal
+    }
+    // Anything left over (or newly queued while the request was in flight)
+    // goes out on the next tick rather than in one oversized request.
+    if (pendingArrangeIds.size && arrangeLookupTimer === undefined) {
+      arrangeLookupTimer = setTimeout(flushArrangeLookup, ARRANGE_LOOKUP_DEBOUNCE_MS)
     }
   }
 
@@ -233,12 +300,14 @@
       }
       allTasks = map
       if (rt.lane_count) laneCount = rt.lane_count
+      truncated = !!rt.truncated
     } catch {
       // keep last good state
     }
-    // Refresh arrange-task states for the visible batches.
-    const ids = arranges.flatMap((a) => a.task_ids).slice(0, maxHistory)
-    if (ids.length) void refreshArrangeStates(ids)
+    // Refresh arrange-task states for the visible batches. Terminal states are
+    // filtered out inside queueArrangeLookup, so in steady state this asks for
+    // only the tasks still in flight rather than every task ever arranged.
+    queueArrangeLookup(arranges.flatMap((a) => a.task_ids))
     void reloadFeeds()
   }
 
@@ -267,6 +336,18 @@
     }
   }
 
+  /**
+   * Rebuild everything the WebSocket feeds, not just the task timeline.
+   *
+   * Used whenever the live stream had a hole in it: a reconnect, a reported
+   * drop, or a resume after the tab was idle. `resync` alone is not enough —
+   * the Arrange list is built purely from `arranged` frames, so any batch that
+   * arrived during the gap would stay missing until the page was reloaded.
+   */
+  async function fullResync() {
+    await Promise.all([resync(), loadArrangesBoot()])
+  }
+
   async function loadArrangesBoot() {
     // Seed the Arrange tab from the recent 'arranged' events (the WS only carries
     // new ones from connect time onward).
@@ -281,8 +362,7 @@
           metadata: ev.metadata ?? undefined,
         }),
       )
-      const ids = arranges.flatMap((a) => a.task_ids).slice(0, maxHistory)
-      if (ids.length) void refreshArrangeStates(ids)
+      queueArrangeLookup(arranges.flatMap((a) => a.task_ids))
     } catch {
       /* best-effort */
     }
@@ -330,14 +410,41 @@
 
     socket = createLiveSocket({
       onEvent,
+      eventTypes: LIVE_EVENT_TYPES,
       onStatus: (s) => (status = s),
-      onOpen: () => void resync(),
+      // Events emitted while we were disconnected were delivered to nobody,
+      // so rebuild from the database rather than resuming mid-stream.
+      onOpen: () => void fullResync(),
+      // The server discarded events for us, so in-memory state has a hole.
+      // Rebuild immediately rather than waiting out the 5s tick with a view
+      // that is quietly wrong.
+      onGap: () => void fullResync(),
     })
 
-    const resyncId = setInterval(resync, 5000)
+    // Hidden tabs stop resyncing after the grace period. Each resync is
+    // several requests, and each request costs the backend a main-loop
+    // dispatch — ten background tabs were paying that with nobody watching.
+    const stopResync = pausableInterval(resync, 5000)
+
+    // ...and stop applying WebSocket frames too. Browsers throttle rendering
+    // in a hidden tab but NOT WebSocket delivery, so without this a hidden
+    // Live tab kept parsing frames and mutating reactive state at the full
+    // event rate. Suspension is deliberately not the same thing as the
+    // operator's pause: `frozen` stays untouched, so the button keeps
+    // reading "Live" and the Space bar still means what it always meant.
+    const stopGate = visibilityGate({
+      onIdle: () => socket?.setSuspended(true),
+      onActive: () => {
+        socket?.setSuspended(false)
+        void fullResync()
+      },
+    })
+
     document.addEventListener('keydown', onKey)
     return () => {
-      clearInterval(resyncId)
+      stopResync()
+      stopGate()
+      if (arrangeLookupTimer !== undefined) clearTimeout(arrangeLookupTimer)
       document.removeEventListener('keydown', onKey)
       socket?.close()
     }
@@ -365,9 +472,20 @@
   <div class="pool-bar">
     <div class="pool-fill" style:width={`${poolPct}%`} style:background={poolColor}></div>
   </div>
+  {#if truncated}
+    <p class="truncated-note">
+      Showing the most recent tasks only — this worker produced more in the window than the timeline
+      scan returns.
+    </p>
+  {/if}
   <Timeline tasks={tasksList} {laneCount} paused={frozen} minDurationMs={$runtimeConfig.wsMinDurationMs} />
 
-  <h2>Finished <span class="count">({finished.length})</span></h2>
+  <h2>
+    Finished <span class="count">({finishedAll.length})</span>
+    {#if finishedAll.length > finished.length}
+      <span class="count">— newest {finished.length} shown</span>
+    {/if}
+  </h2>
   {#if finished.length === 0}
     <p class="muted">No finished tasks.</p>
   {:else}
@@ -527,5 +645,14 @@
   }
   .nowrap {
     white-space: nowrap;
+  }
+  .truncated-note {
+    font-size: 0.75rem;
+    color: #b45309;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 0.25rem;
+    padding: 0.375rem 0.5rem;
+    margin: 0 0 0.75rem;
   }
 </style>

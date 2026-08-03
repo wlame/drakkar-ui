@@ -7,6 +7,7 @@
   import { onMount } from 'svelte'
   import { api, type WorkerPeer } from '../lib/api'
   import { currentPath } from '../lib/router'
+  import { pausableInterval } from '../lib/visibility'
 
   let workers = $state<WorkerPeer[]>([])
   let open = $state(false)
@@ -55,11 +56,11 @@
   }
 
   onMount(() => {
-    load()
-    const id = setInterval(load, POLL_MS)
+    // Polling stops while the tab is hidden and catches up on return.
+    const stopPoll = pausableInterval(load, POLL_MS, { immediate: true })
     document.addEventListener('click', onDocClick)
     return () => {
-      clearInterval(id)
+      stopPoll()
       document.removeEventListener('click', onDocClick)
     }
   })

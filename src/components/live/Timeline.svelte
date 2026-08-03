@@ -7,6 +7,7 @@
   import { link } from '../../lib/router'
   import { baseTaskId, type TaskView } from '../../lib/live'
   import { fmtTime, fmtTimeMs, fmtBytes } from '../../lib/format'
+  import { pausableInterval } from '../../lib/visibility'
 
   let {
     tasks = [],
@@ -32,8 +33,9 @@
 
   $effect(() => {
     if (paused) return
-    const id = setInterval(() => (now = Date.now() / 1000), 250)
-    return () => clearInterval(id)
+    // Also stops while the tab is hidden: advancing `now` re-derives every bar
+    // and re-lays-out the strip, which is pure waste with nobody watching.
+    return pausableInterval(() => (now = Date.now() / 1000), 250)
   })
 
   const pxPerSec = $derived(BASE_PX_PER_SEC * zoomLevel)
@@ -55,7 +57,52 @@
     return '#fbbf24'
   }
 
+  // Horizontal culling bounds, tracked from the viewport's scroll position.
+  //
+  // The strip is WINDOW_SEC * pxPerSec wide — 9600px at the default zoom —
+  // while the viewport shows perhaps 1200px of it. Without culling roughly 85%
+  // of the bars were in the DOM purely to sit off-screen, and every `now` tick
+  // re-laid-out all of them. On a worker producing hundreds of tasks a second
+  // that is the difference between a smooth timeline and a stuck tab.
+  //
+  // CULL_MARGIN_PX keeps a band rendered on each side so a scroll or the
+  // auto-follow advance does not expose an empty gap before the next update.
+  const CULL_MARGIN_PX = 400
+  let scrollLeft = $state(0)
+  let viewportWidth = $state(0)
+  let cullPending = false
+
+  function syncViewportBounds() {
+    if (!viewport) return
+    scrollLeft = viewport.scrollLeft
+    viewportWidth = viewport.clientWidth
+  }
+
+  // Scroll fires far faster than a frame; coalesce to one read per frame so
+  // the handler never forces synchronous layout in a tight loop.
+  function scheduleViewportSync() {
+    if (cullPending) return
+    cullPending = true
+    requestAnimationFrame(() => {
+      cullPending = false
+      syncViewportBounds()
+    })
+  }
+
+  // A window resize changes how much of the strip is visible without moving
+  // the scroll position, so it needs its own trigger.
+  $effect(() => {
+    syncViewportBounds()
+    window.addEventListener('resize', scheduleViewportSync)
+    return () => window.removeEventListener('resize', scheduleViewportSync)
+  })
+
   const bars = $derived.by<Bar[]>(() => {
+    // viewportWidth stays 0 until the element is measured; render everything
+    // until then rather than showing an empty strip on the first paint.
+    const culling = viewportWidth > 0
+    const visibleFrom = scrollLeft - CULL_MARGIN_PX
+    const visibleTo = scrollLeft + viewportWidth + CULL_MARGIN_PX
     const out: Bar[] = []
     for (const t of tasks) {
       const end = t.end_ts ?? now
@@ -63,6 +110,7 @@
       const lane = Math.min(Math.max(t.slot ?? 0, 0), Math.max(laneCount - 1, 0))
       const left = Math.max(0, (t.start_ts - windowStart) * pxPerSec)
       const width = Math.max(MIN_BAR_PX, (end - Math.max(t.start_ts, windowStart)) * pxPerSec)
+      if (culling && (left + width < visibleFrom || left > visibleTo)) continue
       out.push({ task: t, lane, left, width, color: barColor(t.status) })
     }
     return out
@@ -88,12 +136,16 @@
     void now
     void innerWidth
     if (following && viewport) viewport.scrollLeft = viewport.scrollWidth
+    // Auto-follow moves the viewport without firing a scroll event we listen
+    // for reliably, so refresh the culling bounds from here too.
+    syncViewportBounds()
   })
 
   function onScroll() {
     if (!viewport) return
     const atRight = viewport.scrollWidth - viewport.scrollLeft - viewport.clientWidth < 6
     following = atRight
+    scheduleViewportSync()
   }
 
   function zoomIn() {

@@ -7,6 +7,7 @@
   import { api, type SinkStatus } from '../lib/api'
   import { fmtTime, fmtTimeFull, dur3 } from '../lib/format'
   import { COLOR } from '../lib/events'
+  import { pausableInterval } from '../lib/visibility'
   import Expandable from '../components/Expandable.svelte'
 
   let { params: _params = {} }: { params?: Record<string, string> } = $props()
@@ -28,9 +29,8 @@
   }
 
   onMount(() => {
-    load()
-    const id = setInterval(load, POLL_MS)
-    return () => clearInterval(id)
+    // Polling stops while the tab is hidden and catches up on return.
+    return pausableInterval(load, POLL_MS, { immediate: true })
   })
 </script>
 
