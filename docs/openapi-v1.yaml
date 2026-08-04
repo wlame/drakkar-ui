@@ -1267,6 +1267,14 @@ components:
         status: {type: string, enum: [done, failed, replaced]}
         exit_code: {type: [integer, 'null']}
         duration_seconds: {type: [number, 'null']}
+        # Arguments the task appended to the binary. Empty for a precomputed
+        # task, which runs no subprocess.
+        args: {type: array, items: {type: string}}
+        # The task's binary OVERRIDE, or null when it used the configured
+        # executor binary. Only the override is reported, so a non-null value
+        # means exactly "this task ran something other than the configured
+        # binary". Clients should render it only when present.
+        binary_path: {type: [string, 'null']}
         stdin: {type: [string, 'null']}
         stdout: {type: [string, 'null']}
         stderr: {type: [string, 'null']}

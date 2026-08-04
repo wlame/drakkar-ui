@@ -220,9 +220,16 @@ truncated:bool}`.
   occurred_at_ms}` — **no `traceback` field** (it must not be emitted).
   `exception_class` content is language-specific; treat as opaque.
 - `ProbeTaskEntry`: `{task_id, parent_task_id, labels, source_offsets,
-  precomputed, status(done|failed|replaced), exit_code, duration_seconds, stdin,
-  stdout, stderr, subprocess_exception, on_task_complete_duration,
-  on_task_complete_result, on_task_complete_error, retry_of, replacement_for}`.
+  precomputed, status(done|failed|replaced), exit_code, duration_seconds, args,
+  binary_path, stdin, stdout, stderr, subprocess_exception,
+  on_task_complete_duration, on_task_complete_result, on_task_complete_error,
+  retry_of, replacement_for}`.
+  `args` is the argument list the task appended to the binary (empty for a
+  precomputed task). `binary_path` is the task's **override only**, and is
+  `null` when the task used the configured executor binary — the configured
+  path is identical for every task and already visible in the config, so a
+  non-null value means exactly "this task ran something else". Clients render
+  it only when present.
 - `ProbeCacheCall`: `{op(get|set|peek|delete|contains), key, scope,
   outcome(hit|miss|suppressed), value_preview, origin_stage, ms_since_start}`.
 - `PlannedSinkRecord`: `{sink_type(kafka|postgres|mongo|http|redis|files|custom),
