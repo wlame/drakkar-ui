@@ -12,13 +12,15 @@
   // $derived recomputes the active page + its route params whenever the path
   // store changes ($currentPath auto-subscribes). The router has no per-route branching;
   // resolve() does the data-driven pattern match.
+  const redirectTo = $derived(resolveRedirect($currentPath))
   const match = $derived(resolve($currentPath))
   const Current = $derived(match.component)
 
-  // A removed path never renders: it is rewritten to its replacement first.
+  // A removed path never renders: the redirect replaces it before a page is shown.
+  // The markup below also checks redirectTo directly, so NotFound never flashes
+  // for the tick between resolve() picking it and this effect firing.
   $effect(() => {
-    const to = resolveRedirect($currentPath)
-    if (to) navigate(to, { replace: true })
+    if (redirectTo) navigate(redirectTo, { replace: true })
   })
 
   // Wide-layout toggle, persisted like the reference's localStorage 'drakkar-wide'.
@@ -52,8 +54,10 @@
     return () => document.removeEventListener('keydown', onKey)
   })
 
-  // A nav item is active on its exact page and on any detail route beneath it,
-  // so "History" stays lit on /task/abc reached from the history table.
+  // A nav item is active on its exact path, or on any path nested one level below
+  // it (e.g. "/live/x" would keep "Live" lit). None of the current four nav items
+  // has a nested detail route, so that second branch is unreachable today; it stays
+  // in place for the day a nav item gains one.
   function isActive(p: string): boolean {
     if (p === '/') return $currentPath === '/'
     return $currentPath === p || $currentPath.startsWith(p + '/')
@@ -89,7 +93,9 @@
 </header>
 
 <main class:wide>
-  <Current params={match.params} />
+  {#if !redirectTo}
+    <Current params={match.params} />
+  {/if}
 </main>
 
 <style>
