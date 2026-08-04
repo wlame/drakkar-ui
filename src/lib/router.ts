@@ -9,7 +9,9 @@ import { writable } from 'svelte/store'
 //   currentPath — pathname        (which page; drives route resolution. Named
 //                                  currentPath, not `path`, so it never collides
 //                                  with the SVG <path> element used across pages.)
-//   search — raw query string     (e.g. "?page=2"; partition-detail pager)
+//   search — raw query string     (e.g. "?token=abc"; kept in sync with the
+//                                  location so a page can read deep state from
+//                                  the URL)
 //   hash   — raw fragment         (e.g. "#trace/5/42"; debug tabs + trace deep-link)
 export const currentPath = writable(window.location.pathname)
 export const search = writable(window.location.search)

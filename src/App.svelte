@@ -54,8 +54,8 @@
     return () => document.removeEventListener('keydown', onKey)
   })
 
-  // A nav item is active on its exact path, or on any path nested one level below
-  // it (e.g. "/live/x" would keep "Live" lit). None of the current four nav items
+  // A nav item is active on its exact path, or on any path nested under it
+  // (e.g. "/live/x" would keep "Live" lit). None of the current four nav items
   // has a nested detail route, so that second branch is unreachable today; it stays
   // in place for the day a nav item gains one.
   function isActive(p: string): boolean {

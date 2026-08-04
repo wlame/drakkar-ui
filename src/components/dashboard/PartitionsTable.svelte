@@ -52,6 +52,8 @@
             <span class="dot" class:live={p.is_live}></span>
             <span class="muted">{p.is_live ? 'live' : 'history'}</span>
           </td>
+          <!-- Missing timestamps render blank; "-" is printed only for a null
+               offset, since 0 is a real offset and must still read as 0. -->
           <td class="muted nowrap" title={fmtTimeMs(p.last_consumed)}>{fmtTime(p.last_consumed)}</td>
           <td class="muted nowrap" title={fmtTimeMs(p.last_committed)}>{fmtTime(p.last_committed)}</td>
           <td class="num mono">{p.committed_offset ?? '-'}</td>

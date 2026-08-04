@@ -159,6 +159,35 @@ describe('pausableInterval', () => {
     stop()
   })
 
+  it('calls onResume instead of fn when catching up', () => {
+    const fn = vi.fn()
+    const onResume = vi.fn()
+    const stop = pausableInterval(fn, 1000, { onResume })
+    setHidden(true)
+    vi.advanceTimersByTime(DEFAULT_GRACE_MS + 60_000)
+    const atIdle = fn.mock.calls.length
+
+    setHidden(false)
+    // The catch-up is onResume's job; fn only resumes on the next interval.
+    expect(onResume).toHaveBeenCalledTimes(1)
+    expect(fn).toHaveBeenCalledTimes(atIdle)
+    vi.advanceTimersByTime(1000)
+    expect(fn).toHaveBeenCalledTimes(atIdle + 1)
+    expect(onResume).toHaveBeenCalledTimes(1)
+    stop()
+  })
+
+  it('does not call onResume for a switch away inside the grace period', () => {
+    const fn = vi.fn()
+    const onResume = vi.fn()
+    const stop = pausableInterval(fn, 1000, { onResume })
+    setHidden(true)
+    vi.advanceTimersByTime(3000)
+    setHidden(false)
+    expect(onResume).not.toHaveBeenCalled()
+    stop()
+  })
+
   it('does not start a timer when created while hidden', () => {
     setHidden(true)
     const fn = vi.fn()

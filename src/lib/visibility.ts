@@ -81,6 +81,14 @@ export function visibilityGate(opts: VisibilityGateOptions): () => void {
 export interface PausableIntervalOptions {
   /** Run the callback once immediately on start. Defaults to false. */
   immediate?: boolean
+  /**
+   * Catch-up call used instead of `fn` when the tab becomes visible again.
+   *
+   * A caller whose `fn` only advances a scheduler tick needs this: running one
+   * more tick usually fires nothing, so the operator would keep looking at the
+   * numbers from before the tab was hidden. Defaults to `fn`.
+   */
+  onResume?: () => void
   graceMs?: number
 }
 
@@ -115,7 +123,8 @@ export function pausableInterval(
     onActive: () => {
       // Catch up before resuming the cadence: the tab may have been hidden
       // for far longer than one interval.
-      fn()
+      const catchUp = opts.onResume ?? fn
+      catchUp()
       start()
     },
   })

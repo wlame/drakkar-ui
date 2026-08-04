@@ -1,11 +1,12 @@
 <script lang="ts">
   // Worker-at-a-glance. This page owns every request it needs and drives them
-  // from one tick, so the three endpoints never land in the same tick — each
-  // request costs the worker a main-loop dispatch, and a repeating burst of
-  // three is a cost the worker feels forever once the intervals align.
+  // from one tick, so its own three endpoints never land in the same tick —
+  // each request costs the worker a main-loop dispatch, and a repeating burst
+  // of three is a cost the worker feels forever once the intervals align. The
+  // guarantee covers this page only; the header polls workers on its own timer.
   import { onMount } from 'svelte'
   import { api, type Dashboard, type Partition, type SinkStatus } from '../lib/api'
-  import { fmtUptime } from '../lib/format'
+  import { fmtTime, fmtUptime } from '../lib/format'
   import { COLOR } from '../lib/events'
   import { pausableInterval } from '../lib/visibility'
   import { dueJobs, type PollJob } from '../lib/schedule'
@@ -17,61 +18,105 @@
 
   const POLL_TICK_MS = 500
 
-  // Offsets are chosen so no two jobs ever share a tick: sinks always lands on
-  // an even tick, dashboard on ticks ≡ 1 (mod 10), partitions on ≡ 3 (mod 10).
-  // A job added later must keep that property — for example everyTicks 10 with
-  // offsetTicks 5.
-  const JOBS: PollJob[] = [
-    { name: 'sinks', everyTicks: 4, offsetTicks: 0 },
-    { name: 'dashboard', everyTicks: 10, offsetTicks: 1 },
-    { name: 'partitions', everyTicks: 10, offsetTicks: 3 },
-  ]
+  // How many missed polls before a section is marked stale. One failed poll
+  // during a rolling restart is normal and must stay silent.
+  const STALE_AFTER_PERIODS = 3
 
   let data = $state<Dashboard | null>(null)
-  let dataError = $state<string | null>(null)
   let partitions = $state<Partition[] | null>(null)
-  let partitionsError = $state<string | null>(null)
   let sinks = $state<SinkStatus[] | null>(null)
-  let sinksError = $state<string | null>(null)
 
-  // Each loader keeps the last good value on a transient failure and reports an
-  // error only before its first success. One dead endpoint therefore costs its
-  // own section, not the whole page.
   async function loadDashboard() {
-    try {
-      data = await api.dashboard()
-      dataError = null
-    } catch (e) {
-      if (data === null) dataError = e instanceof Error ? e.message : String(e)
-    }
+    data = await api.dashboard()
   }
 
   async function loadPartitions() {
-    try {
-      partitions = await api.partitions()
-      partitionsError = null
-    } catch (e) {
-      if (partitions === null) partitionsError = e instanceof Error ? e.message : String(e)
-    }
+    partitions = await api.partitions()
   }
 
   async function loadSinks() {
-    try {
-      sinks = await api.sinks()
-      sinksError = null
-    } catch (e) {
-      if (sinks === null) sinksError = e instanceof Error ? e.message : String(e)
-    }
+    sinks = await api.sinks()
   }
 
-  const LOADERS: Record<string, () => Promise<void>> = {
+  const LOADERS = {
     dashboard: loadDashboard,
     partitions: loadPartitions,
     sinks: loadSinks,
+  } satisfies Record<string, () => Promise<void>>
+
+  // Keying the jobs off LOADERS makes a job name with no loader a compile error
+  // rather than a TypeError on the tick that first fires it.
+  type JobName = keyof typeof LOADERS
+
+  // Offsets keep any two jobs off the same tick: sinks always lands on an even
+  // tick, dashboard on ticks ≡ 1 (mod 10), partitions on ≡ 3 (mod 10). Each
+  // offset is also a full period past tick 0, so the first scheduled run does
+  // not re-fetch what the manual fill in onMount just fetched. A job added
+  // later must keep both properties — for example everyTicks 10, offsetTicks 15.
+  const JOBS: PollJob<JobName>[] = [
+    { name: 'sinks', everyTicks: 4, offsetTicks: 4 },
+    { name: 'dashboard', everyTicks: 10, offsetTicks: 11 },
+    { name: 'partitions', everyTicks: 10, offsetTicks: 13 },
+  ]
+
+  const PERIOD_SEC: Record<JobName, number> = Object.fromEntries(
+    JOBS.map((j) => [j.name, (j.everyTicks * POLL_TICK_MS) / 1000]),
+  ) as Record<JobName, number>
+
+  const emptyPerJob = <T,>(value: T): Record<JobName, T> => ({
+    dashboard: value,
+    partitions: value,
+    sinks: value,
+  })
+
+  let errors = $state<Record<JobName, string | null>>(emptyPerJob<string | null>(null))
+  // Epoch seconds of the last good load, and — once the section has gone quiet
+  // for long enough — the timestamp shown in the stale marker.
+  let lastOkAt = $state<Record<JobName, number | null>>(emptyPerJob<number | null>(null))
+  let staleSince = $state<Record<JobName, number | null>>(emptyPerJob<number | null>(null))
+
+  // Names whose request is still open. Without this a slow endpoint piles up
+  // requests, and an older response landing last rewrites a table with rows
+  // that are already out of date.
+  const inFlight = new Set<JobName>()
+
+  // A section goes stale once its last good value is older than a few polls.
+  function markStaleIfOld(name: JobName) {
+    const okAt = lastOkAt[name]
+    if (okAt === null) return
+    if (Date.now() / 1000 - okAt > PERIOD_SEC[name] * STALE_AFTER_PERIODS) staleSince[name] = okAt
+  }
+
+  async function runJob(name: JobName) {
+    if (inFlight.has(name)) {
+      // Requests carry no timeout, so one that never settles would otherwise
+      // keep the numbers looking live: nothing fails, so nothing marks them.
+      markStaleIfOld(name)
+      return
+    }
+    inFlight.add(name)
+    try {
+      await LOADERS[name]()
+      lastOkAt[name] = Date.now() / 1000
+      staleSince[name] = null
+      errors[name] = null
+    } catch (e) {
+      // Keep the last good value: one dead endpoint costs its own section, not
+      // the whole page. Before the first success there is nothing to show but
+      // the error; after it, the numbers stay and only pick up a stale marker
+      // once they are older than a few polls.
+      if (lastOkAt[name] === null) {
+        errors[name] = e instanceof Error ? e.message : String(e)
+      } else {
+        markStaleIfOld(name)
+      }
+    } finally {
+      inFlight.delete(name)
+    }
   }
 
   function reloadAll() {
-    for (const load of Object.values(LOADERS)) void load()
+    for (const name of Object.keys(LOADERS) as JobName[]) void runJob(name)
   }
 
   // Consumer-lag thresholds for the whole-worker tile: > 100 red, > 20 amber.
@@ -85,14 +130,27 @@
     // Fill the page at once, then let the scheduler take over the cadence.
     reloadAll()
     let tick = 0
-    return pausableInterval(() => {
-      tick += 1
-      for (const name of dueJobs(JOBS, tick)) void LOADERS[name]()
-    }, POLL_TICK_MS)
+    return pausableInterval(
+      () => {
+        tick += 1
+        for (const name of dueJobs(JOBS, tick)) void runJob(name)
+      },
+      POLL_TICK_MS,
+      // Advancing one tick after a long absence usually fires nothing, so the
+      // catch-up has to refetch everything itself.
+      { onResume: reloadAll },
+    )
   })
 </script>
 
-<h1>Dashboard</h1>
+<!-- Marks a section whose numbers are still on screen but no longer refreshing.
+     Deliberately quiet: a single failed poll is normal, so this reads as a note
+     next to the heading, not as an alarm. -->
+{#snippet staleMark(since: number | null)}
+  {#if since !== null}<span class="stale">stale since {fmtTime(since)}</span>{/if}
+{/snippet}
+
+<h1>Dashboard {@render staleMark(staleSince.dashboard)}</h1>
 
 <!-- Tiny external-link arrow shown next to a stat-tile label when the backend
      provides a Prometheus URL for it. -->
@@ -102,9 +160,9 @@
   </a>
 {/snippet}
 
-{#if dataError}
-  <p class="error">Could not reach the backend: <code>{dataError}</code></p>
-  <button onclick={loadDashboard}>Retry</button>
+{#if errors.dashboard}
+  <p class="error">Could not load the worker summary: <code>{errors.dashboard}</code></p>
+  <button onclick={() => void runJob('dashboard')}>Retry</button>
 {:else if !data}
   <p class="muted">Loading…</p>
 {:else}
@@ -128,7 +186,7 @@
   <!-- WebApp sits above the partition tiles: it is a second ingress into the
        same pipeline, not one of the partitions. -->
   {#if data.webapp_tile}
-    <div class="tile-wrap"><WebappTile tile={data.webapp_tile} variant="wide" /></div>
+    <div class="tile-wrap"><WebappTile tile={data.webapp_tile} /></div>
   {/if}
 
   <h2>Assigned Partitions</h2>
@@ -186,14 +244,23 @@
 {/if}
 
 <!-- The two tables sit outside the `data` guard: a failing /dashboard request
-     must not hide partition and sink health, which come from other endpoints. -->
-<h2>Partitions</h2>
-<PartitionsTable rows={partitions} error={partitionsError} />
+     must not hide partition and sink health, which come from other endpoints.
+     "All Partitions" because this lists every partition the recorder has seen,
+     while the stat tile above counts only the ones assigned to this worker. -->
+<h2>All Partitions {@render staleMark(staleSince.partitions)}</h2>
+<PartitionsTable rows={partitions} error={errors.partitions} />
 
-<h2>Sinks</h2>
-<SinksTable rows={sinks} error={sinksError} />
+<h2>Sinks {@render staleMark(staleSince.sinks)}</h2>
+<SinksTable rows={sinks} error={errors.sinks} />
 
 <style>
+  /* Stale marker: small, muted, normal weight so it never competes with the
+     heading it hangs off. */
+  .stale {
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--muted);
+  }
   .tiles {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
