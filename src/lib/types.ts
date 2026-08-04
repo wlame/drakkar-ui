@@ -450,6 +450,14 @@ export interface ProbeTaskEntry {
   status: 'done' | 'failed' | 'replaced'
   exit_code: number | null
   duration_seconds: number | null
+  /** Arguments the task appended to the binary. Empty for a precomputed task. */
+  args: string[]
+  /**
+   * The task's binary OVERRIDE, or null when it used the configured executor
+   * binary. Only the override is reported, so a non-null value means exactly
+   * "this task ran something else" — render it only when present.
+   */
+  binary_path: string | null
   stdin: string
   stdout: string
   stderr: string

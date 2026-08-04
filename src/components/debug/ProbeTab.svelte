@@ -12,7 +12,37 @@
   } from '../../lib/api'
   import { runtimeConfig } from '../../lib/config'
   import { durSec } from '../../lib/format'
+  import { NO_SORT, ariaSort, nextSortState, sortRows, type SortAccessor } from '../../lib/sort'
   import KafkaIcon from '../KafkaIcon.svelte'
+  import SidePanel from '../SidePanel.svelte'
+
+  // Sortable task table. Accessors read the value each column DISPLAYS, so the
+  // order always matches what is on screen — sorting by "stdout" ranks by the
+  // byte count in the cell, not by the text behind it.
+  let taskSort = $state(NO_SORT)
+  // Declared here rather than inline in the markup: an inline array of mixed
+  // tuples infers (string | boolean)[], and the destructured members lose their
+  // types.
+  const TASK_COLUMNS: { key: string; label: string; numeric: boolean }[] = [
+    { key: 'task_id', label: 'task_id', numeric: false },
+    { key: 'status', label: 'status', numeric: false },
+    { key: 'exit', label: 'exit', numeric: true },
+    { key: 'precomp', label: 'precomp', numeric: false },
+    { key: 'duration', label: 'duration', numeric: true },
+    { key: 'args', label: 'args', numeric: false },
+    { key: 'stdout', label: 'stdout', numeric: true },
+    { key: 'stderr', label: 'stderr', numeric: true },
+  ]
+  const TASK_ACCESSORS: Record<string, SortAccessor<ProbeTaskEntry>> = {
+    task_id: (t) => t.task_id,
+    status: (t) => (t.retry_of ? 'retried' : t.status),
+    exit: (t) => t.exit_code,
+    precomp: (t) => t.precomputed,
+    duration: (t) => t.duration_seconds,
+    args: (t) => t.args.join(' '),
+    stdout: (t) => t.stdout.length,
+    stderr: (t) => t.stderr.length,
+  }
 
   // form state
   let value = $state('')
@@ -170,10 +200,19 @@
       <h3>Tasks ({report.tasks.length})</h3>
       <table>
         <thead>
-          <tr><th>#</th><th>task_id</th><th>status</th><th class="num">exit</th><th>precomp</th><th class="num">duration</th><th class="num">stdout</th><th class="num">stderr</th></tr>
+          <tr>
+            <th>#</th>
+            {#each TASK_COLUMNS as col (col.key)}
+              <th class:num={col.numeric} aria-sort={ariaSort(taskSort, col.key)}>
+                <button class="sort" onclick={() => (taskSort = nextSortState(taskSort, col.key))}>
+                  {col.label}<span class="ind">{taskSort.key === col.key ? (taskSort.direction === 'asc' ? '\u2191' : '\u2193') : ''}</span>
+                </button>
+              </th>
+            {/each}
+          </tr>
         </thead>
         <tbody>
-          {#each report.tasks as t, i (t.task_id)}
+          {#each sortRows(report.tasks, taskSort, TASK_ACCESSORS) as t, i (t.task_id)}
             <tr class="clickable" onclick={() => (openTask = t)}>
               <td class="muted">{i + 1}</td>
               <td class="mono">{t.task_id}</td>
@@ -181,6 +220,7 @@
               <td class="num mono">{exitLabel(t.exit_code)}</td>
               <td>{t.precomputed ? '✓' : ''}</td>
               <td class="num mono">{durSec(t.duration_seconds)}</td>
+              <td class="mono argv" title={t.args.join(' ')}>{t.args.join(' ')}</td>
               <td class="num mono">{t.stdout.length || ''}</td>
               <td class="num mono" style:color={t.stderr.length ? '#dc2626' : undefined}>{t.stderr.length || ''}</td>
             </tr>
@@ -272,11 +312,7 @@
 <!-- Task detail sidebar -->
 {#if openTask}
   {@const t = openTask}
-  <div class="sidebar">
-    <div class="sb-head">
-      <span class="mono">{t.task_id}</span>
-      <button class="x" onclick={() => (openTask = null)} aria-label="Close">×</button>
-    </div>
+  <SidePanel title={t.task_id} storageKey="drakkar-panel-probe-task" defaultWidth={30} onclose={() => (openTask = null)}>
     <div class="kv">
       <span>status</span><span style:color={taskColor(t)}>{t.retry_of ? 'retried' : t.status}</span>
       <span>exit</span><span class="mono">{exitLabel(t.exit_code)}</span>
@@ -285,14 +321,18 @@
       {#if t.replacement_for}<span>replaces</span><span class="mono">{t.replacement_for}</span>{/if}
       {#if Object.keys(t.labels).length}<span>labels</span><span class="mono">{Object.entries(t.labels).map(([k, v]) => `${k}=${v}`).join(', ')}</span>{/if}
       {#if t.source_offsets.length}<span>offsets</span><span class="mono">{t.source_offsets.join(', ')}</span>{/if}
+      <span>args</span><span class="mono wrap">{t.args.length ? t.args.join(' ') : '—'}</span>
+      {#if t.binary_path}<span>binary</span><span class="mono wrap">{t.binary_path}</span>{/if}
     </div>
     {#if t.stdin}<h4>stdin</h4><pre class="block">{t.stdin}</pre>{/if}
-    {#if t.stdout}<h4>stdout</h4><pre class="block">{t.stdout}</pre>{/if}
-    {#if t.stderr}<h4>stderr</h4><pre class="block err">{t.stderr}</pre>{/if}
+    <h4>stdout</h4>
+    {#if t.stdout}<pre class="block">{t.stdout}</pre>{:else}<p class="muted empty">no output</p>{/if}
+    <h4>stderr</h4>
+    {#if t.stderr}<pre class="block err">{t.stderr}</pre>{:else}<p class="muted empty">no output</p>{/if}
     {#if t.subprocess_exception}<h4>subprocess exception</h4><pre class="block err">{t.subprocess_exception}</pre>{/if}
     {#if t.on_task_complete_error}<h4>on_task_complete error</h4><pre class="block err">{t.on_task_complete_error}</pre>{/if}
     {#if t.on_task_complete_result}<h4>on_task_complete result</h4><pre class="block">{pretty(t.on_task_complete_result)}</pre>{/if}
-  </div>
+  </SidePanel>
 {/if}
 
 <style>
@@ -431,27 +471,35 @@
     font-size: 0.85rem;
     margin: 0.3rem 0;
   }
-  .sidebar {
-    position: fixed;
-    top: 3.25rem;
-    right: 0;
-    width: 30rem;
-    max-width: 95vw;
-    height: calc(100vh - 3.25rem);
-    background: var(--panel-2);
-    border-left: 1px solid var(--line);
-    box-shadow: -12px 0 32px rgba(0, 0, 0, 0.45);
-    padding: 1rem;
-    overflow: auto;
-    z-index: 45;
+  /* Header cells are buttons so the sort is keyboard reachable; they inherit
+     the table's header styling rather than looking like page buttons. */
+  th button.sort {
+    all: unset;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.25rem;
   }
-  .sb-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.75rem;
+  th button.sort:hover,
+  th button.sort:focus-visible {
+    color: var(--accent);
   }
-  .sb-head .x {
-    padding: 0.1rem 0.5rem;
+  .ind {
+    font-size: 0.7rem;
+    width: 0.6rem;
+  }
+  /* argv can be long; the cell truncates and the full value is on the title. */
+  .argv {
+    max-width: 18rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .wrap {
+    overflow-wrap: anywhere;
+  }
+  .empty {
+    margin: 0.2rem 0 0.6rem;
+    font-size: 0.85rem;
   }
 </style>
