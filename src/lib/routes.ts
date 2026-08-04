@@ -1,12 +1,9 @@
 import type { Component } from 'svelte'
 import Dashboard from '../pages/Dashboard.svelte'
-import Partitions from '../pages/Partitions.svelte'
-import PartitionDetail from '../pages/PartitionDetail.svelte'
 import TaskDetail from '../pages/TaskDetail.svelte'
 import History from '../pages/History.svelte'
 import Live from '../pages/Live.svelte'
 import Debug from '../pages/Debug.svelte'
-import Sinks from '../pages/Sinks.svelte'
 import NotFound from '../pages/NotFound.svelte'
 
 // The route table is data, not control flow: each row maps a path *pattern* to a
@@ -24,9 +21,9 @@ export interface Route {
 }
 
 // navItems drives the header nav. It is intentionally separate from the route
-// table so the full ops-console chrome (all six top-level pages) is present even
-// while individual pages are still being built out — and so detail routes
-// (/task/:id, /partitions/:id) never appear as nav entries.
+// table so the full ops-console chrome (all four top-level pages) is present even
+// while individual pages are still being built out — and so a detail route like
+// /task/:id never appears as a nav entry.
 export interface NavItem {
   label: string
   path: string
@@ -35,8 +32,6 @@ export interface NavItem {
 
 export const navItems: NavItem[] = [
   { label: 'Dashboard', path: '/' },
-  { label: 'Partitions', path: '/partitions' },
-  { label: 'Sinks', path: '/sinks' },
   { label: 'Live', path: '/live', live: true },
   { label: 'Debug', path: '/debug' },
   { label: 'History', path: '/history' },
@@ -44,13 +39,10 @@ export const navItems: NavItem[] = [
 
 export const routes: Route[] = [
   { path: '/', component: Dashboard },
-  { path: '/partitions', component: Partitions },
-  { path: '/partitions/:id', component: PartitionDetail },
   { path: '/task/:id', component: TaskDetail },
   { path: '/history', component: History },
   { path: '/live', component: Live },
   { path: '/debug', component: Debug },
-  { path: '/sinks', component: Sinks },
 ]
 
 export interface RouteMatch {

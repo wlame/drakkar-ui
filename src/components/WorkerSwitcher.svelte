@@ -14,7 +14,7 @@
   let root: HTMLDivElement
 
   const POLL_MS = 10_000
-  const GENERAL_PAGES = ['/', '/partitions', '/sinks', '/live', '/debug', '/history']
+  const GENERAL_PAGES = ['/', '/live', '/debug', '/history']
 
   const currentName = $derived(workers.find((w) => w.is_current)?.worker_name ?? 'scanning…')
 

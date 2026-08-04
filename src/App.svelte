@@ -2,8 +2,9 @@
   import { onMount } from 'svelte'
   import { api } from './lib/api'
   import { hydrateFromOverview } from './lib/config'
-  import { currentPath, link } from './lib/router'
+  import { currentPath, link, navigate } from './lib/router'
   import { navItems, resolve } from './lib/routes'
+  import { resolveRedirect } from './lib/redirects'
   import WorkerSwitcher from './components/WorkerSwitcher.svelte'
   import SinkLinks from './components/SinkLinks.svelte'
   import VersionBadge from './components/VersionBadge.svelte'
@@ -13,6 +14,12 @@
   // resolve() does the data-driven pattern match.
   const match = $derived(resolve($currentPath))
   const Current = $derived(match.component)
+
+  // A removed path never renders: it is rewritten to its replacement first.
+  $effect(() => {
+    const to = resolveRedirect($currentPath)
+    if (to) navigate(to, { replace: true })
+  })
 
   // Wide-layout toggle, persisted like the reference's localStorage 'drakkar-wide'.
   let wide = $state(localStorage.getItem('drakkar-wide') === '1')
@@ -45,8 +52,8 @@
     return () => document.removeEventListener('keydown', onKey)
   })
 
-  // A nav item is active on its exact page and (for top-level pages) on any detail
-  // route beneath it, so "Partitions" stays lit on /partitions/3.
+  // A nav item is active on its exact page and on any detail route beneath it,
+  // so "History" stays lit on /task/abc reached from the history table.
   function isActive(p: string): boolean {
     if (p === '/') return $currentPath === '/'
     return $currentPath === p || $currentPath.startsWith(p + '/')

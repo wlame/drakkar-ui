@@ -19,9 +19,9 @@ afterEach(() => {
 
 describe('navigate', () => {
   it('updates location and all three stores from a compound target', () => {
-    navigate('/partitions/3?page=2#h')
-    expect(window.location.pathname).toBe('/partitions/3')
-    expect(get(currentPath)).toBe('/partitions/3')
+    navigate('/task/abc?page=2#h')
+    expect(window.location.pathname).toBe('/task/abc')
+    expect(get(currentPath)).toBe('/task/abc')
     expect(get(search)).toBe('?page=2')
     expect(get(hash)).toBe('#h')
   })

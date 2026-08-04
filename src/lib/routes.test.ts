@@ -4,9 +4,8 @@
 import { describe, it, expect } from 'vitest'
 import { resolve } from './routes'
 import Dashboard from '../pages/Dashboard.svelte'
-import Partitions from '../pages/Partitions.svelte'
-import PartitionDetail from '../pages/PartitionDetail.svelte'
 import TaskDetail from '../pages/TaskDetail.svelte'
+import History from '../pages/History.svelte'
 import Live from '../pages/Live.svelte'
 import NotFound from '../pages/NotFound.svelte'
 
@@ -18,14 +17,22 @@ describe('resolve', () => {
   })
 
   it('matches literal routes', () => {
-    expect(resolve('/partitions').component).toBe(Partitions)
     expect(resolve('/live').component).toBe(Live)
+    expect(resolve('/history').component).toBe(History)
   })
 
   it('captures :param segments', () => {
-    const m = resolve('/partitions/42')
-    expect(m.component).toBe(PartitionDetail)
-    expect(m.params).toEqual({ id: '42' })
+    const m = resolve('/task/abc')
+    expect(m.component).toBe(TaskDetail)
+    expect(m.params).toEqual({ id: 'abc' })
+  })
+
+  it('no longer resolves the removed routes', () => {
+    // These paths are handled by resolveRedirect before a component is chosen;
+    // the route table itself must not know them.
+    expect(resolve('/partitions').component).toBe(NotFound)
+    expect(resolve('/partitions/42').component).toBe(NotFound)
+    expect(resolve('/sinks').component).toBe(NotFound)
   })
 
   it('URL-decodes captured params (task ids can contain slashes when encoded)', () => {
@@ -36,7 +43,7 @@ describe('resolve', () => {
 
   it('ignores a trailing slash on non-root paths', () => {
     expect(resolve('/live/').component).toBe(Live)
-    expect(resolve('/partitions/42/').params).toEqual({ id: '42' })
+    expect(resolve('/task/42/').params).toEqual({ id: '42' })
   })
 
   it('does not match when a literal segment differs', () => {
@@ -46,7 +53,7 @@ describe('resolve', () => {
 
   it('does not match on a different segment count', () => {
     expect(resolve('/task/1/2').component).toBe(NotFound)
-    expect(resolve('/partitions/1/extra').component).toBe(NotFound)
+    expect(resolve('/live/1/extra').component).toBe(NotFound)
   })
 
   it('does not let a bare prefix match a param route', () => {

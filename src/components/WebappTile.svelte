@@ -1,7 +1,7 @@
 <script lang="ts">
   // The optional WebApp summary tile. Two layouts mirror the reference: a compact
-  // vertical card on the Dashboard (default) and a wide 5-column grid on the
-  // Partitions page (variant="wide", ports partitions.html).
+  // vertical card (default) and a wide 5-column grid (variant="wide"), both used
+  // on the Dashboard.
   import type { WebappTile } from '../lib/api'
   import { COLOR } from '../lib/events'
 

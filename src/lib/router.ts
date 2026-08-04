@@ -22,11 +22,19 @@ function syncFromLocation(): void {
 }
 
 // navigate performs a client-side route change. `to` may include a query string
-// and/or hash (e.g. "/partitions/3?page=1", "/debug#trace/5/42").
-export function navigate(to: string): void {
+// and/or hash (e.g. "/task/abc?page=1", "/debug#trace/5/42").
+//
+// `replace` rewrites the current entry instead of pushing a new one. A redirect
+// must use it, otherwise Back returns to the removed path and redirects again,
+// trapping the user.
+export function navigate(to: string, opts: { replace?: boolean } = {}): void {
   const current = window.location.pathname + window.location.search + window.location.hash
   if (to === current) return
-  window.history.pushState({}, '', to)
+  if (opts.replace) {
+    window.history.replaceState({}, '', to)
+  } else {
+    window.history.pushState({}, '', to)
+  }
   syncFromLocation()
 }
 
