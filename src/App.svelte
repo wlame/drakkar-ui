@@ -16,6 +16,16 @@
   const match = $derived(resolve($currentPath))
   const Current = $derived(match.component)
 
+  // The brand shows the cluster name with a capital FIRST letter only. Cluster
+  // names are commonly hyphenated ("kafka-prod-01"), and CSS
+  // `text-transform: capitalize` would render that as "Kafka-Prod-01". The raw
+  // configured value stays in the title attribute.
+  const brand = $derived.by(() => {
+    const cluster = $identity?.cluster
+    if (!cluster) return 'Drakkar'
+    return cluster.charAt(0).toUpperCase() + cluster.slice(1)
+  })
+
   // A removed path never renders: the redirect replaces it before a page is shown.
   // The markup below also checks redirectTo directly, so NotFound never flashes
   // for the tick between resolve() picking it and this effect firing.
@@ -81,7 +91,7 @@
         use:link
         title={$identity?.cluster ? `${$identity.cluster} — Drakkar` : 'Drakkar'}
       >
-        {$identity?.cluster || 'Drakkar'}
+        {brand}
       </a>
       <nav>
         {#each navItems as item}
