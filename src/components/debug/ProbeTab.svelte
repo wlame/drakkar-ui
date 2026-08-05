@@ -12,9 +12,10 @@
   } from '../../lib/api'
   import { runtimeConfig } from '../../lib/config'
   import { durSec } from '../../lib/format'
-  import { NO_SORT, ariaSort, nextSortState, sortRows, type SortAccessor } from '../../lib/sort'
+  import { NO_SORT, sortRows, type SortAccessor } from '../../lib/sort'
   import KafkaIcon from '../KafkaIcon.svelte'
   import SidePanel from '../SidePanel.svelte'
+  import SortableTh from '../SortableTh.svelte'
 
   // Sortable task table. Accessors read the value each column DISPLAYS, so the
   // order always matches what is on screen — sorting by "stdout" ranks by the
@@ -203,11 +204,7 @@
           <tr>
             <th>#</th>
             {#each TASK_COLUMNS as col (col.key)}
-              <th class:num={col.numeric} aria-sort={ariaSort(taskSort, col.key)}>
-                <button class="sort" onclick={() => (taskSort = nextSortState(taskSort, col.key))}>
-                  {col.label}<span class="ind">{taskSort.key === col.key ? (taskSort.direction === 'asc' ? '\u2191' : '\u2193') : ''}</span>
-                </button>
-              </th>
+              <SortableTh bind:sort={taskSort} key={col.key} label={col.label} numeric={col.numeric} />
             {/each}
           </tr>
         </thead>
@@ -470,23 +467,6 @@
     cursor: pointer;
     font-size: 0.85rem;
     margin: 0.3rem 0;
-  }
-  /* Header cells are buttons so the sort is keyboard reachable; they inherit
-     the table's header styling rather than looking like page buttons. */
-  th button.sort {
-    all: unset;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: baseline;
-    gap: 0.25rem;
-  }
-  th button.sort:hover,
-  th button.sort:focus-visible {
-    color: var(--accent);
-  }
-  .ind {
-    font-size: 0.7rem;
-    width: 0.6rem;
   }
   /* argv can be long; the cell truncates and the full value is on the title. */
   .argv {

@@ -6,6 +6,7 @@
   import { api, type CacheEntriesResponse, type CacheStats, type CacheEntryDetail } from '../../lib/api'
   import { fmtBytes, fmtDateTimeMs } from '../../lib/format'
   import { pausableInterval } from '../../lib/visibility'
+  import SidePanel from '../SidePanel.svelte'
 
   const PAGE_SIZE = 200
 
@@ -148,11 +149,15 @@
 {/if}
 
 {#if detail || detailError}
-  <div class="sidebar">
-    <div class="sb-head">
-      <span>Cache entry</span>
-      <button class="x" onclick={() => { detail = null; detailError = null }} aria-label="Close">×</button>
-    </div>
+  <SidePanel
+    title="Cache entry"
+    storageKey="drakkar-panel-cache-entry"
+    defaultWidth={26}
+    onclose={() => {
+      detail = null
+      detailError = null
+    }}
+  >
     {#if detailError}
       <p class="error">{detailError}</p>
     {:else if detail}
@@ -168,7 +173,7 @@
       <h3>Value</h3>
       <pre class="block">{detail.value != null ? pretty(detail.value) : detail.raw_value}</pre>
     {/if}
-  </div>
+  </SidePanel>
 {/if}
 
 <style>
@@ -254,30 +259,6 @@
     gap: 0.75rem;
     margin-top: 1rem;
     font-size: 0.85rem;
-  }
-  .sidebar {
-    position: fixed;
-    top: 3.25rem;
-    right: 0;
-    width: 26rem;
-    max-width: 92vw;
-    height: calc(100vh - 3.25rem);
-    background: var(--panel-2);
-    border-left: 1px solid var(--line);
-    box-shadow: -12px 0 32px rgba(0, 0, 0, 0.4);
-    padding: 1rem;
-    overflow: auto;
-    z-index: 40;
-  }
-  .sb-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-weight: 600;
-    margin-bottom: 0.75rem;
-  }
-  .sb-head .x {
-    padding: 0.1rem 0.5rem;
   }
   dl {
     display: grid;

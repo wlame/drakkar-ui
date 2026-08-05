@@ -15,6 +15,7 @@
   import type { ArrangeTaskState } from '../../lib/api'
   import KafkaIcon from '../KafkaIcon.svelte'
   import Expandable from '../Expandable.svelte'
+  import SidePanel from '../SidePanel.svelte'
 
   let {
     arranges = [],
@@ -142,11 +143,12 @@
 {/if}
 
 {#if selected}
-  <div class="sidebar">
-    <div class="sb-head">
-      <span>Partition {selected.partition} · {fmtTimeMs(selected.ts)}</span>
-      <button class="x" onclick={() => (openIdx = null)} aria-label="Close">×</button>
-    </div>
+  <SidePanel
+    title={`Partition ${selected.partition} · ${fmtTimeMs(selected.ts)}`}
+    storageKey="drakkar-panel-live-arrange"
+    defaultWidth={24}
+    onclose={() => (openIdx = null)}
+  >
     <div class="sb-summary">
       <span>{selected.message_count} msgs</span>
       <span>{selected.task_count} tasks</span>
@@ -194,7 +196,7 @@
         {/each}
       </ul>
     {/if}
-  </div>
+  </SidePanel>
 {/if}
 
 <style>
@@ -264,30 +266,6 @@
     border-radius: 999px;
     font-size: 0.7rem;
     color: var(--muted);
-  }
-  .sidebar {
-    position: fixed;
-    top: 3.25rem;
-    right: 0;
-    width: 24rem;
-    max-width: 92vw;
-    height: calc(100vh - 3.25rem);
-    background: var(--panel-2);
-    border-left: 1px solid var(--line);
-    box-shadow: -12px 0 32px rgba(0, 0, 0, 0.4);
-    padding: 1rem;
-    overflow: auto;
-    z-index: 40;
-  }
-  .sb-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-  }
-  .sb-head .x {
-    padding: 0.1rem 0.5rem;
   }
   .sb-summary {
     display: flex;

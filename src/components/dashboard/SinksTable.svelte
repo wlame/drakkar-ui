@@ -4,9 +4,35 @@
   import type { SinkStatus } from '../../lib/api'
   import { fmtTime, fmtTimeFull, dur3 } from '../../lib/format'
   import { COLOR } from '../../lib/events'
+  import { NO_SORT, sortRows, type SortAccessor } from '../../lib/sort'
+  import SortableTh from '../SortableTh.svelte'
   import Expandable from '../Expandable.svelte'
 
   let { rows, error = null }: { rows: SinkStatus[] | null; error?: string | null } = $props()
+
+  let sort = $state(NO_SORT)
+  const COLUMNS: { key: string; label: string; numeric: boolean }[] = [
+    { key: 'sink_type', label: 'Type', numeric: false },
+    { key: 'name', label: 'Name', numeric: false },
+    { key: 'delivered_count', label: 'Deliveries', numeric: true },
+    { key: 'delivered_payloads', label: 'Payloads', numeric: true },
+    { key: 'error_count', label: 'Errors', numeric: true },
+    { key: 'retry_count', label: 'Retries', numeric: true },
+    { key: 'last_delivery_ts', label: 'Last Delivery', numeric: false },
+    { key: 'last_delivery_duration', label: 'Duration', numeric: true },
+    { key: 'last_error', label: 'Last Error', numeric: false },
+  ]
+  const ACCESSORS: Record<string, SortAccessor<SinkStatus>> = {
+    sink_type: (s) => s.sink_type,
+    name: (s) => s.name,
+    delivered_count: (s) => s.delivered_count,
+    delivered_payloads: (s) => s.delivered_payloads,
+    error_count: (s) => s.error_count,
+    retry_count: (s) => s.retry_count,
+    last_delivery_ts: (s) => s.last_delivery_ts,
+    last_delivery_duration: (s) => s.last_delivery_duration,
+    last_error: (s) => s.last_error,
+  }
 </script>
 
 {#if error}
@@ -19,19 +45,13 @@
   <table>
     <thead>
       <tr>
-        <th>Type</th>
-        <th>Name</th>
-        <th class="num">Deliveries</th>
-        <th class="num">Payloads</th>
-        <th class="num">Errors</th>
-        <th class="num">Retries</th>
-        <th>Last Delivery</th>
-        <th class="num">Duration</th>
-        <th>Last Error</th>
+        {#each COLUMNS as col (col.key)}
+          <SortableTh bind:sort key={col.key} label={col.label} numeric={col.numeric} />
+        {/each}
       </tr>
     </thead>
     <tbody>
-      {#each rows as s (`${s.sink_type}/${s.name}`)}
+      {#each sortRows(rows, sort, ACCESSORS) as s (`${s.sink_type}/${s.name}`)}
         <tr>
           <td class="mono">{s.sink_type}</td>
           <td class="mono name" style:color={COLOR.teal}>{s.name}</td>

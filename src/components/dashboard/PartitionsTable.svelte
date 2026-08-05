@@ -8,8 +8,40 @@
   import type { Partition } from '../../lib/api'
   import { fmtTime, fmtTimeMs } from '../../lib/format'
   import { COLOR } from '../../lib/events'
+  import { NO_SORT, sortRows, type SortAccessor } from '../../lib/sort'
+  import SortableTh from '../SortableTh.svelte'
 
   let { rows, error = null }: { rows: Partition[] | null; error?: string | null } = $props()
+
+  let sort = $state(NO_SORT)
+  const COLUMNS: { key: string; label: string; numeric: boolean }[] = [
+    { key: 'partition', label: 'Partition', numeric: false },
+    { key: 'status', label: 'Status', numeric: false },
+    { key: 'last_consumed', label: 'Last Consumed', numeric: false },
+    { key: 'last_committed', label: 'Last Committed', numeric: false },
+    { key: 'committed_offset', label: 'Committed', numeric: true },
+    { key: 'high_watermark', label: 'High WM', numeric: true },
+    { key: 'lag', label: 'Lag', numeric: true },
+    { key: 'queue_size', label: 'Queue', numeric: true },
+    { key: 'pending_offsets', label: 'Pending', numeric: true },
+    { key: 'consumed_count', label: 'Consumed', numeric: true },
+    { key: 'completed_count', label: 'Completed', numeric: true },
+    { key: 'failed_count', label: 'Failed', numeric: true },
+  ]
+  const ACCESSORS: Record<string, SortAccessor<Partition>> = {
+    partition: (p) => p.partition,
+    status: (p) => (p.is_live ? 'live' : 'history'),
+    last_consumed: (p) => p.last_consumed,
+    last_committed: (p) => p.last_committed,
+    committed_offset: (p) => p.committed_offset,
+    high_watermark: (p) => p.high_watermark,
+    lag: (p) => p.lag,
+    queue_size: (p) => p.queue_size,
+    pending_offsets: (p) => p.pending_offsets,
+    consumed_count: (p) => p.consumed_count,
+    completed_count: (p) => p.completed_count,
+    failed_count: (p) => p.failed_count,
+  }
 
   // Stricter than the Dashboard's total-lag tile (> 100 red, > 20 amber) on
   // purpose: one partition sitting at lag 30 is a problem the cluster total hides.
@@ -30,22 +62,13 @@
   <table>
     <thead>
       <tr>
-        <th>Partition</th>
-        <th>Status</th>
-        <th>Last Consumed</th>
-        <th>Last Committed</th>
-        <th class="num">Committed</th>
-        <th class="num">High WM</th>
-        <th class="num">Lag</th>
-        <th class="num">Queue</th>
-        <th class="num">Pending</th>
-        <th class="num">Consumed</th>
-        <th class="num">Completed</th>
-        <th class="num">Failed</th>
+        {#each COLUMNS as col (col.key)}
+          <SortableTh bind:sort key={col.key} label={col.label} numeric={col.numeric} />
+        {/each}
       </tr>
     </thead>
     <tbody>
-      {#each rows as p (p.partition)}
+      {#each sortRows(rows, sort, ACCESSORS) as p (p.partition)}
         <tr>
           <td class="mono">{p.partition}</td>
           <td>

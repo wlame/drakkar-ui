@@ -10,6 +10,8 @@
   import { baseTaskId } from '../../lib/live'
   import KafkaIcon from '../KafkaIcon.svelte'
   import Expandable from '../Expandable.svelte'
+  import SortableTh from '../SortableTh.svelte'
+  import { NO_SORT, sortRows, type SortAccessor } from '../../lib/sort'
 
   let { prefill = null }: { prefill?: { partition: number; offset: number } | null } = $props()
 
@@ -19,6 +21,24 @@
   let labelKeys = $state<string[]>([])
   let labelVals = $state<Record<string, string>>({})
   let lastRun = $state('')
+
+  let sort = $state(NO_SORT)
+  const COLUMNS: { key: string; label: string; numeric: boolean }[] = [
+    { key: 'ts', label: 'Time', numeric: false },
+    { key: 'worker_name', label: 'Worker', numeric: false },
+    { key: 'event', label: 'Event', numeric: false },
+    { key: 'task_id', label: 'Task ID', numeric: false },
+    { key: 'duration', label: 'Duration', numeric: true },
+    { key: 'details', label: 'Details', numeric: false },
+  ]
+  const ACCESSORS: Record<string, SortAccessor<TraceEvent>> = {
+    ts: (e) => e.ts,
+    worker_name: (e) => e.worker_name,
+    event: (e) => e.event,
+    task_id: (e) => e.task_id,
+    duration: (e) => e.duration,
+    details: (e) => e.args ?? e.metadata,
+  }
 
   function parseInput(s: string): [number, number] | null {
     const m = s.trim().match(/^(\d+)[:\s/](\d+)$/)
@@ -141,10 +161,14 @@
   {:else}
     <table>
       <thead>
-        <tr><th>Time</th><th>Worker</th><th>Event</th><th>Task ID</th><th class="num">Duration</th><th>Details</th></tr>
+        <tr>
+          {#each COLUMNS as col (col.key)}
+            <SortableTh bind:sort key={col.key} label={col.label} numeric={col.numeric} />
+          {/each}
+        </tr>
       </thead>
       <tbody>
-        {#each results as e (e.id)}
+        {#each sortRows(results, sort, ACCESSORS) as e (e.id)}
           {@const ann = annotationOf(e)}
           <tr>
             <td class="muted nowrap" title={fmtTimeMs(e.ts)}>{fmtTimeMs(e.ts)}</td>

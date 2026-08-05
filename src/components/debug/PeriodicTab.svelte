@@ -4,9 +4,31 @@
   import { onMount } from 'svelte'
   import { api, type PeriodicTask } from '../../lib/api'
   import { fmtAgo, fmtTimeFull, dur3 } from '../../lib/format'
+  import SortableTh from '../SortableTh.svelte'
+  import { NO_SORT, sortRows, type SortAccessor } from '../../lib/sort'
 
   let tasks = $state<PeriodicTask[] | null>(null)
   let error = $state<string | null>(null)
+
+  let sort = $state(NO_SORT)
+  const COLUMNS: { key: string; label: string; numeric: boolean }[] = [
+    { key: 'name', label: 'Task', numeric: false },
+    { key: 'last_run_ts', label: 'Last Run', numeric: false },
+    { key: 'last_duration', label: 'Duration', numeric: true },
+    { key: 'last_status', label: 'Status', numeric: false },
+    { key: 'total_ok', label: 'OK', numeric: true },
+    { key: 'total_error', label: 'Errors', numeric: true },
+    { key: 'recent', label: 'Recent', numeric: false },
+  ]
+  const ACCESSORS: Record<string, SortAccessor<PeriodicTask>> = {
+    name: (t) => t.name,
+    last_run_ts: (t) => t.last_run_ts,
+    last_duration: (t) => t.last_duration,
+    last_status: (t) => t.last_status,
+    total_ok: (t) => t.total_ok,
+    total_error: (t) => t.total_error,
+    recent: (t) => t.recent.length,
+  }
 
   async function load() {
     error = null
@@ -32,10 +54,14 @@
 {:else}
   <table>
     <thead>
-      <tr><th>Task</th><th>Last Run</th><th class="num">Duration</th><th>Status</th><th class="num">OK</th><th class="num">Errors</th><th>Recent</th></tr>
+      <tr>
+        {#each COLUMNS as col (col.key)}
+          <SortableTh bind:sort key={col.key} label={col.label} numeric={col.numeric} />
+        {/each}
+      </tr>
     </thead>
     <tbody>
-      {#each tasks as t (t.name)}
+      {#each sortRows(tasks, sort, ACCESSORS) as t (t.name)}
         <tr>
           <td class="mono">
             {t.name}

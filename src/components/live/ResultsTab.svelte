@@ -8,6 +8,7 @@
   import { fmtTime, fmtTimeMs, durSec, fmtLatency } from '../../lib/format'
   import { baseTaskId } from '../../lib/live'
   import KafkaIcon from '../KafkaIcon.svelte'
+  import SidePanel from '../SidePanel.svelte'
 
   type Kind = 'task' | 'message' | 'window'
   let {
@@ -106,11 +107,7 @@
 {/if}
 
 {#if openKey}
-  <div class="sidebar">
-    <div class="sb-head">
-      <span>Sink outputs</span>
-      <button class="x" onclick={close} aria-label="Close">×</button>
-    </div>
+  <SidePanel title="Sink outputs" storageKey="drakkar-panel-live-results" defaultWidth={22} onclose={close}>
     {#if breakdownState === 'loading'}
       <p class="muted">loading…</p>
     {:else if breakdownState === 'error'}
@@ -126,7 +123,7 @@
         </tbody>
       </table>
     {/if}
-  </div>
+  </SidePanel>
 {/if}
 
 <style>
@@ -139,29 +136,5 @@
   tr.clickable:hover td,
   tr.sel td {
     background: var(--panel-2);
-  }
-  .sidebar {
-    position: fixed;
-    top: 3.25rem;
-    right: 0;
-    width: 22rem;
-    max-width: 90vw;
-    height: calc(100vh - 3.25rem);
-    background: var(--panel-2);
-    border-left: 1px solid var(--line);
-    box-shadow: -12px 0 32px rgba(0, 0, 0, 0.4);
-    padding: 1rem;
-    overflow: auto;
-    z-index: 40;
-  }
-  .sb-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.75rem;
-    font-weight: 600;
-  }
-  .sb-head .x {
-    padding: 0.1rem 0.5rem;
   }
 </style>

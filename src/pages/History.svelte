@@ -16,6 +16,8 @@
   import { eventColor, EVENT_TYPES } from '../lib/events'
   import KafkaIcon from '../components/KafkaIcon.svelte'
   import Expandable from '../components/Expandable.svelte'
+  import SortableTh from '../components/SortableTh.svelte'
+  import { NO_SORT, sortRows, type SortAccessor } from '../lib/sort'
 
   let { params: _params = {} }: { params?: Record<string, string> } = $props()
 
@@ -30,6 +32,28 @@
   let origin = $state<Origin>('all')
 
   let rows = $state<EventRow[] | null>(null)
+
+  let sort = $state(NO_SORT)
+  const COLUMNS: { key: string; label: string; numeric: boolean }[] = [
+    { key: 'ts', label: 'Time', numeric: false },
+    { key: 'event', label: 'Event', numeric: false },
+    { key: 'partition', label: 'Partition', numeric: true },
+    { key: 'offset', label: 'Offset', numeric: true },
+    { key: 'task_id', label: 'Task ID', numeric: false },
+    { key: 'duration', label: 'Duration', numeric: true },
+    { key: 'exit_code', label: 'Exit', numeric: true },
+    { key: 'args', label: 'Args / Metadata', numeric: false },
+  ]
+  const ACCESSORS: Record<string, SortAccessor<EventRow>> = {
+    ts: (e) => e.ts,
+    event: (e) => e.event,
+    partition: (e) => e.partition,
+    offset: (e) => e.offset,
+    task_id: (e) => e.task_id,
+    duration: (e) => e.duration,
+    exit_code: (e) => e.exit_code,
+    args: (e) => e.args ?? e.metadata,
+  }
   let error = $state<string | null>(null)
   let reqId = 0
 
@@ -147,18 +171,13 @@
   <table>
     <thead>
       <tr>
-        <th>Time</th>
-        <th>Event</th>
-        <th class="num">Partition</th>
-        <th class="num">Offset</th>
-        <th>Task ID</th>
-        <th class="num">Duration</th>
-        <th class="num">Exit</th>
-        <th>Args / Metadata</th>
+        {#each COLUMNS as col (col.key)}
+          <SortableTh bind:sort key={col.key} label={col.label} numeric={col.numeric} />
+        {/each}
       </tr>
     </thead>
     <tbody>
-      {#each rows as e (e.id)}
+      {#each sortRows(rows, sort, ACCESSORS) as e (e.id)}
         <tr>
           <td class="muted nowrap" title={fmtTimeMs(e.ts)}>{fmtTime(e.ts)}</td>
           <td><span class="evt" style:color={eventColor(e.event)}>{e.event}</span></td>
