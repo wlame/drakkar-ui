@@ -6,7 +6,9 @@
   // pay nothing; older backends without the endpoint (or without the v1.2
   // fields) degrade to showing only the bundle version.
   import { onMount } from 'svelte'
+  import { get } from 'svelte/store'
   import { api } from '../lib/api'
+  import { identity as identityStore, setIdentity } from '../lib/config'
   import type { Identity } from '../lib/types'
 
   let open = $state(false)
@@ -17,8 +19,16 @@
   async function toggle() {
     open = !open
     if (open && identity === null && !failed) {
+      // App boot already resolves identity for the header brand; reuse it
+      // rather than issuing the same request again.
+      const cached = get(identityStore)
+      if (cached) {
+        identity = cached
+        return
+      }
       try {
         identity = await api.identity()
+        setIdentity(identity)
       } catch {
         failed = true // pre-v1.1 backend — panel shows the UI version only
       }

@@ -7,7 +7,7 @@
 // cache tab hides, etc.).
 
 import { writable } from 'svelte/store'
-import type { LiveOverview } from './types'
+import type { Identity, LiveOverview } from './types'
 
 export interface RuntimeConfig {
   // Kafka-UI deep-link config. All three must be set for links to render.
@@ -48,4 +48,14 @@ export function hydrateFromOverview(o: LiveOverview): void {
     ...(o.max_ui_rows != null ? { maxUiRows: o.max_ui_rows } : {}),
     ...(o.ws_min_duration_ms != null ? { wsMinDurationMs: o.ws_min_duration_ms } : {}),
   })
+}
+
+// Worker identity (GET /api/v1/identity). Kept here rather than fetched per
+// component because two places need it: the header brand, which shows the
+// cluster name when one is configured, and the version badge. Hydrated once at
+// boot; null until it lands, and on backends too old to serve the endpoint.
+export const identity = writable<Identity | null>(null)
+
+export function setIdentity(value: Identity): void {
+  identity.set(value)
 }

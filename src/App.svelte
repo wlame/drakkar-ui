@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { api } from './lib/api'
-  import { hydrateFromOverview } from './lib/config'
+  import { hydrateFromOverview, identity, setIdentity } from './lib/config'
   import { currentPath, link, navigate } from './lib/router'
   import { navItems, resolve } from './lib/routes'
   import { resolveRedirect } from './lib/redirects'
@@ -50,6 +50,14 @@
       .then(hydrateFromOverview)
       .catch(() => {})
 
+    // The header brand shows the cluster name when the worker has one, so
+    // identity is resolved at boot rather than lazily. A backend too old to
+    // serve it simply leaves the brand reading "Drakkar".
+    api
+      .identity()
+      .then(setIdentity)
+      .catch(() => {})
+
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   })
@@ -67,7 +75,14 @@
 <header>
   <div class="bar" class:wide>
     <div class="left">
-      <a class="brand" href="/" use:link>Drakkar</a>
+      <a
+        class="brand"
+        href="/"
+        use:link
+        title={$identity?.cluster ? `${$identity.cluster} — Drakkar` : 'Drakkar'}
+      >
+        {$identity?.cluster || 'Drakkar'}
+      </a>
       <nav>
         {#each navItems as item}
           <a href={item.path} use:link class:active={isActive(item.path)}>
@@ -123,6 +138,11 @@
     font-weight: 700;
     color: #fff;
     text-decoration: none;
+    /* A cluster name can be long; the nav must not be pushed off screen. */
+    max-width: 16rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   nav {
     display: flex;
