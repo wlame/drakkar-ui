@@ -7,6 +7,8 @@
   import { fmtBytes, fmtDateTimeMs } from '../../lib/format'
   import { pausableInterval } from '../../lib/visibility'
   import SidePanel from '../SidePanel.svelte'
+  import SortableTh from '../SortableTh.svelte'
+  import { NO_SORT, sortRows, type SortAccessor } from '../../lib/sort'
 
   const PAGE_SIZE = 200
 
@@ -21,6 +23,24 @@
 
   let detail = $state<CacheEntryDetail | null>(null)
   let detailError = $state<string | null>(null)
+
+  let sort = $state(NO_SORT)
+  const COLUMNS: { key: string; label: string; numeric: boolean }[] = [
+    { key: 'key', label: 'Key', numeric: false },
+    { key: 'scope', label: 'Scope', numeric: false },
+    { key: 'size_bytes', label: 'Size', numeric: true },
+    { key: 'updated_at_ms', label: 'Updated', numeric: false },
+    { key: 'expires_at_ms', label: 'Expires', numeric: false },
+    { key: 'origin_worker_id', label: 'Origin', numeric: false },
+  ]
+  const ACCESSORS: Record<string, SortAccessor<CacheEntriesResponse['entries'][number]>> = {
+    key: (e) => e.key,
+    scope: (e) => e.scope,
+    size_bytes: (e) => e.size_bytes,
+    updated_at_ms: (e) => e.updated_at_ms,
+    expires_at_ms: (e) => e.expires_at_ms,
+    origin_worker_id: (e) => e.origin_worker_id,
+  }
 
   const SCOPE_COLORS: Record<string, string> = { local: '#d97706', cluster: '#2563eb', global: '#059669' }
 
@@ -124,10 +144,14 @@
 {:else}
   <table>
     <thead>
-      <tr><th>Key</th><th>Scope</th><th class="num">Size</th><th>Updated</th><th>Expires</th><th>Origin</th></tr>
+      <tr>
+        {#each COLUMNS as col (col.key)}
+          <SortableTh bind:sort key={col.key} label={col.label} numeric={col.numeric} />
+        {/each}
+      </tr>
     </thead>
     <tbody>
-      {#each resp.entries as e (e.key)}
+      {#each sortRows(resp.entries, sort, ACCESSORS) as e (e.key)}
         {@const ex = expiresCell(e.expires_at_ms)}
         <tr class="clickable" onclick={() => openDetail(e.key)}>
           <td class="mono key">{e.key}</td>

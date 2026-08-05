@@ -16,6 +16,8 @@
   import KafkaIcon from '../KafkaIcon.svelte'
   import Expandable from '../Expandable.svelte'
   import SidePanel from '../SidePanel.svelte'
+  import SortableTh from '../SortableTh.svelte'
+  import { NO_SORT, sortRows, type SortAccessor } from '../../lib/sort'
 
   let {
     arranges = [],
@@ -84,7 +86,26 @@
     }),
   )
 
-  const selected = $derived(openIdx != null ? (filtered[openIdx] ?? null) : null)
+  let sort = $state(NO_SORT)
+  const COLUMNS: { key: string; label: string; numeric: boolean }[] = [
+    { key: 'partition', label: 'Partition', numeric: true },
+    { key: 'message_count', label: 'Msgs', numeric: true },
+    { key: 'task_count', label: 'Tasks', numeric: false },
+    { key: 'duration', label: 'Arrange', numeric: true },
+    { key: 'ts', label: 'Time', numeric: false },
+    { key: 'labels', label: 'Labels', numeric: false },
+  ]
+  const ACCESSORS: Record<string, SortAccessor<(typeof filtered)[number]>> = {
+    partition: (a) => a.partition,
+    message_count: (a) => a.message_count,
+    task_count: (a) => a.task_count,
+    duration: (a) => a.duration,
+    ts: (a) => a.ts,
+    labels: (a) => a.task_count,
+  }
+  const shown = $derived(sortRows(filtered, sort, ACCESSORS))
+
+  const selected = $derived(openIdx != null ? (shown[openIdx] ?? null) : null)
   const selectedAnnotations = $derived(
     selected ? annotationsForArrange(annotations, selected) : [],
   )
@@ -118,10 +139,14 @@
 {:else}
   <table>
     <thead>
-      <tr><th class="num">Partition</th><th class="num">Msgs</th><th>Tasks</th><th class="num">Arrange</th><th>Time</th><th>Labels</th></tr>
+      <tr>
+        {#each COLUMNS as col (col.key)}
+          <SortableTh bind:sort key={col.key} label={col.label} numeric={col.numeric} />
+        {/each}
+      </tr>
     </thead>
     <tbody>
-      {#each filtered as a, i (`${a.ts}:${a.partition}`)}
+      {#each shown as a, i (`${a.ts}:${a.partition}`)}
         {@const c = counts(a)}
         <tr class="clickable" class:sel={openIdx === i} onclick={() => (openIdx = i)}>
           <td class="num mono">{a.partition}</td>
