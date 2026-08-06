@@ -9,6 +9,7 @@ import type {
   CacheEntriesResponse,
   CacheEntryDetail,
   CacheStats,
+  ConfigReferenceResponse,
   Dashboard,
   DbInfo,
   DebugReport,
@@ -188,4 +189,7 @@ export const api = {
     ),
   cacheEntry: (key: string) =>
     get<CacheEntryDetail>(`/debug/cache/entry/${encodeURIComponent(key)}`),
+
+  // Debug: config reference
+  configReference: () => get<ConfigReferenceResponse>('/config-reference'),
 }

@@ -15,10 +15,11 @@
   import ProbeTab from '../components/debug/ProbeTab.svelte'
   import CacheTab from '../components/debug/CacheTab.svelte'
   import DatabasesTab from '../components/debug/DatabasesTab.svelte'
+  import ConfigsTab from '../components/debug/ConfigsTab.svelte'
 
   let { params: _params = {} }: { params?: Record<string, string> } = $props()
 
-  type Tab = 'metrics' | 'periodic' | 'trace' | 'probe' | 'cache' | 'databases'
+  type Tab = 'metrics' | 'periodic' | 'trace' | 'probe' | 'cache' | 'databases' | 'configs'
 
   let cacheEnabled = $state(false)
   let configSummary = $state('')
@@ -30,6 +31,7 @@
     probe: 'Message Probe',
     cache: 'Cache',
     databases: 'Databases',
+    configs: 'Configs',
   }
   const availableTabs = $derived<Tab[]>([
     'metrics',
@@ -38,6 +40,7 @@
     'probe',
     ...(cacheEnabled ? (['cache'] as Tab[]) : []),
     'databases',
+    'configs',
   ])
 
   // #trace/<p>/<o> deep-link → Trace tab + prefill.
@@ -95,6 +98,8 @@
   <CacheTab />
 {:else if activeTab === 'databases'}
   <DatabasesTab />
+{:else if activeTab === 'configs'}
+  <ConfigsTab />
 {/if}
 
 <style>

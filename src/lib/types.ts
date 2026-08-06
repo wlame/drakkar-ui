@@ -406,6 +406,36 @@ export interface CacheEntryDetail {
   raw_value: string
 }
 
+// --- Debug: config reference ---
+
+// One config field joined against the live worker's actual value (GET
+// /api/v1/config-reference). `env` and `value` are null for an unexpanded `*`
+// template entry (a dynamic-instance field with zero configured instances) —
+// there is no single env var or live value to report. `secret` values arrive
+// pre-masked as '••••••' from the server; the UI never sees the real value.
+export interface ConfigReferenceEntry {
+  path: string
+  env: string | null
+  description: string
+  full_description: string
+  type: string
+  value: unknown
+  default: unknown
+  is_default: boolean
+  secret: boolean
+}
+
+export interface ConfigReferenceGroup {
+  key: string
+  title: string
+  doc_anchor: string
+  entries: ConfigReferenceEntry[]
+}
+
+export interface ConfigReferenceResponse {
+  groups: ConfigReferenceGroup[]
+}
+
 // --- Debug: message probe ---
 
 export interface ProbeRequest {
