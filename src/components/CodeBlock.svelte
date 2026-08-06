@@ -67,12 +67,41 @@
     logLanguageRegistered = true
   }
 
+  // `editor/editor.api` builds its standalone-services snapshot as a direct
+  // side effect of module evaluation (inside `createMonacoEditorAPI()`), a
+  // one-time read of a shared registry that `registerSingleton(...)` calls
+  // push into. Five contributions that the minimal editor pulls in — code
+  // lens, inlay hints, drag-and-drop-into-editor, suggest, the code-action
+  // lightbulb — register their backing services in modules that, absent the
+  // full `editor.main` barrel, only get reached later (via JSON's own lazy
+  // `import('./jsonMode.js')`, which fires from `languages.onLanguage(...)`
+  // *inside* `editor.create()` and resolves asynchronously afterward) — so
+  // their registrations always land after the snapshot was already taken,
+  // and `editor.create()` throws "UNKNOWN service" for each one, on every
+  // single instance. Disabling the corresponding editor options does NOT
+  // help: DI resolves a contribution's constructor parameters before its
+  // body ever runs, so an option check inside the constructor is too late
+  // (verified empirically — the errors were identical with all five
+  // features switched off). The actual fix is forcing these five
+  // registration modules to evaluate before `editor/editor.api` does, so
+  // their registerSingleton calls land in the registry in time for the
+  // snapshot. They're already part of the lazy Monaco payload (bundled into
+  // the jsonMode chunk regardless, since JSON's own feature set reaches
+  // them) — importing them explicitly just fixes the order, not the bundle.
   function loadMonaco(): Promise<typeof Monaco> {
     if (!monacoModulePromise) {
       monacoModulePromise = Promise.all([
-        import('monaco-editor/editor/editor.api'),
-        import('monaco-editor/language/json/monaco.contribution'),
-      ]).then(([core]) => {
+        import('monaco-editor/editor/contrib/codelens/browser/codeLensCache'),
+        import('monaco-editor/editor/contrib/inlayHints/browser/inlayHintsController'),
+        import('monaco-editor/editor/common/services/treeViewsDndService'),
+        import('monaco-editor/editor/contrib/suggest/browser/suggestMemory'),
+        import('monaco-editor/platform/actionWidget/browser/actionWidget'),
+      ]).then(() =>
+        Promise.all([
+          import('monaco-editor/editor/editor.api'),
+          import('monaco-editor/language/json/monaco.contribution'),
+        ]),
+      ).then(([core]) => {
         if (!logLanguageRegistered) registerLogLanguage(core)
         return core
       })
@@ -223,6 +252,25 @@
           // automaticLayout polls on an interval; a ResizeObserver (wired up
           // below) reacts to actual size changes instead.
           automaticLayout: false,
+          // The minimal `editor/editor.api` import (see the module comment
+          // above) pulls in contributions — code lens, inlay hints,
+          // drag-and-drop-into-editor, suggest, the code-action lightbulb —
+          // whose backing standalone services (ICodeLensCache,
+          // IInlayHintsCache, treeViewsDndService, ISuggestMemories,
+          // actionWidgetService) never get registered, because that only
+          // happens via the full `editor.main` barrel this component
+          // deliberately avoids for bundle size. Left enabled, each one
+          // throws an uncaught "[createInstance] ... UNKNOWN service" the
+          // moment `editor.create()` tries to instantiate it. None of them
+          // do anything useful on a read-only viewer anyway, so all five are
+          // switched off here rather than pulling in their service modules.
+          codeLens: false,
+          inlayHints: { enabled: 'off' },
+          dragAndDrop: false,
+          dropIntoEditor: { enabled: false },
+          quickSuggestions: false,
+          suggestOnTriggerCharacters: false,
+          lightbulb: { enabled: monaco.editor.ShowLightbulbIconMode.Off },
         })
         applyZebra()
         applyErrorTint()
