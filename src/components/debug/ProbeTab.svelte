@@ -16,6 +16,7 @@
   import KafkaIcon from '../KafkaIcon.svelte'
   import SidePanel from '../SidePanel.svelte'
   import SortableTh from '../SortableTh.svelte'
+  import UserDetailsTab from './UserDetailsTab.svelte'
 
   // Sortable task table. Accessors read the value each column DISPLAYS, so the
   // order always matches what is on screen — sorting by "stdout" ranks by the
@@ -59,6 +60,10 @@
   let collapsed = $state(false)
   let openTask = $state<ProbeTaskEntry | null>(null)
   let expandedSink = $state<Set<string>>(new Set())
+  // Framework/User-defined tab switcher. Only shown when the handler has a
+  // registered user-details model — see the {#if report.user_details} guard
+  // in the markup below.
+  let activeTab = $state<'framework' | 'user'>('framework')
 
   const SINK_TYPES = ['kafka', 'postgres', 'mongo', 'http', 'redis', 'files'] as const
 
@@ -165,6 +170,14 @@
     <button onclick={() => (collapsed = false)}>Edit &amp; re-run</button>
   </div>
 
+  {#if report.user_details}
+    <div class="viewtabs">
+      <button class:active={activeTab === 'framework'} onclick={() => (activeTab = 'framework')}>Framework</button>
+      <button class:active={activeTab === 'user'} onclick={() => (activeTab = 'user')}>User-defined</button>
+    </div>
+  {/if}
+
+  {#if activeTab === 'framework' || !report.user_details}
   <!-- Input -->
   <section class="card">
     <h3>Input</h3>
@@ -304,6 +317,9 @@
       {/each}
     </section>
   {/if}
+  {:else}
+    <UserDetailsTab details={report.user_details} />
+  {/if}
 {/if}
 
 <!-- Task detail sidebar -->
@@ -405,6 +421,15 @@
     background: var(--bg);
     padding: 0.25rem 0;
     z-index: 5;
+  }
+  .viewtabs {
+    display: flex;
+    gap: 0.25rem;
+    margin-bottom: 1rem;
+  }
+  .viewtabs button.active {
+    background: var(--panel-2);
+    border-color: var(--text);
   }
   .card {
     border: 1px solid var(--line);
