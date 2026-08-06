@@ -4,7 +4,7 @@
   // backend's config groups; each group links out to the published docs page
   // at its `doc_anchor`. A search box and a "changed only" toggle narrow the
   // (often large) field list down to what an operator is actually looking for.
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import { api, type ConfigReferenceEntry, type ConfigReferenceGroup } from '../../lib/api'
   import { changedCount, docsUrl, filterGroups, fmtValue } from '../../lib/configref'
   import { isMultiline } from '../../lib/codeblock'
@@ -48,6 +48,8 @@
       copyResetTimer = setTimeout(() => (copiedField = null), 1200)
     }
   }
+
+  onDestroy(() => clearTimeout(copyResetTimer))
 
   // pretty renders a full (untruncated) value/default for the expanded detail
   // row — fmtValue() is deliberately truncated for the table cell.
