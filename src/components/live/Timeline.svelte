@@ -14,7 +14,7 @@
   // position is stable between rebases and "time passing" is real scrolling,
   // driven by a requestAnimationFrame loop instead of state churn. The pure
   // math lives in src/lib/timeline.ts (tested independently of the DOM).
-  import { untrack } from 'svelte'
+  import { untrack, flushSync } from 'svelte'
   import { link } from '../../lib/router'
   import { baseTaskId, type TaskView } from '../../lib/live'
   import { fmtTime, fmtTimeMs, fmtBytes } from '../../lib/format'
@@ -272,7 +272,20 @@
     }
     const oldPxPerSec = pxPerSec
     const rightEdgeTs = originTs + (viewport.scrollLeft + viewport.clientWidth) / oldPxPerSec
-    zoomLevel = clamped
+    // Zooming in shrinks the pre-zoom scrollWidth's headroom or grows past it
+    // depending on direction, but on zoom-IN the target scrollLeft can exceed
+    // the *pre-zoom* scrollWidth. The `.tl-inner` width binding reacts to
+    // `innerWidth`/`pxPerSec` through Svelte 5's template effect, which is
+    // batched to a microtask — a plain onclick handler doesn't wait for it.
+    // Without forcing that effect to run first, the browser clamps the
+    // scrollLeft write below to the stale (smaller) pre-zoom scrollWidth, and
+    // nothing later corrects it: the right edge silently lands at an earlier
+    // timestamp than requested. flushSync forces the width binding to commit
+    // to the DOM before the scrollLeft write, so the browser clamps against
+    // the correct, already-widened strip.
+    flushSync(() => {
+      zoomLevel = clamped
+    })
     applyScrollLeft((rightEdgeTs - originTs) * pxPerSec - viewport.clientWidth)
   }
   function zoomIn() {
