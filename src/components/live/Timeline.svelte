@@ -4,10 +4,29 @@
   // time axis, one lane per executor slot and a fixed-height hover-detail strip.
   // Bars are colored by status; the view auto-follows "now" until the operator
   // scrolls away from the right edge.
+  //
+  // Coordinate system: bar/tick positions are computed against a fixed
+  // `originTs`, not against "now". An earlier version used `now - WINDOW_SEC`
+  // as the origin, which steps every 250ms — every bar's absolute pixel
+  // position (and the strip's width) was recomputed against a moving target,
+  // which reads as a jump, not a slide, four times a second. Here `originTs`
+  // only moves on a rare rebase (see `maybeRebase` below), so a task's pixel
+  // position is stable between rebases and "time passing" is real scrolling,
+  // driven by a requestAnimationFrame loop instead of state churn. The pure
+  // math lives in src/lib/timeline.ts (tested independently of the DOM).
+  import { untrack } from 'svelte'
   import { link } from '../../lib/router'
   import { baseTaskId, type TaskView } from '../../lib/live'
   import { fmtTime, fmtTimeMs, fmtBytes } from '../../lib/format'
-  import { pausableInterval } from '../../lib/visibility'
+  import { pausableInterval, isHidden } from '../../lib/visibility'
+  import {
+    barGeometry,
+    tickMarks,
+    followScrollLeft,
+    shouldRebase,
+    rebase,
+    RENDER_DELAY_SEC,
+  } from '../../lib/timeline'
 
   let {
     tasks = [],
@@ -22,6 +41,13 @@
   const LANE_GAP = 2
   const BASE_PX_PER_SEC = 8
   const MIN_BAR_PX = 2
+  // Extra room past the furthest possible bar tip (a running task drawn out to
+  // `now`) so its right edge never clips against the strip boundary.
+  const RIGHT_PAD_PX = 16
+  // Re-arm auto-follow once the operator scrolls back within this many pixels
+  // of the live edge — half the render-delay band, floored at 6px so it still
+  // means something at very low zoom.
+  const MIN_FOLLOW_THRESHOLD_PX = 6
 
   // Zoom is a factor over the base px/sec, exactly like the reference's
   // zoomLevel (default 2x, halving/doubling between 0.25x and 64x).
@@ -30,17 +56,50 @@
   let now = $state(Date.now() / 1000)
   let viewport = $state<HTMLDivElement>()
   let hovered = $state<TaskView | null>(null)
+  let hiddenState = $state(isHidden())
+
+  // Chosen once at mount, one full window back — pre-existing tasks from the
+  // last WINDOW_SEC have room to draw; anything older still clamps to the
+  // left edge via barGeometry, same as the old windowStart clamp did. Only
+  // `maybeRebase` moves it again after that.
+  let originTs = $state(Date.now() / 1000 - WINDOW_SEC)
 
   $effect(() => {
     if (paused) return
     // Also stops while the tab is hidden: advancing `now` re-derives every bar
     // and re-lays-out the strip, which is pure waste with nobody watching.
-    return pausableInterval(() => (now = Date.now() / 1000), 250)
+    return pausableInterval(() => {
+      now = Date.now() / 1000
+      maybeRebase()
+    }, 250)
   })
+
+  $effect(() => {
+    function onVisibilityChange() {
+      hiddenState = isHidden()
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange)
+  })
+
+  // Slide the origin forward by one window once the strip has grown to more
+  // than twice WINDOW_SEC, so the DOM/coordinate range doesn't grow forever.
+  // The viewport's scrollLeft shifts by the exact same pixel delta in the same
+  // synchronous step, which is what makes the jump invisible — see the
+  // pixel-delta invariant documented and tested next to `rebase()` in
+  // src/lib/timeline.ts. Runs from the 250ms tick above (not the follow rAF
+  // loop) so it keeps happening even while the operator has scrolled away and
+  // auto-follow is off.
+  function maybeRebase() {
+    if (!shouldRebase(now, originTs, WINDOW_SEC)) return
+    const newOrigin = rebase(originTs, WINDOW_SEC)
+    const deltaPx = (newOrigin - originTs) * pxPerSec
+    originTs = newOrigin
+    if (viewport) applyScrollLeft(viewport.scrollLeft - deltaPx)
+  }
 
   const pxPerSec = $derived(BASE_PX_PER_SEC * zoomLevel)
   const windowStart = $derived(now - WINDOW_SEC)
-  const innerWidth = $derived(WINDOW_SEC * pxPerSec)
   const lanesHeight = $derived(laneCount * (LANE_H + LANE_GAP))
 
   interface Bar {
@@ -78,6 +137,10 @@
     viewportWidth = viewport.clientWidth
   }
 
+  // The strip must be at least one viewport wide, and wide enough that the
+  // furthest bar tip (a running task drawn out to `now`) never clips.
+  const innerWidth = $derived(Math.max(viewportWidth, (now - originTs) * pxPerSec + RIGHT_PAD_PX))
+
   // Scroll fires far faster than a frame; coalesce to one read per frame so
   // the handler never forces synchronous layout in a tight loop.
   function scheduleViewportSync() {
@@ -105,11 +168,16 @@
     const visibleTo = scrollLeft + viewportWidth + CULL_MARGIN_PX
     const out: Bar[] = []
     for (const t of tasks) {
+      // `now` still ticks every 250ms, so a running bar's right edge still
+      // grows in small jumps rather than a true animation. That is fine here:
+      // originTs is fixed, so the jump is confined to the bar's own width,
+      // not to its (or every other bar's) position — and a running bar's tip
+      // sits either in the render-delay band the operator isn't looking at
+      // yet, or off the right edge entirely.
       const end = t.end_ts ?? now
-      if (end < windowStart) continue
+      if (end < windowStart) continue // stale-data filter only, not a coordinate
       const lane = Math.min(Math.max(t.slot ?? 0, 0), Math.max(laneCount - 1, 0))
-      const left = Math.max(0, (t.start_ts - windowStart) * pxPerSec)
-      const width = Math.max(MIN_BAR_PX, (end - Math.max(t.start_ts, windowStart)) * pxPerSec)
+      const { left, width } = barGeometry(t.start_ts, end, originTs, pxPerSec, MIN_BAR_PX)
       if (culling && (left + width < visibleFrom || left > visibleTo)) continue
       out.push({ task: t, lane, left, width, color: barColor(t.status) })
     }
@@ -117,49 +185,110 @@
   })
 
   // Axis ticks: HH:MM:SS labels at a zoom-dependent interval (the reference's
-  // rebuildAxis picks 5..120s so labels never crowd each other).
-  const ticks = $derived.by<{ left: number; label: string }[]>(() => {
-    let tick = 30
-    if (pxPerSec >= 16) tick = 10
-    if (pxPerSec >= 32) tick = 5
-    if (pxPerSec < 4) tick = 60
-    if (pxPerSec < 1) tick = 120
-    const out: { left: number; label: string }[] = []
-    for (let ts = Math.ceil(windowStart / tick) * tick; ts <= now; ts += tick) {
-      out.push({ left: (ts - windowStart) * pxPerSec, label: fmtTime(ts) })
-    }
-    return out
+  // rebuildAxis picks 5..120s so labels never crowd each other). Positions are
+  // relative to originTs, so a tick's pixel position is stable as `now`
+  // advances — only the set of ticks in range changes.
+  const ticks = $derived.by<{ left: number; ts: number; label: string }[]>(() => {
+    return tickMarks(originTs, now, pxPerSec, originTs).map((t) => ({
+      ...t,
+      label: fmtTime(t.ts),
+    }))
   })
 
-  // Auto-follow: keep scrolled to the right edge as time advances.
-  $effect(() => {
-    void now
-    void innerWidth
-    if (following && viewport) viewport.scrollLeft = viewport.scrollWidth
-    // Auto-follow moves the viewport without firing a scroll event we listen
-    // for reliably, so refresh the culling bounds from here too.
+  // Track the last scrollLeft we set programmatically (auto-follow, rebase,
+  // zoom-preserve). onScroll compares against it to tell our own writes apart
+  // from a real user scroll, without relying on scroll-event timing/ordering.
+  let lastProgrammaticScrollLeft: number | null = null
+
+  function applyScrollLeft(px: number) {
+    if (!viewport) return
+    const clamped = Math.max(0, px)
+    if (Math.abs(viewport.scrollLeft - clamped) >= 0.5) {
+      viewport.scrollLeft = clamped
+    }
+    lastProgrammaticScrollLeft = viewport.scrollLeft
     syncViewportBounds()
+  }
+
+  // One follow step: place `renderNow` (now, minus the intentional display
+  // delay) at the viewport's right edge. Called once synchronously whenever
+  // the follow loop (re)starts, and then once per animation frame.
+  function followTick() {
+    if (!viewport) return
+    const renderNow = Date.now() / 1000 - RENDER_DELAY_SEC
+    applyScrollLeft(followScrollLeft(renderNow, originTs, pxPerSec, viewport.clientWidth))
+  }
+
+  // Smooth auto-follow: while following, not paused, and the tab is visible,
+  // step the scroll position every animation frame instead of jumping it on
+  // each 250ms `now` tick — that's what turns the "slide" back into an actual
+  // slide.
+  //
+  // `untrack` around the followTick() calls keeps this effect's dependencies
+  // to exactly {paused, following, hiddenState, viewport}: without it, the
+  // pxPerSec/originTs reads inside followTick would make it a dependency too,
+  // and the effect would tear down and rebuild the whole rAF loop on every
+  // zoom change and every rebase instead of just letting the next frame pick
+  // up the new values. The scrollLeft write itself goes straight to the DOM
+  // (not a $state), and the one $state it touches (via syncViewportBounds) is
+  // only read by the `bars` culling derived, not by this effect — so there is
+  // no reactive loop feeding back into this effect's own re-execution.
+  $effect(() => {
+    if (paused || !following || hiddenState || !viewport) return
+    let raf = 0
+    function loop() {
+      untrack(followTick)
+      raf = requestAnimationFrame(loop)
+    }
+    loop()
+    return () => cancelAnimationFrame(raf)
   })
 
   function onScroll() {
     if (!viewport) return
-    const atRight = viewport.scrollWidth - viewport.scrollLeft - viewport.clientWidth < 6
-    following = atRight
+    const isOurs =
+      lastProgrammaticScrollLeft != null &&
+      Math.abs(viewport.scrollLeft - lastProgrammaticScrollLeft) < 0.5
+    if (!isOurs) {
+      // A real user scroll: re-arm auto-follow only once they're back near
+      // the live edge, so scrolling away reliably stops the content sliding
+      // under the cursor, and scrolling back reliably resumes it.
+      const distanceFromEdge = viewport.scrollWidth - viewport.scrollLeft - viewport.clientWidth
+      const threshold = Math.max(MIN_FOLLOW_THRESHOLD_PX, (RENDER_DELAY_SEC * pxPerSec) / 2)
+      following = distanceFromEdge < threshold
+    }
     scheduleViewportSync()
   }
 
+  // Zoom while not following keeps the timestamp at the viewport's right edge
+  // fixed, so zooming doesn't also relocate what the operator is looking at.
+  // While following, the rAF loop repositions on the very next frame, so
+  // there's nothing to preserve here.
+  function zoomTo(target: number) {
+    const clamped = Math.min(64, Math.max(0.25, target))
+    if (!viewport || following) {
+      zoomLevel = clamped
+      return
+    }
+    const oldPxPerSec = pxPerSec
+    const rightEdgeTs = originTs + (viewport.scrollLeft + viewport.clientWidth) / oldPxPerSec
+    zoomLevel = clamped
+    applyScrollLeft((rightEdgeTs - originTs) * pxPerSec - viewport.clientWidth)
+  }
   function zoomIn() {
-    zoomLevel = Math.min(64, zoomLevel * 2)
+    zoomTo(zoomLevel * 2)
   }
   function zoomOut() {
-    zoomLevel = Math.max(0.25, zoomLevel / 2)
+    zoomTo(zoomLevel / 2)
   }
   function zoomReset() {
-    zoomLevel = 2
+    zoomTo(2)
   }
   function jumpNow() {
+    // The follow effect calls followTick() synchronously as soon as
+    // `following` flips true, so this snaps to the live edge immediately
+    // rather than waiting for the next animation frame.
     following = true
-    if (viewport) viewport.scrollLeft = viewport.scrollWidth
   }
 
   // Ident mirrors the reference taskIdent(): p<partition>:o<offset> for Kafka
@@ -184,7 +313,7 @@
 <h2 class="tl-title">
   Timeline
   <span class="tl-note"
-    >(last 10 min, 2 sec delayed{#if minDurationMs > 0}, tasks &ge; {minDurationMs}ms{/if})</span
+    >(last 10 min, {RENDER_DELAY_SEC} sec delayed{#if minDurationMs > 0}, tasks &ge; {minDurationMs}ms{/if})</span
   >
 </h2>
 
