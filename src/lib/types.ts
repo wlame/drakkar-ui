@@ -501,6 +501,40 @@ export interface ProbeTiming {
   on_window_complete?: number
 }
 
+export interface ProbeDetailsColumn {
+  key: string
+  label: string
+}
+
+export interface ProbeDetailsEntry {
+  key: string
+  label: string
+  view: 'string' | 'keyvalue' | 'dict' | 'table'
+  /** Present only when view is 'table'; null for every other view. */
+  columns: ProbeDetailsColumn[] | null
+}
+
+export interface ProbeDetailsSection {
+  title: string
+  entries: ProbeDetailsEntry[]
+}
+
+export interface ProbeDetailsWrite {
+  field: string
+  op: 'set' | 'append' | 'update'
+  origin_stage: string
+  ms_since_start: number
+}
+
+export interface ProbeUserDetails {
+  /** The registered model's bare type name. */
+  model: string
+  layout: { sections: ProbeDetailsSection[] }
+  /** One decoded value per registered field, keyed by field name. */
+  data: Record<string, unknown>
+  writes: ProbeDetailsWrite[]
+}
+
 export interface DebugReport {
   input: ProbeRequest & { timestamp?: number | null }
   deserialize_error: ProbeError | null
@@ -515,5 +549,11 @@ export interface DebugReport {
   cache_summary: ProbeCacheSummary
   timing: ProbeTiming
   errors: ProbeError[]
+  /**
+   * Null when the handler registered no user-details model. Optional (not just
+   * nullable) because the field is absent entirely on older backend responses
+   * that predate it — the OpenAPI schema doesn't list it as required.
+   */
+  user_details?: ProbeUserDetails | null
   truncated: boolean
 }
