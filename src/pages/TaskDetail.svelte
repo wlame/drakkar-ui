@@ -13,6 +13,7 @@
   import { eventColor, parseAnnotation, statusColor, type TaskStatus } from '../lib/events'
   import Expandable from '../components/Expandable.svelte'
   import KafkaIcon from '../components/KafkaIcon.svelte'
+  import CodeBlock from '../components/CodeBlock.svelte'
 
   let { params = {} }: { params?: Record<string, string> } = $props()
 
@@ -267,7 +268,7 @@
 
   {#if vm.cli}
     <h2>CLI</h2>
-    <pre class="block select-all">{vm.cli}</pre>
+    <CodeBlock text={vm.cli} language="plaintext" maxHeight="22rem" />
   {/if}
 
   {#if vm.origin === 'http' && vm.requestBody}
@@ -275,28 +276,28 @@
     {#if !vm.requestBody.recorded}
       <p class="muted">request body not recorded{vm.requestBody.bodyBytes != null ? ` (${vm.requestBody.bodyBytes} bytes seen on the wire)` : ''}</p>
     {:else}
-      <pre class="block">{pretty(vm.requestBody.value)}</pre>
+      <CodeBlock text={pretty(vm.requestBody.value)} language="json" maxHeight="22rem" />
     {/if}
   {/if}
 
   {#if vm.origin === 'http' && vm.responseBody !== undefined}
     <h2>HTTP Response Body</h2>
-    <pre class="block">{pretty(vm.responseBody)}</pre>
+    <CodeBlock text={pretty(vm.responseBody)} language="json" maxHeight="22rem" />
   {/if}
 
   {#if vm.completed?.stdout}
     <h2>Stdout</h2>
-    <pre class="block">{vm.completed.stdout}</pre>
+    <CodeBlock text={vm.completed.stdout} maxHeight="22rem" />
   {/if}
 
   {#if vm.completed?.stderr}
     <h2>Stderr</h2>
-    <pre class="block err">{vm.completed.stderr}</pre>
+    <CodeBlock text={vm.completed.stderr} error maxHeight="22rem" />
   {/if}
 
   {#if vm.failed?.stderr}
     <h2>Stderr</h2>
-    <pre class="block err">{vm.failed.stderr}</pre>
+    <CodeBlock text={vm.failed.stderr} error maxHeight="22rem" />
   {/if}
 
   <h2>Event Timeline</h2>
@@ -377,8 +378,7 @@
     font-size: 0.72rem;
     font-weight: 400;
   }
-  .v.err,
-  .block.err {
+  .v.err {
     color: var(--error);
   }
   .break {
@@ -407,22 +407,6 @@
   }
   .chip a {
     color: inherit;
-  }
-  .block {
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 0.75rem;
-    max-height: 22rem;
-    overflow: auto;
-    font-family: var(--mono);
-    font-size: 0.8rem;
-    white-space: pre-wrap;
-    word-break: break-word;
-    margin: 0;
-  }
-  .select-all {
-    user-select: all;
   }
   .timeline {
     display: flex;

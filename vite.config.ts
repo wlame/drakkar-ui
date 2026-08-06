@@ -31,6 +31,26 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(process.env.DRAKKAR_UI_VERSION ?? 'dev'),
   },
+  resolve: {
+    alias: process.env.VITEST
+      ? // Vite's `?worker` suffix (used by CodeBlock.svelte to load Monaco's
+        // web workers, see src/components/CodeBlock.svelte) is only handled
+        // by the worker plugin during `vite build`/`vite dev`; vitest's
+        // transform pipeline doesn't resolve it. Every page that reaches
+        // CodeBlock.svelte pulls this import in transitively, so route it to
+        // an inert stub for tests only — see src/testing/monacoWorkerStub.ts.
+        [
+          {
+            find: 'monaco-editor/editor/editor.worker?worker',
+            replacement: new URL('./src/testing/monacoWorkerStub.ts', import.meta.url).pathname,
+          },
+          {
+            find: 'monaco-editor/language/json/json.worker?worker',
+            replacement: new URL('./src/testing/monacoWorkerStub.ts', import.meta.url).pathname,
+          },
+        ]
+      : [],
+  },
   build: {
     outDir: 'dist',
     // index.html lands at dist/ root; the release workflow tars dist/ contents

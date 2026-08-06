@@ -16,6 +16,7 @@
   import KafkaIcon from '../KafkaIcon.svelte'
   import SidePanel from '../SidePanel.svelte'
   import SortableTh from '../SortableTh.svelte'
+  import CodeBlock from '../CodeBlock.svelte'
   import UserDetailsTab from './UserDetailsTab.svelte'
 
   // Sortable task table. Accessors read the value each column DISPLAYS, so the
@@ -192,7 +193,7 @@
       </div>
       {#if report.parsed_payload != null}
         <h4>Parsed payload</h4>
-        <pre class="block">{pretty(report.parsed_payload)}</pre>
+        <CodeBlock text={pretty(report.parsed_payload)} language="json" />
       {/if}
     {/if}
   </section>
@@ -249,7 +250,7 @@
       {:else}
         <p class="muted">{durSec(hook.r.duration_seconds)}{#if sinkCounts(hook.r.collect_result)} · {sinkCounts(hook.r.collect_result)}{/if}</p>
         {#if hook.r.error}<p class="error">{hook.r.error}</p>{/if}
-        {#if hook.r.collect_result}<pre class="block">{pretty(hook.r.collect_result)}</pre>{/if}
+        {#if hook.r.collect_result}<CodeBlock text={pretty(hook.r.collect_result)} language="json" />{/if}
       {/if}
     </section>
   {/each}
@@ -272,7 +273,7 @@
                 <td class="muted preview">{pretty(p.payload).slice(0, 80)}</td>
               </tr>
               {#if expandedSink.has(`${stype}:${i}`)}
-                <tr><td colspan="3"><pre class="block">{pretty({ payload: p.payload, extras: p.extras })}</pre></td></tr>
+                <tr><td colspan="3"><CodeBlock text={pretty({ payload: p.payload, extras: p.extras })} language="json" /></td></tr>
               {/if}
             {/each}
           </tbody>
@@ -312,7 +313,7 @@
       {#each report.errors as err, i (i)}
         <details>
           <summary><span style:color="#dc2626">{err.stage}</span> — {err.exception_class}: {err.message}</summary>
-          <pre class="block">{err.traceback}</pre>
+          <CodeBlock text={err.traceback} />
         </details>
       {/each}
     </section>
@@ -337,14 +338,14 @@
       <span>args</span><span class="mono wrap">{t.args.length ? t.args.join(' ') : '—'}</span>
       {#if t.binary_path}<span>binary</span><span class="mono wrap">{t.binary_path}</span>{/if}
     </div>
-    {#if t.stdin}<h4>stdin</h4><pre class="block">{t.stdin}</pre>{/if}
+    {#if t.stdin}<h4>stdin</h4><CodeBlock text={t.stdin} />{/if}
     <h4>stdout</h4>
-    {#if t.stdout}<pre class="block">{t.stdout}</pre>{:else}<p class="muted empty">no output</p>{/if}
+    {#if t.stdout}<CodeBlock text={t.stdout} />{:else}<p class="muted empty">no output</p>{/if}
     <h4>stderr</h4>
-    {#if t.stderr}<pre class="block err">{t.stderr}</pre>{:else}<p class="muted empty">no output</p>{/if}
-    {#if t.subprocess_exception}<h4>subprocess exception</h4><pre class="block err">{t.subprocess_exception}</pre>{/if}
-    {#if t.on_task_complete_error}<h4>on_task_complete error</h4><pre class="block err">{t.on_task_complete_error}</pre>{/if}
-    {#if t.on_task_complete_result}<h4>on_task_complete result</h4><pre class="block">{pretty(t.on_task_complete_result)}</pre>{/if}
+    {#if t.stderr}<CodeBlock text={t.stderr} error />{:else}<p class="muted empty">no output</p>{/if}
+    {#if t.subprocess_exception}<h4>subprocess exception</h4><CodeBlock text={t.subprocess_exception} error />{/if}
+    {#if t.on_task_complete_error}<h4>on_task_complete error</h4><CodeBlock text={t.on_task_complete_error} error />{/if}
+    {#if t.on_task_complete_result}<h4>on_task_complete result</h4><CodeBlock text={pretty(t.on_task_complete_result)} language="json" />{/if}
   </SidePanel>
 {/if}
 
@@ -471,22 +472,6 @@
   }
   .clickable:hover td {
     background: var(--panel-2);
-  }
-  .block {
-    background: var(--bg);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 0.6rem;
-    max-height: 18rem;
-    overflow: auto;
-    font-family: var(--mono);
-    font-size: 0.78rem;
-    white-space: pre-wrap;
-    word-break: break-word;
-    margin: 0.3rem 0;
-  }
-  .block.err {
-    color: var(--error);
   }
   details summary {
     cursor: pointer;

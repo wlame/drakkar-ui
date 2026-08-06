@@ -5,6 +5,7 @@
   import { NO_SORT, sortRows, type SortState } from '../../lib/sort'
   import { columnNumeric, stageBadges, tableAccessors, touchedFields } from '../../lib/userDetails'
   import SortableTh from '../SortableTh.svelte'
+  import CodeBlock from '../CodeBlock.svelte'
 
   let { details }: { details: ProbeUserDetails } = $props()
 
@@ -68,7 +69,7 @@
           {:else if entry.view === 'dict'}
             <details open>
               <summary class="muted">expand</summary>
-              <pre class="block">{pretty(details.data[entry.key])}</pre>
+              <CodeBlock text={pretty(details.data[entry.key])} language="json" />
             </details>
           {:else if entry.view === 'table'}
             {@const rows = rowsFor(entry)}
@@ -152,19 +153,6 @@
   }
   .kv > span:nth-child(odd) {
     color: var(--muted);
-  }
-  .block {
-    background: var(--bg);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 0.6rem;
-    max-height: 18rem;
-    overflow: auto;
-    font-family: var(--mono);
-    font-size: 0.78rem;
-    white-space: pre-wrap;
-    word-break: break-word;
-    margin: 0.3rem 0;
   }
   /* `all: unset` so the button keeps the section header's own styling
      instead of looking like one of the page's buttons — same idiom as

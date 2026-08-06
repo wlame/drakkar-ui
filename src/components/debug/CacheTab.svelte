@@ -8,6 +8,7 @@
   import { pausableInterval } from '../../lib/visibility'
   import SidePanel from '../SidePanel.svelte'
   import SortableTh from '../SortableTh.svelte'
+  import CodeBlock from '../CodeBlock.svelte'
   import { NO_SORT, sortRows, type SortAccessor } from '../../lib/sort'
 
   const PAGE_SIZE = 200
@@ -195,7 +196,7 @@
         <dt>Origin Worker</dt><dd class="mono">{detail.origin_worker_id}</dd>
       </dl>
       <h3>Value</h3>
-      <pre class="block">{detail.value != null ? pretty(detail.value) : detail.raw_value}</pre>
+      <CodeBlock text={detail.value != null ? pretty(detail.value) : detail.raw_value} maxHeight="24rem" />
     {/if}
   </SidePanel>
 {/if}
@@ -306,18 +307,5 @@
     letter-spacing: 0.05em;
     color: var(--muted);
     margin: 0 0 0.4rem;
-  }
-  .block {
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 0.75rem;
-    max-height: 24rem;
-    overflow: auto;
-    font-family: var(--mono);
-    font-size: 0.78rem;
-    white-space: pre-wrap;
-    word-break: break-word;
-    margin: 0;
   }
 </style>
