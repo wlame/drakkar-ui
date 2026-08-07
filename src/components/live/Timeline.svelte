@@ -321,6 +321,11 @@
     if (!t.stdin_size) return '-'
     return `${t.stdin_lines ?? 0} lines, ${fmtBytes(t.stdin_size)}`
   }
+  function fmtStdout(t: TaskView): string {
+    if (!t.stdout_size) return '-'
+    if (t.stdout_lines == null) return fmtBytes(t.stdout_size)
+    return `${t.stdout_lines} lines, ${fmtBytes(t.stdout_size)}`
+  }
 </script>
 
 <h2 class="tl-title">
@@ -408,6 +413,9 @@
       <span class="hl">CLI:</span><span class="hv">{hovered.args ?? '-'}</span>
       {#if hovered.stdin_size}
         <span class="hl">Stdin:</span><span class="hv">{fmtStdin(hovered)}</span>
+      {/if}
+      {#if hovered.stdout_size}
+        <span class="hl">Stdout:</span><span class="hv stdout-ok">{fmtStdout(hovered)}</span>
       {/if}
       {#if hovered.labels && Object.keys(hovered.labels).length}
         <br />
@@ -603,6 +611,10 @@
   }
   .hv {
     margin-right: 12px;
+  }
+  /* Non-empty stdout in the hover detail — same green as completed status. */
+  .hv.stdout-ok {
+    color: #059669;
   }
   .chip {
     display: inline-block;

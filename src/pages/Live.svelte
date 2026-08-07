@@ -126,6 +126,14 @@
     return `${t.stdin_lines ?? 0} lines, ${fmtBytes(t.stdin_size)}`
   }
 
+  // Stdout cell, same shape. The line count is a newer WS field — an older
+  // backend sends only stdout_size, so fall back to bytes alone then.
+  function fmtStdout(t: TaskView): string {
+    if (!t.stdout_size) return '-'
+    if (t.stdout_lines == null) return fmtBytes(t.stdout_size)
+    return `${t.stdout_lines} lines, ${fmtBytes(t.stdout_size)}`
+  }
+
   const statusLabel: Record<WsStatus, string> = {
     connecting: 'connecting',
     connected: 'connected',
@@ -168,6 +176,7 @@
           client_name: e.client_name ?? null,
           request_id: e.request_id ?? null,
           stdout_size: null,
+          stdout_lines: null,
           stdin_lines: e.stdin_lines ?? null,
           stdin_size: e.stdin_size ?? null,
           env: (meta.env as Record<string, string> | undefined) ?? null,
@@ -200,6 +209,7 @@
           client_name: e.client_name ?? ex?.client_name ?? null,
           request_id: e.request_id ?? ex?.request_id ?? null,
           stdout_size: e.stdout_size ?? null,
+          stdout_lines: e.stdout_lines ?? null,
           stdin_lines: ex?.stdin_lines ?? e.stdin_lines ?? null,
           stdin_size: ex?.stdin_size ?? e.stdin_size ?? null,
           env: ex?.env ?? null,
@@ -287,12 +297,15 @@
       const map: Record<string, TaskView> = {}
       for (const t of rt.tasks) {
         const v = taskFromRecent(t)
-        // /recent-tasks doesn't carry stdin/env/source_offsets — keep the
-        // WS-provided values so the Stdin column and hover detail survive resyncs.
+        // /recent-tasks doesn't carry stdin/stdout/env/source_offsets — keep
+        // the WS-provided values so the Stdin/Stdout columns and hover detail
+        // survive resyncs.
         const prev = allTasks[t.task_id]
         if (prev) {
           v.stdin_lines = prev.stdin_lines
           v.stdin_size = prev.stdin_size
+          v.stdout_size = prev.stdout_size
+          v.stdout_lines = prev.stdout_lines
           v.env = v.env ?? prev.env
           v.source_offsets = prev.source_offsets
         }
@@ -491,7 +504,7 @@
   {:else}
     <table>
       <thead>
-        <tr><th>Task ID</th><th>Partition</th><th>Labels</th><th>Status</th><th>Duration</th><th>Time</th><th>CLI Args</th><th>Stdin</th></tr>
+        <tr><th>Task ID</th><th>Partition</th><th>Labels</th><th>Status</th><th>Duration</th><th>Time</th><th>CLI Args</th><th>Stdin</th><th>Stdout</th></tr>
       </thead>
       <tbody>
         {#each finished as t (t.task_id)}
@@ -510,6 +523,7 @@
             <td class="time nowrap">{fmtTimeMs(t.end_ts)}</td>
             <td>{#if t.args}<Expandable text={t.args} />{/if}</td>
             <td class="mono xs stdin">{fmtStdin(t)}</td>
+            <td class="mono xs stdout" class:has-output={!!t.stdout_size}>{fmtStdout(t)}</td>
           </tr>
         {/each}
       </tbody>
@@ -552,6 +566,14 @@
   }
   .stdin {
     color: #9ca3af;
+  }
+  .stdout {
+    color: #9ca3af;
+  }
+  /* Non-empty stdout reads as "the task produced something" — same green
+     as the completed status. */
+  .stdout.has-output {
+    color: #059669;
   }
   .head {
     display: flex;

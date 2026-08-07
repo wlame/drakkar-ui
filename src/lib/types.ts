@@ -248,6 +248,8 @@ export interface WsEvent {
   stdin_lines?: number
   stdin_size?: number
   stdout_size?: number
+  /** WS-only companion to stdout_size on task_completed frames; absent on older backends. */
+  stdout_lines?: number
   message_count?: number
   task_count?: number
   message_labels?: string[]
