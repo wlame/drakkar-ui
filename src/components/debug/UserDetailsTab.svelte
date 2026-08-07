@@ -1,16 +1,18 @@
 <script lang="ts">
   // Generic renderer for the probe's User-defined tab. Driven ENTIRELY by
   // the layout descriptor — this component never knows the user's model.
-  import type { ProbeDetailsEntry, ProbeUserDetails } from '../../lib/types'
+  import type { ProbeDetailsColumn, ProbeDetailsEntry, ProbeUserDetails } from '../../lib/types'
   import { NO_SORT, sortRows, type SortState } from '../../lib/sort'
-  import { columnNumeric, stageBadges, tableAccessors, touchedFields } from '../../lib/userDetails'
+  import { columnNumeric, groupedRows, stageBadges, tableAccessors, touchedFields } from '../../lib/userDetails'
   import SortableTh from '../SortableTh.svelte'
   import CodeBlock from '../CodeBlock.svelte'
 
   let { details }: { details: ProbeUserDetails } = $props()
 
   let collapsedSections = $state<Set<string>>(new Set())
-  // One independent sort state per table field, keyed by entry key.
+  // One independent sort state per rendered table: keyed by entry key for
+  // 'table' fields, and by `${entry.key}:${group}` for each sub-table of a
+  // 'tables' field.
   let tableSorts = $state<Record<string, SortState>>({})
 
   const touched = $derived(touchedFields(details.writes))
@@ -37,6 +39,36 @@
     }
   }
 </script>
+
+{#snippet detailsTable(rows: Record<string, unknown>[], columns: ProbeDetailsColumn[], sortKey: string)}
+  {@const accessors = tableAccessors(columns)}
+  <table>
+    <thead>
+      <tr>
+        {#each columns as col (col.key)}
+          <SortableTh
+            bind:sort={
+              () => tableSorts[sortKey] ?? NO_SORT,
+              (v) => (tableSorts = { ...tableSorts, [sortKey]: v })
+            }
+            key={col.key}
+            label={col.label}
+            numeric={columnNumeric(rows, col.key)}
+          />
+        {/each}
+      </tr>
+    </thead>
+    <tbody>
+      {#each sortRows(rows, tableSorts[sortKey] ?? NO_SORT, accessors) as row, i (i)}
+        <tr>
+          {#each columns as col (col.key)}
+            <td class="mono">{String(row[col.key] ?? '')}</td>
+          {/each}
+        </tr>
+      {/each}
+    </tbody>
+  </table>
+{/snippet}
 
 <p class="muted model">model: <span class="mono">{details.model}</span></p>
 
@@ -73,37 +105,19 @@
             </details>
           {:else if entry.view === 'table'}
             {@const rows = rowsFor(entry)}
-            {@const columns = entry.columns ?? []}
-            {@const accessors = tableAccessors(columns)}
             <p class="muted">{rows.length} rows</p>
             {#if rows.length}
-              <table>
-                <thead>
-                  <tr>
-                    {#each columns as col (col.key)}
-                      <SortableTh
-                        bind:sort={
-                          () => tableSorts[entry.key] ?? NO_SORT,
-                          (v) => (tableSorts = { ...tableSorts, [entry.key]: v })
-                        }
-                        key={col.key}
-                        label={col.label}
-                        numeric={columnNumeric(rows, col.key)}
-                      />
-                    {/each}
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each sortRows(rows, tableSorts[entry.key] ?? NO_SORT, accessors) as row, i (i)}
-                    <tr>
-                      {#each columns as col (col.key)}
-                        <td class="mono">{String(row[col.key] ?? '')}</td>
-                      {/each}
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
+              {@render detailsTable(rows, entry.columns ?? [], entry.key)}
             {/if}
+          {:else if entry.view === 'tables'}
+            {@const groups = groupedRows(details.data[entry.key])}
+            <p class="muted">{groups.length} groups</p>
+            {#each groups as [group, rows] (group)}
+              <h5 class="group"><span class="mono">{group}</span> <span class="muted">— {rows.length} rows</span></h5>
+              {#if rows.length}
+                {@render detailsTable(rows, entry.columns ?? [], `${entry.key}:${group}`)}
+              {/if}
+            {/each}
           {/if}
         </div>
       {/each}
@@ -144,6 +158,14 @@
   }
   .entry.dim {
     opacity: 0.45;
+  }
+  /* Sub-table heading of a 'tables' entry — the group name is user data
+     (file names, ids), so it keeps normal casing, unlike the uppercase h4. */
+  h5.group {
+    margin: 0.6rem 0 0.25rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    overflow-wrap: anywhere;
   }
   .kv {
     display: grid;

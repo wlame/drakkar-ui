@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import type { ProbeDetailsWrite } from './types'
 import {
   columnNumeric,
+  groupedRows,
   normalizeStage,
   stageBadges,
   tableAccessors,
@@ -65,5 +66,27 @@ describe('table helpers', () => {
     expect(columnNumeric(rows, 'score')).toBe(true)
     expect(columnNumeric(rows, 'item_id')).toBe(false)
     expect(columnNumeric([], 'score')).toBe(false)
+  })
+})
+
+describe('groupedRows', () => {
+  test('yields [group, rows] pairs in key insertion order', () => {
+    const value = {
+      'first_input_file.csv': [{ item_id: 'a' }],
+      'second_input_file.csv': [{ item_id: 'b' }, { item_id: 'c' }],
+    }
+    expect(groupedRows(value)).toEqual([
+      ['first_input_file.csv', [{ item_id: 'a' }]],
+      ['second_input_file.csv', [{ item_id: 'b' }, { item_id: 'c' }]],
+    ])
+  })
+  test('degrades absent or malformed values to no groups', () => {
+    expect(groupedRows(undefined)).toEqual([])
+    expect(groupedRows(null)).toEqual([])
+    expect(groupedRows('text')).toEqual([])
+    expect(groupedRows([{ item_id: 'a' }])).toEqual([])
+  })
+  test('degrades a non-array group value to empty rows', () => {
+    expect(groupedRows({ broken_group: 'oops' })).toEqual([['broken_group', []]])
   })
 })

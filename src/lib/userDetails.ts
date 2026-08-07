@@ -39,6 +39,20 @@ export function tableAccessors(columns: ProbeDetailsColumn[]): Record<string, So
   return Object.fromEntries(columns.map((c) => [c.key, (row: Row) => row[c.key] as SortValue]))
 }
 
+/**
+ * Sub-tables of a "tables" field: [group, rows] pairs in the dict's own key
+ * order (first-append order end-to-end — both backends and JSON.parse keep
+ * object key insertion order). Tolerates absent/malformed values: anything
+ * that is not an object of arrays degrades to no groups / empty rows.
+ */
+export function groupedRows(value: unknown): [string, Row[]][] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+  return Object.entries(value as Record<string, unknown>).map(([group, rows]) => [
+    group,
+    Array.isArray(rows) ? (rows as Row[]) : [],
+  ])
+}
+
 /** A column sorts numerically when its first present value is a number. */
 export function columnNumeric(rows: Row[], key: string): boolean {
   for (const row of rows) {

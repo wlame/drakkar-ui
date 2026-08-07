@@ -544,8 +544,9 @@ export interface ProbeDetailsColumn {
 export interface ProbeDetailsEntry {
   key: string
   label: string
-  view: 'string' | 'keyvalue' | 'dict' | 'table'
-  /** Present only when view is 'table'; null for every other view. */
+  /** 'tables' renders one sub-table per key of a dict[str, rows[]] value. */
+  view: 'string' | 'keyvalue' | 'dict' | 'table' | 'tables'
+  /** Present only when view is 'table' or 'tables'; null for every other view. */
   columns: ProbeDetailsColumn[] | null
 }
 
