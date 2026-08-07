@@ -1,5 +1,5 @@
 /// <reference types="vitest/config" />
-import { defineConfig } from 'vite'
+import { defaultClientConditions, defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 
 // The bundle is served at the site root by any Drakkar backend (the debug
@@ -32,6 +32,12 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(process.env.DRAKKAR_UI_VERSION ?? 'dev'),
   },
   resolve: {
+    // Without the `browser` condition vitest resolves the `svelte` package to
+    // its server entry, whose mount()/unmount() only throw
+    // `lifecycle_function_unavailable` — component tests need the client
+    // runtime. Prepended to (not replacing) Vite's defaults, and only under
+    // vitest so real builds keep stock resolution.
+    conditions: process.env.VITEST ? ['browser', ...defaultClientConditions] : undefined,
     alias: process.env.VITEST
       ? // Vite's `?worker` suffix (used by CodeBlock.svelte to load Monaco's
         // web workers, see src/components/CodeBlock.svelte) is only handled

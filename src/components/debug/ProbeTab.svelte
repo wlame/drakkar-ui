@@ -310,11 +310,11 @@
   {#if report.errors.length}
     <section class="card">
       <h3 style:color="#dc2626">Errors ({report.errors.length})</h3>
+      <!-- The contract deliberately omits tracebacks from probe errors
+           (docs/api-contract-v1.md, divergence 7) — the summary line is the
+           whole error; full tracebacks live in the worker's own logs. -->
       {#each report.errors as err, i (i)}
-        <details>
-          <summary><span style:color="#dc2626">{err.stage}</span> — {err.exception_class}: {err.message}</summary>
-          <CodeBlock text={err.traceback} />
-        </details>
+        <p class="errline"><span style:color="#dc2626">{err.stage}</span> — <span class="mono">{err.exception_class}</span>: {err.message}</p>
       {/each}
     </section>
   {/if}
@@ -473,10 +473,10 @@
   .clickable:hover td {
     background: var(--panel-2);
   }
-  details summary {
-    cursor: pointer;
-    font-size: 0.85rem;
+  .errline {
     margin: 0.3rem 0;
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
   }
   /* argv can be long; the cell truncates and the full value is on the title. */
   .argv {

@@ -449,10 +449,15 @@ export interface ProbeRequest {
 
 export interface ProbeError {
   stage: string
+  /** Language-specific class name; treat as opaque. */
   exception_class: string
   message: string
-  traceback: string
-  occurred_at_ms: number
+  /**
+   * Not required by the schema. There is deliberately NO `traceback` field:
+   * the contract forbids emitting it (docs/api-contract-v1.md, divergence 7)
+   * — tracebacks stay server-side.
+   */
+  occurred_at_ms?: number
 }
 
 export interface CollectResult {

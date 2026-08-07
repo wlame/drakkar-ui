@@ -121,21 +121,25 @@
     error = false,
     maxHeight = '18rem',
   }: {
-    text: string
+    // Nullable on purpose: a field the backend legitimately omitted must
+    // degrade to an empty block, not throw during render and take the whole
+    // parent branch's DOM down with it (the contract's "UI defensive" stance).
+    text: string | null | undefined
     language?: CodeLanguage
     error?: boolean
     maxHeight?: string
   } = $props()
 
-  const resolvedLanguage = $derived(language ?? detectLanguage(text))
-  const multiline = $derived(isMultiline(text))
+  const content = $derived(text ?? '')
+  const resolvedLanguage = $derived(language ?? detectLanguage(content))
+  const multiline = $derived(isMultiline(content))
 
   // --- Copy button -----------------------------------------------------
   let copyState = $state<'idle' | 'copied' | 'failed'>('idle')
   let copyResetTimer: ReturnType<typeof setTimeout> | undefined
 
   async function onCopy() {
-    const ok = await copyText(text)
+    const ok = await copyText(content)
     copyState = ok ? 'copied' : 'failed'
     clearTimeout(copyResetTimer)
     copyResetTimer = setTimeout(() => (copyState = 'idle'), 1500)
@@ -229,7 +233,7 @@
         monacoRef = monaco
         const fontFamily = getComputedStyle(container).getPropertyValue('--mono').trim() || 'monospace'
         editor = monaco.editor.create(container, {
-          value: text,
+          value: content,
           language: resolvedLanguage,
           readOnly: true,
           domReadOnly: true,
@@ -305,7 +309,7 @@
   // stripes and error tint in sync when the relevant props change, without
   // recreating the editor.
   $effect(() => {
-    const nextText = text
+    const nextText = content
     const nextLanguage = resolvedLanguage
     if (!editor || !monacoRef) return
     if (editor.getValue() !== nextText) editor.setValue(nextText)
@@ -350,10 +354,10 @@
       style:max-height={maxHeight}
     ></div>
     {#if editorState !== 'ready'}
-      <pre class="block" style:max-height={maxHeight}>{text}</pre>
+      <pre class="block" style:max-height={maxHeight}>{content}</pre>
     {/if}
   {:else}
-    <pre class="block" style:max-height={maxHeight}>{text}</pre>
+    <pre class="block" style:max-height={maxHeight}>{content}</pre>
   {/if}
 </div>
 
