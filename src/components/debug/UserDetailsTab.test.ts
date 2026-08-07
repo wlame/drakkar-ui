@@ -37,6 +37,69 @@ const details: ProbeUserDetails = {
   writes: [{ field: 'per_file_rows', op: 'append', origin_stage: 'arrange', ms_since_start: 1 }],
 }
 
+const treeDetails: ProbeUserDetails = {
+  model: 'FileImportDetails',
+  layout: {
+    sections: [
+      {
+        title: 'Files',
+        entries: [
+          {
+            key: 'matches',
+            label: 'Matches',
+            view: 'tree',
+            columns: [
+              { key: 'file', label: 'File' },
+              { key: 'section', label: 'Section' },
+              { key: 'rule', label: 'Rule' },
+              { key: 'score', label: 'Score' },
+            ],
+            group_by: ['file', 'section'],
+          },
+        ],
+      },
+    ],
+  },
+  data: {
+    matches: [
+      { file: 'first_input_file.csv', section: 'header', rule: 'r1', score: 1 },
+      { file: 'first_input_file.csv', section: 'body', rule: 'r2', score: 2 },
+      { file: 'second_input_file.csv', section: 'header', rule: 'r3', score: 3 },
+    ],
+  },
+  writes: [{ field: 'matches', op: 'append', origin_stage: 'arrange', ms_since_start: 1 }],
+}
+
+describe('UserDetailsTab tree view', () => {
+  it('renders nested collapsible levels with leaf tables of value columns', () => {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+    const app = mount(UserDetailsTab, { target, props: { details: treeDetails } })
+    flushSync()
+
+    const topLevel = [...target.querySelectorAll('details.treenode')].filter(
+      (d) => !d.parentElement?.closest('details.treenode'),
+    )
+    expect(topLevel).toHaveLength(2)
+    expect(topLevel[0].querySelector('summary')?.textContent).toContain('first_input_file.csv')
+    expect(topLevel[0].querySelector('summary')?.textContent).toContain('2 rows')
+
+    const nested = topLevel[0].querySelectorAll('details.treenode')
+    expect([...nested].map((d) => d.querySelector('summary')?.textContent ?? '')).toEqual([
+      expect.stringContaining('header'),
+      expect.stringContaining('body'),
+    ])
+
+    // leaf table shows only value columns (rule, score), not the key columns
+    const leafHeaders = [...nested[0].querySelectorAll('th')].map((th) => th.textContent?.trim())
+    expect(leafHeaders.join(' ')).toContain('Rule')
+    expect(leafHeaders.join(' ')).not.toContain('File')
+
+    unmount(app)
+    target.remove()
+  })
+})
+
 describe('UserDetailsTab tables view', () => {
   it('renders one sub-table per group, in first-append order', () => {
     const target = document.createElement('div')

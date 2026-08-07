@@ -3,7 +3,16 @@
   // the layout descriptor — this component never knows the user's model.
   import type { ProbeDetailsColumn, ProbeDetailsEntry, ProbeUserDetails } from '../../lib/types'
   import { NO_SORT, sortRows, type SortState } from '../../lib/sort'
-  import { columnNumeric, groupedRows, stageBadges, tableAccessors, touchedFields } from '../../lib/userDetails'
+  import {
+    buildTree,
+    columnNumeric,
+    groupedRows,
+    stageBadges,
+    tableAccessors,
+    touchedFields,
+    valueColumns,
+    type DetailsTreeNode,
+  } from '../../lib/userDetails'
   import SortableTh from '../SortableTh.svelte'
   import CodeBlock from '../CodeBlock.svelte'
 
@@ -70,6 +79,21 @@
   </table>
 {/snippet}
 
+{#snippet treeNodes(nodes: DetailsTreeNode[], leafColumns: ProbeDetailsColumn[], depth: number, path: string)}
+  {#each nodes as node (node.key)}
+    <details class="treenode" open={depth === 0}>
+      <summary><span class="mono">{node.key}</span> <span class="muted">— {node.count} rows</span></summary>
+      <div class="treebody">
+        {#if node.children}
+          {@render treeNodes(node.children, leafColumns, depth + 1, `${path}/${node.key}`)}
+        {:else if leafColumns.length}
+          {@render detailsTable(node.rows, leafColumns, `${path}/${node.key}`)}
+        {/if}
+      </div>
+    </details>
+  {/each}
+{/snippet}
+
 <p class="muted model">model: <span class="mono">{details.model}</span></p>
 
 {#each details.layout.sections as section (section.title)}
@@ -118,6 +142,18 @@
                 {@render detailsTable(rows, entry.columns ?? [], `${entry.key}:${group}`)}
               {/if}
             {/each}
+          {:else if entry.view === 'tree'}
+            {@const rows = rowsFor(entry)}
+            {@const groupBy = entry.group_by ?? []}
+            <p class="muted">{rows.length} rows</p>
+            {#if groupBy.length}
+              {@render treeNodes(buildTree(rows, groupBy), valueColumns(entry.columns ?? [], groupBy), 0, entry.key)}
+            {:else if rows.length}
+              <!-- Defensive: a tree entry without group_by (contract drift)
+                   degrades to the plain flat table instead of rendering
+                   nothing. -->
+              {@render detailsTable(rows, entry.columns ?? [], entry.key)}
+            {/if}
           {/if}
         </div>
       {/each}
@@ -166,6 +202,20 @@
     font-size: 0.8rem;
     font-weight: 600;
     overflow-wrap: anywhere;
+  }
+  /* One collapsible level of a 'tree' entry; nesting indents via .treebody. */
+  details.treenode {
+    margin: 0.25rem 0;
+  }
+  details.treenode > summary {
+    cursor: pointer;
+    font-size: 0.85rem;
+    overflow-wrap: anywhere;
+  }
+  .treebody {
+    margin-left: 1rem;
+    padding-left: 0.5rem;
+    border-left: 1px solid var(--line);
   }
   .kv {
     display: grid;

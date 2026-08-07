@@ -1,12 +1,14 @@
 import { describe, expect, test } from 'vitest'
 import type { ProbeDetailsWrite } from './types'
 import {
+  buildTree,
   columnNumeric,
   groupedRows,
   normalizeStage,
   stageBadges,
   tableAccessors,
   touchedFields,
+  valueColumns,
 } from './userDetails'
 
 const w = (field: string, stage: string): ProbeDetailsWrite => ({
@@ -88,5 +90,52 @@ describe('groupedRows', () => {
   })
   test('degrades a non-array group value to empty rows', () => {
     expect(groupedRows({ broken_group: 'oops' })).toEqual([['broken_group', []]])
+  })
+})
+
+describe('buildTree', () => {
+  const rows = [
+    { file: 'a.csv', section: 'header', rule: 'r1', score: 1 },
+    { file: 'a.csv', section: 'body', rule: 'r2', score: 2 },
+    { file: 'b.csv', section: 'header', rule: 'r3', score: 3 },
+    { file: 'a.csv', section: 'header', rule: 'r4', score: 4 },
+  ]
+
+  test('groups by successive keys in first-appearance order', () => {
+    const tree = buildTree(rows, ['file', 'section'])
+    expect(tree.map((n) => n.key)).toEqual(['a.csv', 'b.csv'])
+    expect(tree[0].count).toBe(3)
+    expect(tree[0].children!.map((n) => n.key)).toEqual(['header', 'body'])
+    expect(tree[0].children![0].rows.map((r) => r.rule)).toEqual(['r1', 'r4'])
+    expect(tree[1].children![0].rows.map((r) => r.rule)).toEqual(['r3'])
+  })
+
+  test('single key yields one level of leaves', () => {
+    const tree = buildTree(rows, ['file'])
+    expect(tree).toHaveLength(2)
+    expect(tree[0].children).toBeNull()
+    expect(tree[0].rows).toHaveLength(3)
+  })
+
+  test('missing key values group under the empty string', () => {
+    const tree = buildTree([{ rule: 'r1' }], ['file'])
+    expect(tree[0].key).toBe('')
+    expect(tree[0].rows).toHaveLength(1)
+  })
+
+  test('empty groupBy yields no nodes', () => {
+    expect(buildTree(rows, [])).toEqual([])
+  })
+})
+
+describe('valueColumns', () => {
+  test('filters out the grouping keys', () => {
+    const columns = [
+      { key: 'file', label: 'File' },
+      { key: 'section', label: 'Section' },
+      { key: 'score', label: 'Score' },
+    ]
+    expect(valueColumns(columns, ['file', 'section'])).toEqual([{ key: 'score', label: 'Score' }])
+    expect(valueColumns(columns, [])).toEqual(columns)
   })
 })

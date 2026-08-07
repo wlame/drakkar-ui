@@ -53,6 +53,52 @@ export function groupedRows(value: unknown): [string, Row[]][] {
   ])
 }
 
+/** One node of a 'tree' field's client-side grouping. */
+export interface DetailsTreeNode {
+  /** The grouping value at this level, stringified. */
+  key: string
+  /** Total rows under this node (all levels below). */
+  count: number
+  /** Child nodes, or null when this is a leaf level. */
+  children: DetailsTreeNode[] | null
+  /** The rows at a leaf node; empty for inner nodes. */
+  rows: Row[]
+}
+
+/**
+ * Group flat rows into a tree by the ordered `groupBy` keys, one level per
+ * key, in first-appearance (append) order at every level — deterministic on
+ * both backends because it derives from array order, not object key order.
+ */
+export function buildTree(rows: Row[], groupBy: string[]): DetailsTreeNode[] {
+  if (groupBy.length === 0) return []
+  const [head, ...rest] = groupBy
+  const order: string[] = []
+  const buckets = new Map<string, Row[]>()
+  for (const row of rows) {
+    const key = String(row[head] ?? '')
+    if (!buckets.has(key)) {
+      buckets.set(key, [])
+      order.push(key)
+    }
+    buckets.get(key)!.push(row)
+  }
+  return order.map((key) => {
+    const bucket = buckets.get(key)!
+    if (rest.length === 0) return { key, count: bucket.length, children: null, rows: bucket }
+    return { key, count: bucket.length, children: buildTree(bucket, rest), rows: [] }
+  })
+}
+
+/** The columns a tree leaf shows: everything that is not a grouping key. */
+export function valueColumns(
+  columns: ProbeDetailsColumn[],
+  groupBy: string[],
+): ProbeDetailsColumn[] {
+  const keys = new Set(groupBy)
+  return columns.filter((c) => !keys.has(c.key))
+}
+
 /** A column sorts numerically when its first present value is a number. */
 export function columnNumeric(rows: Row[], key: string): boolean {
   for (const row of rows) {

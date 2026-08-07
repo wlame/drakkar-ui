@@ -544,10 +544,19 @@ export interface ProbeDetailsColumn {
 export interface ProbeDetailsEntry {
   key: string
   label: string
-  /** 'tables' renders one sub-table per key of a dict[str, rows[]] value. */
-  view: 'string' | 'keyvalue' | 'dict' | 'table' | 'tables'
-  /** Present only when view is 'table' or 'tables'; null for every other view. */
+  /**
+   * 'tables' renders one sub-table per key of a dict[str, rows[]] value;
+   * 'tree' renders flat rows grouped client-side by the group_by keys.
+   */
+  view: 'string' | 'keyvalue' | 'dict' | 'table' | 'tables' | 'tree'
+  /** Present only when view is 'table', 'tables', or 'tree'; null otherwise. */
   columns: ProbeDetailsColumn[] | null
+  /**
+   * Ordered grouping keys for view='tree' (outermost first, max depth 4),
+   * a subset of columns. Null for other views; absent on backends that
+   * predate the tree view — read defensively.
+   */
+  group_by?: string[] | null
 }
 
 export interface ProbeDetailsSection {
