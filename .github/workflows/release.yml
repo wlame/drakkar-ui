@@ -41,10 +41,14 @@ jobs:
           tarball="drakkar-ui-${GITHUB_REF_NAME}.tar.gz"
           tar -czf "$tarball" -C dist .
           echo "TARBALL=$tarball" >> "$GITHUB_ENV"
+          # List the archive ONCE into a file. Piping tar straight into
+          # `head` (or `grep -q`) kills the job under pipefail: the reader
+          # exits early, tar takes EPIPE ("stdout: write error") and exits 2.
+          tar -tzf "$tarball" > archive-list.txt
           echo "Packaged $tarball — top-level entries:"
-          tar -tzf "$tarball" | head
+          head archive-list.txt
           # Fail loudly if index.html is not at the archive root.
-          tar -tzf "$tarball" | grep -qx './index.html' \
+          grep -qx './index.html' archive-list.txt \
             || { echo "ERROR: index.html is not at the archive root"; exit 1; }
           # Publish a sha256 sidecar next to the bundle. Backends verify a
           # downloaded bundle against it when present (releases without the
