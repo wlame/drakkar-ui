@@ -462,7 +462,7 @@ unset (never omitted), matching the existing wire convention for optional
 
 ## v1.5 additions (2026-08-09)
 
-Backend-declared dashboard pages (Phase 2) and the UI's live-refresh
+Backend-declared dashboard pages and the UI's live-refresh
 behavior for their widgets. Additive: one new endpoint, two new schemas. A
 backend that predates this section has no `/api/v1/pages` route; the UI's
 `loadUiPages()` treats that failure the same as any other optional-endpoint
@@ -494,8 +494,8 @@ miss and degrades to an empty page list, so the app shell renders unaffected
   an unrecognized value on either is forward-compatibility, not an error —
   see below.
 - **Source kinds.** `source.kind` selects which existing read API backs the
-  widget — Phase 2 adds no new data endpoint, only new ways to project data
-  already served elsewhere:
+  widget — declared pages add no new data endpoint, only new ways to
+  project data already served elsewhere:
 
   | `kind` | maps to | widget rows |
   |---|---|---|

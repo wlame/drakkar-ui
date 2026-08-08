@@ -1,5 +1,5 @@
 // Enrichment helpers for probe-details links, badges and value formats
-// (declarative UI enrichment, phase 1). Templates support three token kinds:
+// (declarative UI enrichment). Templates support three token kinds:
 // {value} = the cell value, {row.<field>} = a sibling field on the same row,
 // {<base>} = a named base URL delivered on the identity payload
 // (GET /api/v1/identity -> link_bases).
