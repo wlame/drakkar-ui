@@ -2,6 +2,7 @@
 // component so vitest covers them without component-test infrastructure.
 import type { ProbeDetailsColumn, ProbeDetailsWrite } from './types'
 import type { SortAccessor, SortValue } from './sort'
+import { badgeColor, formatValue, resolveTemplate, type LinkBases } from './enrich'
 
 /** Collapse per-task stage tags ("task_complete:t-abc") to their family. */
 export function normalizeStage(stage: string): string {
@@ -110,4 +111,47 @@ export function columnNumeric(rows: Row[], key: string): boolean {
     if (v != null) return typeof v === 'number'
   }
   return false
+}
+
+/** Resolved per-cell rendering: display text, link target, badge color, tooltip. */
+export interface CellRender {
+  text: string
+  href: string | null
+  badge: string | null // color suffix or null
+  title: string | null
+}
+
+interface CellRenderOptions {
+  link_template?: string | null
+  badge_colors?: Record<string, string> | null
+  format?: string | null
+  hint?: string | null
+}
+
+/**
+ * Resolves one cell's link/badge/format/hint enrichment against its value, an
+ * optional sibling row (table cells only — scalars pass undefined), and the
+ * configured link bases. Kept pure so UserDetailsTab can apply the result to
+ * markup without duplicating this logic between table cells and scalar
+ * entries.
+ */
+export function renderCell(
+  value: unknown,
+  row: Record<string, unknown> | undefined,
+  opts: CellRenderOptions,
+  bases: LinkBases,
+): CellRender {
+  const text = opts.format ? formatValue(opts.format, value) : String(value ?? '')
+  const href = opts.link_template
+    ? resolveTemplate(opts.link_template, { value, row, bases })
+    : null
+  const badge = opts.badge_colors ? badgeColor(opts.badge_colors, String(value ?? '')) : null
+  // A hint always wins the tooltip; otherwise fall back to the raw value so a
+  // formatted display (e.g. "1.5 KiB") doesn't hide the number behind it.
+  const title = opts.hint
+    ? resolveTemplate(opts.hint, { value, row, bases })
+    : opts.format
+      ? String(value ?? '')
+      : null
+  return { text, href, badge, title }
 }

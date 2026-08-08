@@ -5,11 +5,14 @@ import {
   columnNumeric,
   groupedRows,
   normalizeStage,
+  renderCell,
   stageBadges,
   tableAccessors,
   touchedFields,
   valueColumns,
 } from './userDetails'
+
+const bases = { jenkins: 'https://jenkins.internal.example.com' }
 
 const w = (field: string, stage: string): ProbeDetailsWrite => ({
   field,
@@ -135,6 +138,88 @@ describe('buildTree', () => {
 
   test('empty groupBy yields no nodes', () => {
     expect(buildTree(rows, [])).toEqual([])
+  })
+})
+
+describe('renderCell', () => {
+  test('resolves a link cell to an href and encoded value text', () => {
+    const cell = renderCell('b1', undefined, { link_template: '{jenkins}/job/{value}' }, bases)
+    expect(cell.href).toBe('https://jenkins.internal.example.com/job/b1')
+    expect(cell.text).toBe('b1')
+    expect(cell.title).toBeNull()
+  })
+
+  test('falls back to null href when the template cannot resolve (missing base)', () => {
+    const cell = renderCell('DK-1', undefined, { link_template: '{jira}/browse/{value}' }, bases)
+    expect(cell.href).toBeNull()
+    expect(cell.text).toBe('DK-1')
+  })
+
+  test('falls back to null href when a referenced row field is missing', () => {
+    const cell = renderCell(
+      'b1',
+      { job_name: undefined },
+      { link_template: '{jenkins}/job/{row.job_name}/{value}' },
+      bases,
+    )
+    expect(cell.href).toBeNull()
+  })
+
+  test('maps a badge value through its color map', () => {
+    const cell = renderCell(
+      'shipped',
+      undefined,
+      { badge_colors: { shipped: 'green', '*': 'gray' } },
+      bases,
+    )
+    expect(cell.badge).toBe('green')
+  })
+
+  test('falls back to the wildcard badge color for an unmapped value', () => {
+    const cell = renderCell(
+      'unknown',
+      undefined,
+      { badge_colors: { shipped: 'green', '*': 'gray' } },
+      bases,
+    )
+    expect(cell.badge).toBe('gray')
+  })
+
+  test('returns a null badge for an unmapped value with no wildcard', () => {
+    const cell = renderCell('unknown', undefined, { badge_colors: { shipped: 'green' } }, bases)
+    expect(cell.badge).toBeNull()
+  })
+
+  test('leaves badge null when no badge_colors are configured', () => {
+    const cell = renderCell('shipped', undefined, {}, bases)
+    expect(cell.badge).toBeNull()
+  })
+
+  test('formats the display text and puts the raw value in the title when there is no hint', () => {
+    const cell = renderCell(1536, undefined, { format: 'bytes' }, bases)
+    expect(cell.text).toBe('1.5 KiB')
+    expect(cell.title).toBe('1536')
+  })
+
+  test('resolves a hint template into the title, taking priority over the format fallback', () => {
+    const cell = renderCell(
+      1536,
+      { origin: 'upload' },
+      { format: 'bytes', hint: 'from {row.origin}' },
+      bases,
+    )
+    expect(cell.title).toBe('from upload')
+  })
+
+  test('omits the title when the hint template does not resolve', () => {
+    const cell = renderCell('b1', undefined, { hint: '{jenkins}/job/{row.missing}' }, bases)
+    expect(cell.title).toBeNull()
+  })
+
+  test('has no title when there is neither a hint nor a format', () => {
+    const cell = renderCell('plain', undefined, {}, bases)
+    expect(cell.title).toBeNull()
+    expect(cell.text).toBe('plain')
   })
 })
 

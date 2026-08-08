@@ -7,6 +7,7 @@
 // cache tab hides, etc.).
 
 import { writable } from 'svelte/store'
+import { setLinkBases } from './enrich'
 import type { Identity, LiveOverview } from './types'
 
 export interface RuntimeConfig {
@@ -58,4 +59,9 @@ export const identity = writable<Identity | null>(null)
 
 export function setIdentity(value: Identity): void {
   identity.set(value)
+  // Enrichment link templates (probe-details 'string'/table columns) resolve
+  // named bases against this — set it alongside identity so both the boot
+  // fetch (App.svelte) and the version panel's lazy fallback (VersionBadge)
+  // cover it from one place.
+  setLinkBases(value.link_bases ?? {})
 }

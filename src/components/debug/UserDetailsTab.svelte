@@ -7,12 +7,14 @@
     buildTree,
     columnNumeric,
     groupedRows,
+    renderCell,
     stageBadges,
     tableAccessors,
     touchedFields,
     valueColumns,
     type DetailsTreeNode,
   } from '../../lib/userDetails'
+  import { getLinkBases } from '../../lib/enrich'
   import SortableTh from '../SortableTh.svelte'
   import CodeBlock from '../CodeBlock.svelte'
 
@@ -71,7 +73,14 @@
       {#each sortRows(rows, tableSorts[sortKey] ?? NO_SORT, accessors) as row, i (i)}
         <tr>
           {#each columns as col (col.key)}
-            <td class="mono">{String(row[col.key] ?? '')}</td>
+            {@const cell = renderCell(row[col.key], row, col, getLinkBases())}
+            {#if col.badge_colors}
+              <td><span class="badge{cell.badge ? ` badge-${cell.badge}` : ''}" title={cell.title}>{cell.text}</span></td>
+            {:else if cell.href}
+              <td class="mono"><a href={cell.href} target="_blank" rel="noopener noreferrer" title={cell.title}>{cell.text}</a></td>
+            {:else}
+              <td class="mono" title={cell.title}>{cell.text}</td>
+            {/if}
           {/each}
         </tr>
       {/each}
@@ -115,7 +124,19 @@
           {#if !touched.has(entry.key)}
             <p class="muted">—</p>
           {:else if entry.view === 'string'}
-            <p class="mono value">{String(details.data[entry.key] ?? '—')}</p>
+            {@const cell = renderCell(details.data[entry.key], undefined, entry, getLinkBases())}
+            {#if cell.href}
+              <p class="mono value">
+                <a href={cell.href} target="_blank" rel="noopener noreferrer" title={cell.title}>{cell.text}</a>
+              </p>
+            {:else}
+              <p class="mono value" title={cell.title}>{cell.text || '—'}</p>
+            {/if}
+          {:else if entry.view === 'badge'}
+            {@const cell = renderCell(details.data[entry.key], undefined, entry, getLinkBases())}
+            <p class="value">
+              <span class="badge{cell.badge ? ` badge-${cell.badge}` : ''}" title={cell.title}>{cell.text}</span>
+            </p>
           {:else if entry.view === 'keyvalue'}
             <div class="kv">
               {#each kvFor(entry) as [k, v] (k)}
@@ -191,6 +212,41 @@
     border: 1px solid var(--line);
     border-radius: 999px;
     background: var(--panel-2);
+  }
+  /* Enrichment badge colors (probe_field view='badge' / column badge_colors).
+     No color match (or an unstyled '*' fallback) leaves the base .badge
+     look — same green/red/amber/blue triad as the Live WS/freeze pills and
+     Timeline's label/env chips, plus gray and purple for the two colors
+     those don't already cover. */
+  .badge-green {
+    background: #d1fae5;
+    border-color: #6ee7b7;
+    color: #065f46;
+  }
+  .badge-red {
+    background: #fecaca;
+    border-color: #fca5a5;
+    color: #991b1b;
+  }
+  .badge-yellow {
+    background: #fffbeb;
+    border-color: #fde68a;
+    color: #92400e;
+  }
+  .badge-blue {
+    background: #dbeafe;
+    border-color: #93c5fd;
+    color: #1e40af;
+  }
+  .badge-gray {
+    background: var(--panel-2);
+    border-color: var(--line);
+    color: var(--muted);
+  }
+  .badge-purple {
+    background: #f3e8ff;
+    border-color: #d8b4fe;
+    color: #6b21a8;
   }
   .entry.dim {
     opacity: 0.45;
