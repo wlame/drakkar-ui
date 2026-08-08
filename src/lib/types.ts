@@ -106,6 +106,9 @@ export interface Identity {
   backend_version?: string // backend-native: semver (py) or git-describe (go)
   ui_version?: string | null // served drakkar-ui release tag, null = built-in pages
   ui_source?: string // "release" | "embedded" | "builtin"
+  // Named link-template bases (ui.link_bases), always present (possibly {})
+  // on a fresh backend; absent entirely on backends that predate enrichment.
+  link_bases?: Record<string, string>
 }
 
 export interface WorkerPeer {
@@ -588,9 +591,36 @@ export interface ProbeTiming {
   on_window_complete?: number
 }
 
+// Enrichment fields (link_template/badge_colors/format/hint) are optional:
+// always present (possibly null) on a fresh backend, absent entirely on one
+// that predates enrichment — read defensively.
 export interface ProbeDetailsColumn {
   key: string
   label: string
+  link_template?: string | null
+  badge_colors?: Record<string, string> | null
+  format?: string | null
+  hint?: string | null
+}
+
+/** One external link inside a detail panel's 'links' element. */
+export interface ProbeDetailLink {
+  label: string
+  template: string
+}
+
+/** One block of a declared detail panel, rendered top to bottom. */
+export interface ProbeDetailElement {
+  view: 'string' | 'keyvalue' | 'table' | 'links'
+  field?: string | null
+  label?: string | null
+  links?: ProbeDetailLink[] | null
+}
+
+/** A declared right-panel layout, opened by clicking a row. */
+export interface ProbeDetail {
+  title?: string | null
+  elements: ProbeDetailElement[]
 }
 
 export interface ProbeDetailsEntry {
@@ -610,6 +640,12 @@ export interface ProbeDetailsEntry {
    * predate the tree view — read defensively.
    */
   group_by?: string[] | null
+  link_template?: string | null
+  badge_colors?: Record<string, string> | null
+  format?: string | null
+  hint?: string | null
+  /** A declared right-panel layout for this row-bearing view; null/absent otherwise. */
+  detail?: ProbeDetail | null
 }
 
 export interface ProbeDetailsSection {
