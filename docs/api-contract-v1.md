@@ -460,6 +460,96 @@ unset (never omitted), matching the existing wire convention for optional
     `view="string"` entry can have a link; a row-bearing entry can have a
     `detail`; nothing has both).
 
+## v1.5 additions (2026-08-09)
+
+Backend-declared dashboard pages (Phase 2) and the UI's live-refresh
+behavior for their widgets. Additive: one new endpoint, two new schemas. A
+backend that predates this section has no `/api/v1/pages` route; the UI's
+`loadUiPages()` treats that failure the same as any other optional-endpoint
+miss and degrades to an empty page list, so the app shell renders unaffected
+— just without the extra nav entries.
+
+- `GET /api/v1/pages` → 200 `UIPage[]`, in declaration order. A handler
+  opts in by registering `ui_pages` in its config. A handler that declares
+  none — every Go worker today, or a Python worker without `ui_pages`
+  configured — returns `[]`, never a 404: the empty-list case is the
+  well-defined default, not an error. The UI shows no extra nav entries in
+  that case, and `/p/<slug>` resolves to `NotFound` for any slug (there is
+  nothing declared for it to match).
+- **`UIPage`**: `{slug:str, title:str, widgets:[UIPageWidget]}`. `slug`
+  routes at `/p/<slug>`; the nav gains one entry per declared page
+  (`{label:title, path:"/p/<slug>"}`), appended after the four built-in
+  entries. `/p/<slug>` looks the page up by `slug` against the pages the UI
+  already fetched at boot — an unmatched slug is indistinguishable from any
+  other unmatched route and renders `NotFound`.
+- **`UIPageWidget`**: `{title:str, view:str, source:{kind:str,...},
+  columns:[ProbeDetailsColumn]|null, field:str|null,
+  badge_colors:{<value>:str,...}|null, format:str|null}`. `columns`,
+  `field`, `badge_colors`, and `format` are the same presentation fields
+  v1.4 added to `ProbeDetailsColumn`/`ProbeDetailsEntry`, reused verbatim —
+  a page widget renders through the identical column model as a
+  probe-details table, just addressed by a declared page instead of a probe
+  run. `view` and `source.kind` are open strings on the wire (the OpenAPI
+  `enum` lists what current UIs know how to render, not a closed set);
+  an unrecognized value on either is forward-compatibility, not an error —
+  see below.
+- **Source kinds.** `source.kind` selects which existing read API backs the
+  widget — Phase 2 adds no new data endpoint, only new ways to project data
+  already served elsewhere:
+
+  | `kind` | maps to | widget rows |
+  |---|---|---|
+  | `events` | `GET /api/v1/events?event_types=<source.event_types joined by ",">&limit=<source.limit\|\|200>` | one row per event |
+  | `annotations` | `GET /api/v1/events?event_types=annotation&limit=<source.limit\|\|200>`, filtered client-side to rows whose `metadata.kind` starts with `source.kind_prefix` (default `""` — no filter) | one row per matching annotation: `metadata` spread onto the row, plus `ts` and `kind` |
+  | `tasks` | `GET /api/v1/live/task-results?limit=<source.limit\|\|200>` | one row per task result |
+  | `metrics` | `GET /api/v1/debug/metrics`, summed over the samples of the family named `source.metric` | none (`[]`) — `metrics` is scalar-only, for `view:"stat"` widgets |
+
+  `source.event_types` (an array of strings) is absent-safe: a missing or
+  non-array value degrades to `[]`, which the backend reads as "no filter"
+  (every event type). This path is defensive only — the backend contract
+  requires `EventsSource.event_types` to be non-empty (validated at startup),
+  so a compliant backend never sends an `events` widget without it. A widget
+  that does reach the `[]` fallback also gets no live refresh (see below,
+  `refreshEventTypes` returns `[]` for it too) and only updates on manual
+  reload/navigation — an accepted consequence of a state the contract
+  otherwise forbids, not a case worth special-casing in the UI. A
+  `view:"stat"` widget ignores `source.kind` entirely and always resolves
+  through `source.metric`; a `stat` widget with no `source.metric` is the
+  misconfigured-stat case below, not a source-kind mismatch.
+
+- **Live refresh.** The UI opens one WebSocket subscription per page,
+  covering the union of every non-`stat` widget's implied event types
+  (`events` → its own `source.event_types`; `annotations` →
+  `["annotation"]`; `tasks` → `["task_complete","task_completed",
+  "task_failed"]`; `metrics` → `[]`, since a metrics-backed row widget has
+  no live signal to key on). No socket opens when that union is empty (an
+  all-`stat` page, or a page whose widgets all resolve to no event types).
+  A matching frame schedules that widget's refetch; matches arriving within
+  the same 500ms window collapse into one refetch rather than one per
+  event, so a fan-out burst (hundreds of `task_completed` frames for one
+  message) costs one refetch, not hundreds. `stat` widgets never subscribe
+  to the socket — they refetch on a flat 30s interval instead, since a
+  metric sum has no single WS event that means "this changed." Both the
+  socket and the interval are scoped to the page's current widget set and
+  are torn down and rebuilt on navigation, and torn down for good on
+  unmount.
+
+- **Forward compatibility.** An unrecognized `view` or `source.kind` is
+  normal version skew between an older UI and a newer backend (or a
+  config-authoring mistake), not an error — each half of the pair is
+  reported independently so the fault is attributable at a glance, in the
+  widget's own body:
+
+  | condition | message |
+  |---|---|
+  | `view` itself is unrecognized | `This widget needs a newer UI (unsupported view '<view>').` |
+  | `view` is known but `source.kind` is not | `This widget needs a newer UI (unsupported source '<kind>').` |
+  | `view:"stat"` with no `source.metric` | `This widget is misconfigured: a 'stat' view needs a source with a 'metric' field.` |
+
+  The `view` check runs first, so a widget with both an unrecognized `view`
+  and an unrecognized `source.kind` is reported only for the `view` — it is
+  never blamed for a source problem it does not, in the UI's eyes, have.
+
 ## Appendix: divergence resolutions from the 2026-06 audit
 
 Canonical choices where the two reference backends disagreed; each backend
