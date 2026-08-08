@@ -260,6 +260,56 @@ export interface WsEvent {
   request_id?: string | null
 }
 
+// --- Runtime health (GET /api/v1/runtime/health + /api/v1/debug/runtime/units) ---
+
+/** One second of lag history: max and average over the ticks in it. */
+export interface RuntimeLagBucket {
+  t: number
+  max_lag_ms: number
+  avg_lag_ms: number
+}
+
+/** One recent stall, without stacks — those ride the runtime_stall event. */
+export interface RuntimeStallSummary {
+  t: number
+  duration_ms: number
+  stack_count: number
+  top_location: string | null
+}
+
+export interface RuntimeHealthSnapshot {
+  enabled: boolean
+  state: 'healthy' | 'degraded' | 'stalled'
+  /** What unit_count counts on this backend: "tasks" or "goroutines". */
+  unit_label: string
+  current_lag_ms: number
+  heartbeat_age_ms: number
+  window: RuntimeLagBucket[]
+  recent_stalls: RuntimeStallSummary[]
+}
+
+/** Units sharing one (name, suspension point) pair. */
+export interface RuntimeUnitGroup {
+  name: string
+  location: string
+  count: number
+  example: string
+}
+
+export interface RuntimeUnitCensus {
+  unit_label: string
+  total: number
+  units: RuntimeUnitGroup[]
+}
+
+/** Payload of a runtime_stall event's metadata JSON. */
+export interface RuntimeStallPayload {
+  duration_ms: number
+  stacks: { stack: string; location: string; count: number }[]
+  dropped_stacks: number
+  unit_count: number
+}
+
 // Composed single-task detail returned by GET /api/v1/task/{id} (contract §New
 // endpoints). The event rows carry stdout/stderr; the scalar fields are the
 // server-side derivation of the same lifecycle the page reconstructs client-side.
@@ -547,8 +597,9 @@ export interface ProbeDetailsEntry {
   key: string
   label: string
   /**
-   * 'tables' renders one sub-table per key of a dict[str, rows[]] value;
-   * 'tree' renders flat rows grouped client-side by the group_by keys.
+   * 'tables' renders one sub-table per [group, rows[]] pair of an ordered
+   * pair-array value (first-append order on every backend); 'tree' renders
+   * flat rows grouped client-side by the group_by keys.
    */
   view: 'string' | 'keyvalue' | 'dict' | 'table' | 'tables' | 'tree'
   /** Present only when view is 'table', 'tables', or 'tree'; null otherwise. */

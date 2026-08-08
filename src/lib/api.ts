@@ -22,6 +22,8 @@ import type {
   PeriodicTask,
   ProbeRequest,
   RecentTasksResponse,
+  RuntimeHealthSnapshot,
+  RuntimeUnitCensus,
   SinkStatus,
   TaskDetailResponse,
   TaskResult,
@@ -148,6 +150,16 @@ export const api = {
     post<Record<string, ArrangeTaskState>>('/live/arrange-tasks', { task_ids: taskIds }),
   sinkBreakdown: (partition: number, offsets: number[]) =>
     post<Record<string, number>>('/live/sink-breakdown', { partition, offsets }),
+
+  // Runtime health. 404 is a defined contract answer (monitor disabled, or
+  // a backend that does not implement it) — mapped to null, not an error.
+  runtimeHealth: async (): Promise<RuntimeHealthSnapshot | null> => {
+    const res = await fetch(`${API_BASE}/runtime/health`, { headers: authHeaders() })
+    if (res.status === 404) return null
+    if (!res.ok) return fail('GET', '/runtime/health', res)
+    return (await res.json()) as RuntimeHealthSnapshot
+  },
+  debugRuntimeUnits: () => get<RuntimeUnitCensus>('/debug/runtime/units'),
 
   // Debug: metrics / periodic / trace
   debugMetrics: () => get<MetricFamily[]>('/debug/metrics'),

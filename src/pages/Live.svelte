@@ -24,6 +24,7 @@
   import Timeline from '../components/live/Timeline.svelte'
   import ArrangeTab from '../components/live/ArrangeTab.svelte'
   import ResultsTab from '../components/live/ResultsTab.svelte'
+  import RuntimeTab from '../components/live/RuntimeTab.svelte'
   import Expandable from '../components/Expandable.svelte'
 
   let { params: _params = {} }: { params?: Record<string, string> } = $props()
@@ -53,6 +54,9 @@
   // partial window as if it were the whole thing.
   let truncated = $state(false)
   let pool = $state({ active: 0, max: 0, waiting: 0 })
+  // Bumped on runtime_health / runtime_stall WS frames; the Runtime tab
+  // refetches its snapshot when this changes.
+  let runtimeSeq = $state(0)
   let allTasks = $state<Record<string, TaskView>>({})
   let arranges = $state<ArrangeView[]>([])
   let annotations = $state<AnnotationView[]>([])
@@ -81,13 +85,16 @@
   const finished = $derived(finishedAll.slice(0, FINISHED_RENDER_LIMIT))
 
   // --- tabs (hash-routed) ---
-  type Tab = 'arrange' | 'execute' | 'task-results' | 'message-results' | 'window-results'
+  type Tab = 'arrange' | 'execute' | 'task-results' | 'message-results' | 'window-results' | 'runtime'
   const availableTabs = $derived<Tab[]>([
     'arrange',
     'execute',
     ...(hookFlags.task_complete ? (['task-results'] as Tab[]) : []),
     ...(hookFlags.message_complete ? (['message-results'] as Tab[]) : []),
     ...(hookFlags.window_complete ? (['window-results'] as Tab[]) : []),
+    // Always offered: the tab itself explains when this worker has no
+    // monitor (runtime_health.enabled=false, or a Go backend).
+    'runtime',
   ])
   const TAB_LABELS: Record<Tab, string> = {
     arrange: 'Arrange',
@@ -95,6 +102,7 @@
     'task-results': 'Task Results',
     'message-results': 'Message Results',
     'window-results': 'Window Results',
+    runtime: 'Runtime',
   }
   const activeTab = $derived.by<Tab>(() => {
     const name = $hash.replace(/^#/, '') as Tab
@@ -113,6 +121,8 @@
       "on_message_complete() runs after every task derived from one source message reaches a terminal state. Rows aggregate the message's fan-out outcomes.",
     'window-results':
       'on_window_complete() runs after every task in one arrange() window finishes. Rows summarize the whole window.',
+    runtime:
+      "Runtime health: how promptly the worker's runtime schedules work, what blocked it (stall stacks), and a census of what it is carrying.",
   }
 
   // Pool utilization bar: green under 50%, amber to 80%, red above — the
@@ -230,6 +240,14 @@
         // often as to a task, so there is no single record they belong on.
         const ann = annotationFromEvent(e)
         if (ann) annotations = [ann, ...annotations].slice(0, maxHistory)
+        break
+      }
+      case 'runtime_health':
+      case 'runtime_stall': {
+        // The Runtime tab owns its own fetches; this bump just tells an
+        // open tab that fresher data exists (~1 frame per 10s sample, or
+        // per transition/stall — never high-rate).
+        runtimeSeq += 1
         break
       }
       // task_complete / message_complete / window_complete drive the poll-backed
@@ -535,6 +553,8 @@
   <ResultsTab kind="message" rows={messageResults} />
 {:else if activeTab === 'window-results'}
   <ResultsTab kind="window" rows={windowResults} />
+{:else if activeTab === 'runtime'}
+  <RuntimeTab refreshSeq={runtimeSeq} />
 {/if}
 
 <style>

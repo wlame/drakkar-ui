@@ -40,17 +40,21 @@ export function tableAccessors(columns: ProbeDetailsColumn[]): Record<string, So
 }
 
 /**
- * Sub-tables of a "tables" field: [group, rows] pairs in the dict's own key
- * order (first-append order end-to-end — both backends and JSON.parse keep
- * object key insertion order). Tolerates absent/malformed values: anything
- * that is not an object of arrays degrades to no groups / empty rows.
+ * Sub-tables of a "tables" field. The wire format is an ordered array of
+ * [group, rows] pairs — never a JSON object, whose integer-like keys ("12")
+ * JS would re-enumerate numerically ahead of the others, breaking the
+ * first-append order both backends emit. Tolerates absent/malformed values:
+ * anything that is not an array of [string, rows[]] pairs degrades to no
+ * groups / empty rows.
  */
 export function groupedRows(value: unknown): [string, Row[]][] {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return []
-  return Object.entries(value as Record<string, unknown>).map(([group, rows]) => [
-    group,
-    Array.isArray(rows) ? (rows as Row[]) : [],
-  ])
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((pair): pair is [unknown, unknown] => Array.isArray(pair) && pair.length === 2)
+    .map(([group, rows]): [string, Row[]] => [
+      String(group),
+      Array.isArray(rows) ? (rows as Row[]) : [],
+    ])
 }
 
 /** One node of a 'tree' field's client-side grouping. */

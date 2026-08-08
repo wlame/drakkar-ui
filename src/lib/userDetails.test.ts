@@ -72,24 +72,34 @@ describe('table helpers', () => {
 })
 
 describe('groupedRows', () => {
-  test('yields [group, rows] pairs in key insertion order', () => {
-    const value = {
-      'first_input_file.csv': [{ item_id: 'a' }],
-      'second_input_file.csv': [{ item_id: 'b' }, { item_id: 'c' }],
-    }
+  test('yields [group, rows] pairs in wire order', () => {
+    const value = [
+      ['first_input_file.csv', [{ item_id: 'a' }]],
+      ['second_input_file.csv', [{ item_id: 'b' }, { item_id: 'c' }]],
+    ]
     expect(groupedRows(value)).toEqual([
       ['first_input_file.csv', [{ item_id: 'a' }]],
       ['second_input_file.csv', [{ item_id: 'b' }, { item_id: 'c' }]],
     ])
   })
+  test('keeps wire order for integer-like group names', () => {
+    // The reason the wire format is a pair array: a JSON object would make
+    // JS enumerate "12" before "3" regardless of backend append order.
+    const value = [
+      ['12', [{ item_id: 'a' }]],
+      ['3', [{ item_id: 'b' }]],
+    ]
+    expect(groupedRows(value).map(([group]) => group)).toEqual(['12', '3'])
+  })
   test('degrades absent or malformed values to no groups', () => {
     expect(groupedRows(undefined)).toEqual([])
     expect(groupedRows(null)).toEqual([])
     expect(groupedRows('text')).toEqual([])
+    expect(groupedRows({ legacy_object: [{ item_id: 'a' }] })).toEqual([])
     expect(groupedRows([{ item_id: 'a' }])).toEqual([])
   })
-  test('degrades a non-array group value to empty rows', () => {
-    expect(groupedRows({ broken_group: 'oops' })).toEqual([['broken_group', []]])
+  test('degrades a pair with non-array rows to empty rows', () => {
+    expect(groupedRows([['broken_group', 'oops']])).toEqual([['broken_group', []]])
   })
 })
 

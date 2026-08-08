@@ -26,13 +26,16 @@ const details: ProbeUserDetails = {
     ],
   },
   data: {
-    per_file_rows: {
-      'first_input_file.csv': [
-        { item_id: 'a', score: 1 },
-        { item_id: 'b', score: 2 },
+    per_file_rows: [
+      [
+        'first_input_file.csv',
+        [
+          { item_id: 'a', score: 1 },
+          { item_id: 'b', score: 2 },
+        ],
       ],
-      'second_input_file.csv': [{ item_id: 'c', score: 3 }],
-    },
+      ['second_input_file.csv', [{ item_id: 'c', score: 3 }]],
+    ],
   },
   writes: [{ field: 'per_file_rows', op: 'append', origin_stage: 'arrange', ms_since_start: 1 }],
 }

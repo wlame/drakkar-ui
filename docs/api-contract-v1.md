@@ -195,6 +195,23 @@ the appendix.
   (≤10MB), key:str|null, partition:int(≥0), offset:int(≥0), topic:str,
   timestamp:int|null, use_cache:bool}`.
 
+### Runtime health
+- `GET /api/v1/runtime/health` → `{enabled:true, state:"healthy"|"degraded"|
+  "stalled", unit_label:str ("tasks" py / "goroutines" go), current_lag_ms,
+  heartbeat_age_ms, window:[{t, max_lag_ms, avg_lag_ms}] (one bucket per
+  active second), recent_stalls:[{t, duration_ms, stack_count,
+  top_location:str|null}]}`. 404 `{enabled:false, reason:str}` when the
+  monitor is disabled or the backend does not implement it (Go, currently).
+  Served from monitor memory — answers even while the runtime is stalled.
+- `GET /api/v1/debug/runtime/units` → `{unit_label, total, units:[{name,
+  location ("" when unknown), count, example}]}` sorted largest-first. Runs
+  on the measured runtime; 503 when the dispatch times out (the runtime is
+  not serving work — itself a diagnosis). Stall stacks travel on
+  `runtime_stall` recorder events (metadata JSON: `{duration_ms,
+  stacks:[{stack, location, count}], dropped_stacks, unit_count}`);
+  `runtime_health` events carry `{kind:"transition"|"sample", state, lag_ms,
+  unit_count}`.
+
 ### Cache browser (all 404 `{"detail":"Cache is disabled"}` when cache is off)
 - `GET /api/v1/debug/cache/entries?limit=200&offset=0&scope=&search=&expired_only=`
   → `{entries:[{key, scope, value(raw str), size_bytes, created_at_ms,
