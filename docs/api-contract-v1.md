@@ -408,6 +408,58 @@ never emit it.
 - **`arranged` event metadata gains `window_id`.** Additive key inside the
   existing `metadata` JSON; consumers that ignore it are unaffected.
 
+## v1.4 additions (2026-08-09)
+
+Declarative UI enrichment for probe-details fields and table columns. All
+additive: every new field is optional and null/absent-safe. A backend that
+predates this section omits every field below entirely (not `null` — the
+key itself is missing), and the UI renders exactly as it did before this
+addition: plain text values, full row-model column sets, no row-click panel.
+A backend that implements it always emits the field, explicit `null` when
+unset (never omitted), matching the existing wire convention for optional
+`ProbeDetailsEntry`/`ProbeDetailsColumn` fields like `columns`/`group_by`.
+
+- `GET /api/v1/identity` gains `link_bases:{<name>:str,...}` — named URL
+  bases from `ui.link_bases`, keyed by base name; `{}` (never absent) when
+  unset. Probe-details link templates resolve `{<base>}` tokens against
+  this map.
+- `ProbeDetailsEntry` (and `ProbeDetailsColumn`, one column of a
+  table/tables/tree entry) gain four presentation fields:
+  - `link_template:str|null` — a template with `{value}` / `{row.<field>}`
+    (columns and detail elements only) / `{<base>}` tokens, expanded into a
+    clickable link. `{value}`/`{row.*}` substitutions are percent-encoded;
+    the base is inserted raw. A token that fails to resolve (missing base,
+    missing/null row field, null value) makes the WHOLE template fail —
+    the UI then renders plain text, never a link with a hole in it.
+  - `badge_colors:{<value>:str,...}|null` — present only on `view="badge"`
+    entries/columns (a new `view` enum value). Maps expected values to one
+    of `green|red|yellow|blue|gray|purple`; the key `"*"` is the fallback
+    for unmapped values. A value with no match and no `"*"` renders as
+    plain, uncolored text. Mutually exclusive with `link_template` in
+    practice — a column declaring both renders as a badge, the link is not
+    rendered — but the wire does not forbid sending both.
+  - `format:str|null` — one of `duration_ms` (int ms → `"1 m 5 s"` style),
+    `bytes` (int bytes → binary-unit string, e.g. `"10.0 MiB"`), `timestamp`
+    (ISO-8601 string → canonical `"YYYY-MM-DD HH:MM:SS.sss"`), `number` (int
+    or float → thousands-grouped string). Hovering a formatted value shows
+    the raw underlying value.
+  - `hint:str|null` — a tooltip, same template grammar as `link_template`
+    but rendered unencoded (it's read, not navigated).
+- `ProbeDetailsEntry` gains `detail:ProbeDetailsDetail|null` — a row-click
+  side-panel layout for `table`/`tables`/`tree` entries, opened via a `›`
+  affordance on each row:
+  - `ProbeDetailsDetail`: `{title:str|null, elements:[ProbeDetailsElement]}`.
+    `title` uses the same template grammar, `{row.<field>}` resolved from
+    the clicked row.
+  - `ProbeDetailsElement`: `{view:"string"|"keyvalue"|"table"|"links",
+    field:str|null, label:str|null, links:[ProbeDetailsLink]|null}`. Every
+    view but `"links"` carries `field` (a row-model field name) and leaves
+    `links` null; `"links"` carries `links` and leaves `field` null.
+  - `ProbeDetailsLink`: `{label:str, template:str}` — both always non-null.
+  - Mutually exclusive with `link_template` on the same entry (a
+    `view="string"` entry can have a link; a row-bearing entry can have a
+    `detail`; nothing has both).
+
 ## Appendix: divergence resolutions from the 2026-06 audit
 
 Canonical choices where the two reference backends disagreed; each backend
