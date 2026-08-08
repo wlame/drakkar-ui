@@ -1,10 +1,10 @@
 <script lang="ts">
   // Shell for a backend-declared page (GET /api/v1/pages, routed at
   // /p/:slug). Resolves the page by slug against the store loaded at boot
-  // (App.svelte) and renders its title plus one card per widget. Widget
-  // bodies are a placeholder here — turning a widget's `source`/`view` into
-  // actual data and markup is Task 5's job, not this shell's.
+  // (App.svelte) and renders its title plus one card per widget, each body
+  // rendered by WidgetBody (live WS-driven refresh is Task 6's job).
   import { pageBySlug, uiPages } from '../lib/pages'
+  import WidgetBody from '../components/pages/WidgetBody.svelte'
   import NotFound from './NotFound.svelte'
 
   let { params = {} }: { params?: Record<string, string> } = $props()
@@ -23,7 +23,7 @@
     {#each page.widgets as widget, i (i)}
       <section class="widget">
         <h2>{widget.title}</h2>
-        <div class="widget-body"></div>
+        <div class="widget-body"><WidgetBody {widget} /></div>
       </section>
     {/each}
   </div>
