@@ -2,9 +2,15 @@
 // (declarative UI enrichment, phase 1). Templates support three token kinds:
 // {value} = the cell value, {row.<field>} = a sibling field on the same row,
 // {<base>} = a named base URL delivered on the identity payload
-// (GET /api/v1/identity -> link_bases). value/row substitutions are
-// percent-encoded; the base itself is inserted raw since it is a trusted URL
-// prefix, not user/row data.
+// (GET /api/v1/identity -> link_bases).
+//
+// Two resolvers share the same token grammar and null semantics (missing
+// base / missing-or-null row field / null value -> the whole resolution
+// fails) but differ in how a substitution is rendered: resolveTemplate is
+// for hrefs, so {value}/{row.*} are percent-encoded and the base is
+// inserted raw (it's a trusted URL prefix, not user/row data); resolveText
+// is for plain display text (panel titles, hint tooltips) and never
+// encodes — "o 1" must read as "o 1", not "o%201".
 
 import { fmtTimeFull } from './format'
 
@@ -24,14 +30,24 @@ export function getLinkBases(): LinkBases {
   return currentBases
 }
 
-// resolveTemplate expands a link/hint template against a value, an optional
-// sibling row, and the link bases. Returns null — never a partial URL — when
-// a referenced base is unconfigured or a referenced row/value field is
-// missing or null, so callers can fall back to plain text instead of
-// rendering a broken link.
-export function resolveTemplate(
+export interface TemplateContext {
+  value?: unknown
+  row?: Record<string, unknown>
+  bases: LinkBases
+}
+
+// walkTemplate is the shared token parser behind resolveTemplate and
+// resolveText: it substitutes every {value}/{row.<field>}/{<base>} token,
+// running each {value}/{row.*} substitution through `encodeSubstitution`
+// (identity for plain text, percent-encoding for hrefs). The base itself is
+// never passed through the encoder — it's a trusted URL prefix either way.
+// Returns null — never a partial result — when any token fails to resolve,
+// so callers can fall back to plain text instead of a broken link or a
+// title with a hole in it.
+function walkTemplate(
   tpl: string,
-  ctx: { value?: unknown; row?: Record<string, unknown>; bases: LinkBases },
+  ctx: TemplateContext,
+  encodeSubstitution: (raw: string) => string,
 ): string | null {
   let failed = false
   const out = tpl.replace(TOKEN_RE, (_match, token: string) => {
@@ -40,7 +56,7 @@ export function resolveTemplate(
         failed = true
         return ''
       }
-      return encodeURIComponent(String(ctx.value))
+      return encodeSubstitution(String(ctx.value))
     }
     if (token.startsWith('row.')) {
       const field = ctx.row?.[token.slice('row.'.length)]
@@ -48,7 +64,7 @@ export function resolveTemplate(
         failed = true
         return ''
       }
-      return encodeURIComponent(String(field))
+      return encodeSubstitution(String(field))
     }
     const base = ctx.bases[token]
     if (!base) {
@@ -58,6 +74,16 @@ export function resolveTemplate(
     return base
   })
   return failed ? null : out
+}
+
+/** Expands a link template into an href: {value}/{row.*} substitutions are percent-encoded. */
+export function resolveTemplate(tpl: string, ctx: TemplateContext): string | null {
+  return walkTemplate(tpl, ctx, encodeURIComponent)
+}
+
+/** Expands a template into plain display text (panel titles, hint tooltips): substitutions render literally, unencoded. */
+export function resolveText(tpl: string, ctx: TemplateContext): string | null {
+  return walkTemplate(tpl, ctx, (raw) => raw)
 }
 
 // badgeColor maps a badge value through its color map, falling back to the

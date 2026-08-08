@@ -204,11 +204,12 @@ describe('renderCell', () => {
   test('resolves a hint template into the title, taking priority over the format fallback', () => {
     const cell = renderCell(
       1536,
-      { origin: 'upload' },
+      { origin: 'upload station' },
       { format: 'bytes', hint: 'from {row.origin}' },
       bases,
     )
-    expect(cell.title).toBe('from upload')
+    // The hint is plain text, not a URL — the space must survive unencoded.
+    expect(cell.title).toBe('from upload station')
   })
 
   test('omits the title when the hint template does not resolve', () => {

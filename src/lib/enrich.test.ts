@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { badgeColor, formatValue, resolveTemplate } from './enrich'
+import { badgeColor, formatValue, resolveTemplate, resolveText } from './enrich'
 
 const bases = {
   jira: 'https://jira.internal.example.com',
@@ -35,6 +35,37 @@ describe('resolveTemplate', () => {
     expect(resolveTemplate('{jira}/browse/{value}', { value: 'DK-1', bases })).toBe(
       'https://jira.internal.example.com/browse/DK-1',
     )
+  })
+})
+
+describe('resolveText', () => {
+  it('substitutes value and row fields literally, without percent-encoding', () => {
+    expect(
+      resolveText('Order {row.order_id} ({value})', {
+        value: 'o 1',
+        row: { order_id: 'o 1' },
+        bases,
+      }),
+    ).toBe('Order o 1 (o 1)')
+  })
+
+  it('does not encode the base either', () => {
+    expect(resolveText('{jenkins}/job/{value}', { value: 'nightly main', bases })).toBe(
+      'https://jenkins.internal.example.com/job/nightly main',
+    )
+  })
+
+  it('returns null when a base is missing', () => {
+    expect(resolveText('{wiki}/x/{value}', { value: 'a', bases })).toBeNull()
+  })
+
+  it('returns null when a row field is missing or null', () => {
+    expect(resolveText('{jira}/{row.gone}', { row: {}, bases })).toBeNull()
+    expect(resolveText('{jira}/{row.gone}', { row: { gone: null }, bases })).toBeNull()
+  })
+
+  it('returns null when value is missing', () => {
+    expect(resolveText('{jira}/{value}', { bases })).toBeNull()
   })
 })
 

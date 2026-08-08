@@ -1,13 +1,14 @@
 <script lang="ts">
   // Generic renderer for the probe's User-defined tab. Driven ENTIRELY by
   // the layout descriptor — this component never knows the user's model.
-  import type { ProbeDetailsColumn, ProbeDetailsEntry, ProbeUserDetails } from '../../lib/types'
+  import type { ProbeDetail, ProbeDetailsColumn, ProbeDetailsEntry, ProbeUserDetails } from '../../lib/types'
   import { NO_SORT, sortRows, type SortState } from '../../lib/sort'
   import {
     buildTree,
     columnNumeric,
     groupedRows,
     renderCell,
+    resolveDetailTitle,
     stageBadges,
     tableAccessors,
     touchedFields,
@@ -17,6 +18,8 @@
   import { getLinkBases } from '../../lib/enrich'
   import SortableTh from '../SortableTh.svelte'
   import CodeBlock from '../CodeBlock.svelte'
+  import SidePanel from '../SidePanel.svelte'
+  import DetailPanel from './DetailPanel.svelte'
 
   let { details }: { details: ProbeUserDetails } = $props()
 
@@ -25,8 +28,16 @@
   // 'table' fields, and by `${entry.key}:${group}` for each sub-table of a
   // 'tables' field.
   let tableSorts = $state<Record<string, SortState>>({})
+  // The row-detail side panel. `detail`/`row` are captured straight out of the
+  // click closure (never re-derived from the event target), so a re-render
+  // that replaces the clicked <tr> afterwards cannot orphan the data it needs.
+  let openPanel = $state<{ title: string; detail: ProbeDetail; row: Record<string, unknown> } | null>(null)
 
   const touched = $derived(touchedFields(details.writes))
+
+  function openRowDetail(detail: ProbeDetail, entryLabel: string, row: Record<string, unknown>) {
+    openPanel = { title: resolveDetailTitle(detail, row, entryLabel, getLinkBases()), detail, row }
+  }
 
   function toggleSection(title: string) {
     const next = new Set(collapsedSections)
@@ -51,7 +62,7 @@
   }
 </script>
 
-{#snippet detailsTable(rows: Record<string, unknown>[], columns: ProbeDetailsColumn[], sortKey: string)}
+{#snippet detailsTable(rows: Record<string, unknown>[], columns: ProbeDetailsColumn[], sortKey: string, detail: ProbeDetail | null | undefined, entryLabel: string)}
   {@const accessors = tableAccessors(columns)}
   <table>
     <thead>
@@ -67,36 +78,41 @@
             numeric={columnNumeric(rows, col.key)}
           />
         {/each}
+        {#if detail}<th aria-hidden="true"></th>{/if}
       </tr>
     </thead>
     <tbody>
       {#each sortRows(rows, tableSorts[sortKey] ?? NO_SORT, accessors) as row, i (i)}
-        <tr>
+        <tr
+          class:clickable={!!detail}
+          onclick={detail ? () => openRowDetail(detail, entryLabel, row) : undefined}
+        >
           {#each columns as col (col.key)}
             {@const cell = renderCell(row[col.key], row, col, getLinkBases())}
             {#if col.badge_colors}
               <td><span class="badge{cell.badge ? ` badge-${cell.badge}` : ''}" title={cell.title}>{cell.text}</span></td>
             {:else if cell.href}
-              <td class="mono"><a href={cell.href} target="_blank" rel="noopener noreferrer" title={cell.title}>{cell.text}</a></td>
+              <td class="mono"><a href={cell.href} target="_blank" rel="noopener noreferrer" title={cell.title} onclick={(e) => e.stopPropagation()}>{cell.text}</a></td>
             {:else}
               <td class="mono" title={cell.title}>{cell.text}</td>
             {/if}
           {/each}
+          {#if detail}<td class="chevron" aria-hidden="true">›</td>{/if}
         </tr>
       {/each}
     </tbody>
   </table>
 {/snippet}
 
-{#snippet treeNodes(nodes: DetailsTreeNode[], leafColumns: ProbeDetailsColumn[], depth: number, path: string)}
+{#snippet treeNodes(nodes: DetailsTreeNode[], leafColumns: ProbeDetailsColumn[], depth: number, path: string, detail: ProbeDetail | null | undefined, entryLabel: string)}
   {#each nodes as node (node.key)}
     <details class="treenode" open={depth === 0}>
       <summary><span class="mono">{node.key}</span> <span class="muted">— {node.count} rows</span></summary>
       <div class="treebody">
         {#if node.children}
-          {@render treeNodes(node.children, leafColumns, depth + 1, `${path}/${node.key}`)}
+          {@render treeNodes(node.children, leafColumns, depth + 1, `${path}/${node.key}`, detail, entryLabel)}
         {:else if leafColumns.length}
-          {@render detailsTable(node.rows, leafColumns, `${path}/${node.key}`)}
+          {@render detailsTable(node.rows, leafColumns, `${path}/${node.key}`, detail, entryLabel)}
         {/if}
       </div>
     </details>
@@ -152,7 +168,7 @@
             {@const rows = rowsFor(entry)}
             <p class="muted">{rows.length} rows</p>
             {#if rows.length}
-              {@render detailsTable(rows, entry.columns ?? [], entry.key)}
+              {@render detailsTable(rows, entry.columns ?? [], entry.key, entry.detail, entry.label)}
             {/if}
           {:else if entry.view === 'tables'}
             {@const groups = groupedRows(details.data[entry.key])}
@@ -160,7 +176,7 @@
             {#each groups as [group, rows] (group)}
               <h5 class="group"><span class="mono">{group}</span> <span class="muted">— {rows.length} rows</span></h5>
               {#if rows.length}
-                {@render detailsTable(rows, entry.columns ?? [], `${entry.key}:${group}`)}
+                {@render detailsTable(rows, entry.columns ?? [], `${entry.key}:${group}`, entry.detail, entry.label)}
               {/if}
             {/each}
           {:else if entry.view === 'tree'}
@@ -168,12 +184,12 @@
             {@const groupBy = entry.group_by ?? []}
             <p class="muted">{rows.length} rows</p>
             {#if groupBy.length}
-              {@render treeNodes(buildTree(rows, groupBy), valueColumns(entry.columns ?? [], groupBy), 0, entry.key)}
+              {@render treeNodes(buildTree(rows, groupBy), valueColumns(entry.columns ?? [], groupBy), 0, entry.key, entry.detail, entry.label)}
             {:else if rows.length}
               <!-- Defensive: a tree entry without group_by (contract drift)
                    degrades to the plain flat table instead of rendering
                    nothing. -->
-              {@render detailsTable(rows, entry.columns ?? [], entry.key)}
+              {@render detailsTable(rows, entry.columns ?? [], entry.key, entry.detail, entry.label)}
             {/if}
           {/if}
         </div>
@@ -181,6 +197,17 @@
     {/if}
   </section>
 {/each}
+
+{#if openPanel}
+  <SidePanel
+    title={openPanel.title}
+    storageKey="drakkar-panel-user-details"
+    defaultWidth={30}
+    onclose={() => (openPanel = null)}
+  >
+    <DetailPanel detail={openPanel.detail} row={openPanel.row} bases={getLinkBases()} />
+  </SidePanel>
+{/if}
 
 <style>
   .card {
@@ -250,6 +277,16 @@
   }
   .entry.dim {
     opacity: 0.45;
+  }
+  /* Row-detail affordance: only rows whose entry declares `detail` get the
+     pointer cursor and trailing chevron cell. */
+  .clickable {
+    cursor: pointer;
+  }
+  .chevron {
+    color: var(--muted);
+    text-align: center;
+    width: 1.5rem;
   }
   /* Sub-table heading of a 'tables' entry — the group name is user data
      (file names, ids), so it keeps normal casing, unlike the uppercase h4. */

@@ -194,6 +194,131 @@ describe('UserDetailsTab enrichment rendering', () => {
   })
 })
 
+describe('UserDetailsTab detail panel', () => {
+  afterEach(() => setLinkBases({}))
+
+  function orderDetails(): ProbeUserDetails {
+    return {
+      model: 'OrderDetails',
+      layout: {
+        sections: [
+          {
+            title: 'Orders',
+            entries: [
+              {
+                key: 'orders',
+                label: 'Orders',
+                view: 'table',
+                columns: [
+                  { key: 'order_id', label: 'Order id' },
+                  // Build link is present so a click on it can be checked
+                  // against the row's own click handler (propagation must
+                  // stop, or the link click would also open the panel).
+                  { key: 'build_id', label: 'Build id', link_template: '{jenkins}/job/{value}' },
+                ],
+                detail: {
+                  title: 'Order {row.order_id}',
+                  elements: [
+                    { view: 'keyvalue', field: 'customer' },
+                    {
+                      view: 'links',
+                      links: [{ label: 'Jira ticket', template: '{jira}/browse/{row.ticket}' }],
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      },
+      data: {
+        orders: [
+          {
+            order_id: 'o 1',
+            build_id: 'b-1',
+            ticket: 'DK-7',
+            customer: { name: 'ACME GmbH', tier: 'gold' },
+          },
+        ],
+      },
+      writes: [{ field: 'orders', op: 'set', origin_stage: 'arrange', ms_since_start: 1 }],
+    }
+  }
+
+  it('opens the detail panel on row click and renders declared elements', () => {
+    setLinkBases({ jira: 'https://jira.internal.example.com' })
+    const { target, cleanup } = renderTab(orderDetails())
+
+    expect(target.querySelector('.panel')).toBeNull()
+
+    const row = [...target.querySelectorAll('tbody tr')].find((tr) =>
+      tr.textContent?.includes('o 1'),
+    )
+    expect(row?.className).toContain('clickable')
+    row!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    flushSync()
+
+    expect(target.querySelector('.panel .title')?.textContent).toBe('Order o 1')
+    expect(target.textContent).toContain('ACME GmbH')
+    const link = [...target.querySelectorAll('.panel a')].find(
+      (a) => a.textContent === 'Jira ticket',
+    )
+    expect(link?.getAttribute('href')).toBe('https://jira.internal.example.com/browse/DK-7')
+
+    cleanup()
+  })
+
+  it('does not open the panel when the click lands on a cell link', () => {
+    setLinkBases({ jenkins: 'https://jenkins.internal.example.com' })
+    const { target, cleanup } = renderTab(orderDetails())
+
+    const link = [...target.querySelectorAll('tbody a')].find((a) => a.textContent === 'b-1')
+    link!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    flushSync()
+
+    expect(target.querySelector('.panel')).toBeNull()
+
+    cleanup()
+  })
+
+  it('closes the panel on the close button', () => {
+    const { target, cleanup } = renderTab(orderDetails())
+
+    const row = [...target.querySelectorAll('tbody tr')].find((tr) =>
+      tr.textContent?.includes('o 1'),
+    )
+    row!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    flushSync()
+    expect(target.querySelector('.panel')).not.toBeNull()
+
+    const closeButton = target.querySelector('.panel button.x') as HTMLButtonElement
+    closeButton.click()
+    flushSync()
+    expect(target.querySelector('.panel')).toBeNull()
+
+    cleanup()
+  })
+
+  it('falls back to the entry label when no title template is declared', () => {
+    const noTitleDetails = orderDetails()
+    const entry = noTitleDetails.layout.sections[0].entries[0]
+    // detail.title omitted entirely — resolveDetailTitle must fall back to
+    // the entry's own label rather than showing a blank header.
+    entry.detail = { elements: entry.detail!.elements }
+    const { target, cleanup } = renderTab(noTitleDetails)
+
+    const row = [...target.querySelectorAll('tbody tr')].find((tr) =>
+      tr.textContent?.includes('o 1'),
+    )
+    row!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    flushSync()
+
+    expect(target.querySelector('.panel .title')?.textContent).toBe('Orders')
+
+    cleanup()
+  })
+})
+
 describe('UserDetailsTab tables view', () => {
   it('renders one sub-table per group, in first-append order', () => {
     const target = document.createElement('div')

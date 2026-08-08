@@ -1,8 +1,13 @@
 // Helpers behind the probe's User-defined tab. Kept out of the Svelte
 // component so vitest covers them without component-test infrastructure.
-import type { ProbeDetailsColumn, ProbeDetailsWrite } from './types'
+import type {
+  ProbeDetail,
+  ProbeDetailElement,
+  ProbeDetailsColumn,
+  ProbeDetailsWrite,
+} from './types'
 import type { SortAccessor, SortValue } from './sort'
-import { badgeColor, formatValue, resolveTemplate, type LinkBases } from './enrich'
+import { badgeColor, formatValue, resolveTemplate, resolveText, type LinkBases } from './enrich'
 
 /** Collapse per-task stage tags ("task_complete:t-abc") to their family. */
 export function normalizeStage(stage: string): string {
@@ -148,10 +153,61 @@ export function renderCell(
   const badge = opts.badge_colors ? badgeColor(opts.badge_colors, String(value ?? '')) : null
   // A hint always wins the tooltip; otherwise fall back to the raw value so a
   // formatted display (e.g. "1.5 KiB") doesn't hide the number behind it.
+  // The hint is plain text, not a URL, so it resolves unencoded.
   const title = opts.hint
-    ? resolveTemplate(opts.hint, { value, row, bases })
+    ? resolveText(opts.hint, { value, row, bases })
     : opts.format
       ? String(value ?? '')
       : null
   return { text, href, badge, title }
+}
+
+/**
+ * snake_case field name -> sentence-case label ("order_id" -> "Order id").
+ * Mirrors the backend's own auto-label derivation (drakkar.probe._prettify:
+ * `name.replace('_', ' ').capitalize()`) so a detail panel's client-derived
+ * headings and nested-table columns look identical to server-declared ones.
+ */
+export function prettifyLabel(name: string): string {
+  const spaced = name.replace(/_/g, ' ')
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase()
+}
+
+/** A detail element's block heading: explicit label wins, else the field name prettified, else a view-specific default (only 'links' has no field). */
+export function elementHeading(el: ProbeDetailElement): string {
+  if (el.label) return el.label
+  if (el.field) return prettifyLabel(el.field)
+  return el.view === 'links' ? 'Links' : ''
+}
+
+/** Key/value pairs of a 'keyvalue' detail element's field. Non-object values (missing field, wrong type) degrade to no rows rather than throwing. */
+export function keyValueEntries(value: unknown): [string, unknown][] {
+  return value && typeof value === 'object' ? Object.entries(value as Record<string, unknown>) : []
+}
+
+/** Columns for a 'table' detail element's nested table: the keys of the first row, prettified. Empty when there are no rows. */
+export function nestedTableColumns(rows: Row[]): { key: string; label: string }[] {
+  const first = rows[0]
+  return first ? Object.keys(first).map((key) => ({ key, label: prettifyLabel(key) })) : []
+}
+
+/**
+ * A detail panel's title: the declared template resolved against the clicked
+ * row, falling back to the entry's own label when no template is declared or
+ * the template references a missing row field / unconfigured base —
+ * resolveText returns null rather than a partial string in that case. The
+ * title is plain text, not a URL, so it resolves unencoded (resolveText, not
+ * resolveTemplate).
+ */
+export function resolveDetailTitle(
+  detail: ProbeDetail,
+  row: Row,
+  entryLabel: string,
+  bases: LinkBases,
+): string {
+  if (detail.title) {
+    const resolved = resolveText(detail.title, { row, bases })
+    if (resolved !== null) return resolved
+  }
+  return entryLabel
 }
