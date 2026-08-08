@@ -7,6 +7,7 @@ import Dashboard from '../pages/Dashboard.svelte'
 import TaskDetail from '../pages/TaskDetail.svelte'
 import History from '../pages/History.svelte'
 import Live from '../pages/Live.svelte'
+import UserPage from '../pages/UserPage.svelte'
 import NotFound from '../pages/NotFound.svelte'
 
 describe('resolve', () => {
@@ -25,6 +26,12 @@ describe('resolve', () => {
     const m = resolve('/task/abc')
     expect(m.component).toBe(TaskDetail)
     expect(m.params).toEqual({ id: 'abc' })
+  })
+
+  it('resolves a declared page by slug', () => {
+    const m = resolve('/p/orders')
+    expect(m.component).toBe(UserPage)
+    expect(m.params).toEqual({ slug: 'orders' })
   })
 
   it('no longer resolves the removed routes', () => {

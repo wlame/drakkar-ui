@@ -3,8 +3,9 @@
   import { api } from './lib/api'
   import { hydrateFromOverview, identity, setIdentity } from './lib/config'
   import { currentPath, link, navigate } from './lib/router'
-  import { navItems, resolve } from './lib/routes'
+  import { navItems, resolve, type NavItem } from './lib/routes'
   import { resolveRedirect } from './lib/redirects'
+  import { loadUiPages, uiPages } from './lib/pages'
   import WorkerSwitcher from './components/WorkerSwitcher.svelte'
   import SinkLinks from './components/SinkLinks.svelte'
   import VersionBadge from './components/VersionBadge.svelte'
@@ -15,6 +16,15 @@
   const redirectTo = $derived(resolveRedirect($currentPath))
   const match = $derived(resolve($currentPath))
   const Current = $derived(match.component)
+
+  // navItems stays the static built-in list (Dashboard/Live/Debug/History);
+  // this appends one nav entry per backend-declared page on top of it. The
+  // nav re-derives whenever the uiPages store changes, which happens once
+  // when loadUiPages() resolves at boot.
+  const allNavItems = $derived<NavItem[]>([
+    ...navItems,
+    ...$uiPages.map((p) => ({ label: p.title, path: `/p/${p.slug}` })),
+  ])
 
   // The brand shows the cluster name with a capital FIRST letter only. Cluster
   // names are commonly hyphenated ("kafka-prod-01"), and CSS
@@ -68,6 +78,11 @@
       .then(setIdentity)
       .catch(() => {})
 
+    // Declared pages (nav entries + widgets) are optional: a backend without
+    // any configured degrades to an empty list, and the nav simply shows the
+    // built-ins (loadUiPages itself never throws — see lib/pages.ts).
+    loadUiPages()
+
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   })
@@ -94,7 +109,7 @@
         {brand}
       </a>
       <nav>
-        {#each navItems as item}
+        {#each allNavItems as item}
           <a href={item.path} use:link class:active={isActive(item.path)}>
             {item.label}{#if item.live}<span class="live-dot" aria-hidden="true">•</span>{/if}
           </a>

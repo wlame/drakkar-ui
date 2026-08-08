@@ -30,6 +30,7 @@ import type {
   MessageResult,
   WindowResult,
   TraceEvent,
+  UIPage,
   WorkerPeer,
 } from './types'
 
@@ -134,6 +135,7 @@ export const api = {
   partitions: () => get<Partition[]>('/partitions'),
   sinks: () => get<SinkStatus[]>('/sinks'),
   workers: () => get<WorkerPeer[]>('/workers'),
+  uiPages: () => get<UIPage[]>('/pages'),
 
   // Events / tasks / history
   events: (q: EventsQuery = {}) => get<EventRow[]>(`/events${qs({ ...q })}`),

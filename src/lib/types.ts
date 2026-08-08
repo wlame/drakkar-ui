@@ -669,6 +669,34 @@ export interface ProbeUserDetails {
   writes: ProbeDetailsWrite[]
 }
 
+// --- Declared UI pages (GET /api/v1/pages) ---
+
+// One widget on a declared page. `view` is forward-compatible: a backend may
+// declare a view this UI doesn't yet know how to render, so it stays a bare
+// string rather than a closed union — the page shell renders it regardless of
+// whether the widget body understands `view`; unrecognized views are handled
+// at the render site (Task 5), not rejected here. `columns` reuses the same
+// column shape as probe-details tables (link templates, badge colors, format,
+// hint) so a table-view widget gets that enrichment for free.
+export interface UIPageWidget {
+  title: string
+  view: 'table' | 'keyvalue' | 'string' | 'badge' | 'stat' | string
+  source: { kind: string; [k: string]: unknown }
+  columns?: ProbeDetailsColumn[] | null
+  field?: string | null
+  badge_colors?: Record<string, string> | null
+  format?: string | null
+}
+
+// One backend-declared page (drakkar.ui_pages config): a nav entry plus an
+// ordered list of widgets. GET /api/v1/pages returns a bare array of these,
+// empty when the backend declares nothing.
+export interface UIPage {
+  slug: string
+  title: string
+  widgets: UIPageWidget[]
+}
+
 export interface DebugReport {
   input: ProbeRequest & { timestamp?: number | null }
   deserialize_error: ProbeError | null

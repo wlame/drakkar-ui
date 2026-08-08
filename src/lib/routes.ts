@@ -4,6 +4,7 @@ import TaskDetail from '../pages/TaskDetail.svelte'
 import History from '../pages/History.svelte'
 import Live from '../pages/Live.svelte'
 import Debug from '../pages/Debug.svelte'
+import UserPage from '../pages/UserPage.svelte'
 import NotFound from '../pages/NotFound.svelte'
 
 // The route table is data, not control flow: each row maps a path *pattern* to a
@@ -43,6 +44,7 @@ export const routes: Route[] = [
   { path: '/history', component: History },
   { path: '/live', component: Live },
   { path: '/debug', component: Debug },
+  { path: '/p/:slug', component: UserPage },
 ]
 
 export interface RouteMatch {
