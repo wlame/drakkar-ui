@@ -20,7 +20,16 @@ vi.mock('../lib/ws', () => ({
 import { createLiveSocket } from '../lib/ws'
 import type { WsEvent } from '../lib/types'
 
+// Mocked so the custom-cell rendering tests below exercise WidgetBody's own
+// dispatch to CustomCell (does a renderer-declaring column reach it with the
+// right props?), same pattern CustomCell.test.ts and UserDetailsTab.test.ts use.
+vi.mock('../lib/renderers', () => ({
+  getRenderer: vi.fn(),
+}))
+import { getRenderer } from '../lib/renderers'
+
 const mockedCreateLiveSocket = vi.mocked(createLiveSocket)
+const mockedGetRenderer = vi.mocked(getRenderer)
 
 const fetchMock = vi.fn()
 
@@ -192,6 +201,83 @@ describe('UserPage widget rendering', () => {
       "This widget needs a newer UI (unsupported source 'crystal-ball').",
     )
     expect(target.textContent).not.toContain("unsupported view 'table'")
+
+    unmount(app)
+    target.remove()
+  })
+})
+
+describe('UserPage widget custom cell rendering', () => {
+  afterEach(() => {
+    setLinkBases({})
+    vi.restoreAllMocks()
+  })
+
+  function customColumnPage(): UIPage {
+    return {
+      slug: 'orders',
+      title: 'Orders',
+      widgets: [
+        {
+          title: 'Recent tasks',
+          view: 'table',
+          source: { kind: 'tasks', limit: 50 },
+          columns: [{ key: 'task_id', label: 'Task', renderer: 'taskChip' }],
+        },
+      ],
+    }
+  }
+
+  const taskRows: TaskResult[] = [
+    {
+      ts: 1,
+      task_id: 't-42',
+      partition: 0,
+      source_offsets: null,
+      hook_duration: null,
+      exec_duration: 0.1,
+      status: 'completed',
+      exit_code: 0,
+      output_message_count: 1,
+    },
+  ]
+
+  async function mountOrdersPage() {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/live/task-results')) return okJson(taskRows)
+      return okJson([customColumnPage()])
+    })
+    await loadUiPages()
+
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+    const app = mount(UserPage, { target, props: { params: { slug: 'orders' } } })
+    await settled()
+    return { target, app }
+  }
+
+  it('mounts the registered renderer for a table column declaring renderer', async () => {
+    mockedGetRenderer.mockReturnValue(() => {
+      const el = document.createElement('em')
+      el.textContent = 'chip'
+      return el
+    })
+    const { target, app } = await mountOrdersPage()
+
+    expect(target.querySelector('td em')?.textContent).toBe('chip')
+
+    unmount(app)
+    target.remove()
+  })
+
+  it('falls back to the plain cell text when no renderer is registered', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mockedGetRenderer.mockReturnValue(null)
+    const { target, app } = await mountOrdersPage()
+
+    const cell = [...target.querySelectorAll('td')].find((td) => td.textContent === 't-42')
+    expect(cell).not.toBeUndefined()
 
     unmount(app)
     target.remove()

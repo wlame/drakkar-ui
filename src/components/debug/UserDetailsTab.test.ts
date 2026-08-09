@@ -1,10 +1,21 @@
 // Mounts the real User-defined tab with a 'tables' entry: one declared
 // field, a runtime-determined number of sub-tables (one per group key).
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushSync, mount, unmount } from 'svelte'
 import UserDetailsTab from './UserDetailsTab.svelte'
 import type { ProbeUserDetails } from '../../lib/types'
 import { setLinkBases } from '../../lib/enrich'
+
+// Mocked once here, same pattern as CustomCell.test.ts, so the custom-cell
+// render-site tests below exercise UserDetailsTab's/DetailPanel's own
+// dispatch (does it reach for CustomCell with the right props?) rather than
+// the registry's real loading behavior.
+vi.mock('../../lib/renderers', () => ({
+  getRenderer: vi.fn(),
+}))
+import { getRenderer } from '../../lib/renderers'
+
+const mockedGetRenderer = vi.mocked(getRenderer)
 
 const details: ProbeUserDetails = {
   model: 'FileImportDetails',
@@ -340,5 +351,209 @@ describe('UserDetailsTab tables view', () => {
 
     unmount(app)
     target.remove()
+  })
+})
+
+describe('UserDetailsTab custom cell rendering — table column', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  function customColumnDetails(): ProbeUserDetails {
+    return {
+      model: 'CustomColumnDetails',
+      layout: {
+        sections: [
+          {
+            title: 'Section',
+            entries: [
+              {
+                key: 'rows',
+                label: 'Rows',
+                view: 'table',
+                columns: [{ key: 'status', label: 'Status', renderer: 'statusPill' }],
+              },
+            ],
+          },
+        ],
+      },
+      data: { rows: [{ status: 'ok' }] },
+      writes: [{ field: 'rows', op: 'set', origin_stage: 'arrange', ms_since_start: 1 }],
+    }
+  }
+
+  it('mounts the registered renderer for a column declaring renderer', () => {
+    mockedGetRenderer.mockReturnValue(() => {
+      const el = document.createElement('em')
+      el.textContent = 'ok-pill'
+      return el
+    })
+    const { target, cleanup } = renderTab(customColumnDetails())
+
+    expect(target.querySelector('td em')?.textContent).toBe('ok-pill')
+    cleanup()
+  })
+
+  it('falls back to the plain cell text when no renderer is registered', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mockedGetRenderer.mockReturnValue(null)
+    const { target, cleanup } = renderTab(customColumnDetails())
+
+    const cell = [...target.querySelectorAll('td')].find((td) => td.textContent === 'ok')
+    expect(cell).not.toBeUndefined()
+    cleanup()
+  })
+
+  it('still applies the column hint as the cell title next to a custom renderer', () => {
+    // renderer is only mutually exclusive with link_template/badge_colors/format
+    // on the wire — hint is allowed alongside it, and belongs on the <td>
+    // wrapper since the renderer owns the cell's inner content.
+    mockedGetRenderer.mockReturnValue(() => {
+      const el = document.createElement('em')
+      el.textContent = 'ok-pill'
+      return el
+    })
+    const hintedDetails: ProbeUserDetails = {
+      model: 'CustomColumnDetails',
+      layout: {
+        sections: [
+          {
+            title: 'Section',
+            entries: [
+              {
+                key: 'rows',
+                label: 'Rows',
+                view: 'table',
+                columns: [
+                  {
+                    key: 'status',
+                    label: 'Status',
+                    renderer: 'statusPill',
+                    hint: 'Status: {value}',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      data: { rows: [{ status: 'ok' }] },
+      writes: [{ field: 'rows', op: 'set', origin_stage: 'arrange', ms_since_start: 1 }],
+    }
+    const { target, cleanup } = renderTab(hintedDetails)
+
+    const cell = [...target.querySelectorAll('td')].find((td) => td.querySelector('em'))
+    expect(cell?.getAttribute('title')).toBe('Status: ok')
+    cleanup()
+  })
+})
+
+describe('UserDetailsTab custom cell rendering — scalar entry', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  function customScalarDetails(): ProbeUserDetails {
+    return {
+      model: 'CustomScalarDetails',
+      layout: {
+        sections: [
+          {
+            title: 'Section',
+            entries: [
+              {
+                key: 'status',
+                label: 'Status',
+                view: 'custom',
+                columns: null,
+                renderer: 'statusPill',
+              },
+            ],
+          },
+        ],
+      },
+      data: { status: 'ok' },
+      writes: [{ field: 'status', op: 'set', origin_stage: 'arrange', ms_since_start: 1 }],
+    }
+  }
+
+  it('mounts the registered renderer for a scalar entry with view="custom"', () => {
+    mockedGetRenderer.mockReturnValue(() => {
+      const el = document.createElement('em')
+      el.textContent = 'scalar-pill'
+      return el
+    })
+    const { target, cleanup } = renderTab(customScalarDetails())
+
+    expect(target.querySelector('.value em')?.textContent).toBe('scalar-pill')
+    cleanup()
+  })
+
+  it('falls back to String(value) when no renderer is registered', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mockedGetRenderer.mockReturnValue(null)
+    const { target, cleanup } = renderTab(customScalarDetails())
+
+    expect(target.querySelector('.value')?.textContent).toBe('ok')
+    cleanup()
+  })
+})
+
+describe('UserDetailsTab detail panel custom element', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  function priorityDetails(): ProbeUserDetails {
+    return {
+      model: 'PriorityDetails',
+      layout: {
+        sections: [
+          {
+            title: 'Orders',
+            entries: [
+              {
+                key: 'orders',
+                label: 'Orders',
+                view: 'table',
+                columns: [{ key: 'order_id', label: 'Order id' }],
+                detail: {
+                  elements: [{ view: 'custom', field: 'priority', renderer: 'priorityBadge' }],
+                },
+              },
+            ],
+          },
+        ],
+      },
+      data: { orders: [{ order_id: 'o-1', priority: 'high' }] },
+      writes: [{ field: 'orders', op: 'set', origin_stage: 'arrange', ms_since_start: 1 }],
+    }
+  }
+
+  function openPanel(target: HTMLElement) {
+    const row = [...target.querySelectorAll('tbody tr')].find((tr) =>
+      tr.textContent?.includes('o-1'),
+    )
+    row!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    flushSync()
+  }
+
+  it('mounts the registered renderer inside the row-detail panel', () => {
+    mockedGetRenderer.mockReturnValue(() => {
+      const el = document.createElement('mark')
+      el.textContent = 'HIGH'
+      return el
+    })
+    const { target, cleanup } = renderTab(priorityDetails())
+
+    openPanel(target)
+
+    expect(target.querySelector('.panel mark')?.textContent).toBe('HIGH')
+    cleanup()
+  })
+
+  it('falls back to the plain field value inside the panel when no renderer is registered', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mockedGetRenderer.mockReturnValue(null)
+    const { target, cleanup } = renderTab(priorityDetails())
+
+    openPanel(target)
+
+    expect(target.querySelector('.panel')?.textContent).toContain('high')
+    cleanup()
   })
 })

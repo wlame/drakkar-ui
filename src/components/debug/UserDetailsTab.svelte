@@ -20,6 +20,7 @@
   import CodeBlock from '../CodeBlock.svelte'
   import SidePanel from '../SidePanel.svelte'
   import DetailPanel from './DetailPanel.svelte'
+  import CustomCell from '../CustomCell.svelte'
 
   let { details }: { details: ProbeUserDetails } = $props()
 
@@ -89,7 +90,20 @@
         >
           {#each columns as col (col.key)}
             {@const cell = renderCell(row[col.key], row, col, getLinkBases())}
-            {#if col.badge_colors}
+            {#if col.renderer}
+              <!-- renderer is boot-time exclusive with link_template/badge_colors/format
+                   (the backend rejects declaring both), so checking it first here never
+                   shadows a badge/link cell that also wants to render. -->
+              <td title={cell.title}>
+                <CustomCell
+                  name={col.renderer}
+                  value={row[col.key]}
+                  {row}
+                  cellKey={col.key}
+                  fallbackText={cell.text}
+                />
+              </td>
+            {:else if col.badge_colors}
               <td><span class="badge{cell.badge ? ` badge-${cell.badge}` : ''}" title={cell.title}>{cell.text}</span></td>
             {:else if cell.href}
               <td class="mono"><a href={cell.href} target="_blank" rel="noopener noreferrer" title={cell.title} onclick={(e) => e.stopPropagation()}>{cell.text}</a></td>
@@ -152,6 +166,19 @@
             {@const cell = renderCell(details.data[entry.key], undefined, entry, getLinkBases())}
             <p class="value">
               <span class="badge{cell.badge ? ` badge-${cell.badge}` : ''}" title={cell.title}>{cell.text}</span>
+            </p>
+          {:else if entry.view === 'custom'}
+            {@const value = details.data[entry.key]}
+            <!-- 'custom' is a closed view on its own (not layered on top of
+                 link_template/badge_colors/format), so there is no
+                 renderCell call and no precedence question here either. -->
+            <p class="value">
+              <CustomCell
+                name={entry.renderer ?? ''}
+                {value}
+                cellKey={entry.key}
+                fallbackText={value === null || value === undefined || value === '' ? '—' : String(value)}
+              />
             </p>
           {:else if entry.view === 'keyvalue'}
             <div class="kv">

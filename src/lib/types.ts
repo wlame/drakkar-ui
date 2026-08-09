@@ -639,7 +639,7 @@ export interface ProbeDetailsEntry {
    * pair-array value (first-append order on every backend); 'tree' renders
    * flat rows grouped client-side by the group_by keys.
    */
-  view: 'string' | 'keyvalue' | 'dict' | 'table' | 'tables' | 'tree' | 'badge'
+  view: 'string' | 'keyvalue' | 'dict' | 'table' | 'tables' | 'tree' | 'badge' | 'custom'
   /** Present only when view is 'table', 'tables', or 'tree'; null otherwise. */
   columns: ProbeDetailsColumn[] | null
   /**

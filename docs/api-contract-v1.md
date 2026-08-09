@@ -554,6 +554,106 @@ miss and degrades to an empty page list, so the app shell renders unaffected
   and an unrecognized `source.kind` is reported only for the `view` — it is
   never blamed for a source problem it does not, in the UI's eyes, have.
 
+## v1.6 additions (2026-08-09)
+
+Deployment-provided custom cell renderers: an escape hatch for presentation
+the built-in link/badge/format enrichment (v1.4) can't express — a table
+column, a scalar probe-details entry, or a detail-panel element can name a
+renderer function instead of relying on the UI's generic cell markup.
+Additive and opt-in: a backend that predates this section omits
+`custom_renderers` from `GET /api/v1/identity` and every `renderer` field
+from `ProbeDetailsColumn`/`ProbeDetailsEntry`/`ProbeDetailsElement`; the UI
+never fetches the module and never reaches `CustomCell`.
+
+- `GET /api/v1/identity` gains `custom_renderers:bool` — true when the
+  backend has `ui.custom_renderers_path` configured. The UI only fetches
+  `GET /api/v1/ui/renderers.js` when this flag is true; a backend that omits
+  it entirely (predates the flag) or reports `false` never triggers the
+  fetch.
+- `GET /api/v1/ui/renderers.js` serves the configured module byte-for-byte,
+  same-origin, `Content-Type: text/javascript`. Cached with a content-hash
+  `ETag`; the browser's own HTTP cache handles `If-None-Match` → `304` for
+  an unchanged module, so re-navigating the app after boot re-imports the
+  same bytes without a full re-download. `404` (with a `reason` in the
+  body) when nothing is configured. v1-only, no legacy unprefixed alias.
+  - The dynamic `import()` used to load the module cannot carry an
+    `Authorization` header, so on a backend with `ui.auth_token` configured
+    the token rides as a `?token=` query parameter instead — the same
+    mechanism the WebSocket handshake and file downloads already use
+    (`downloadUrl` in `src/lib/api.ts`).
+- **Module contract.** The served module's default export is a plain
+  object mapping renderer names to functions:
+
+  ```js
+  export default {
+    statusPill: (value, row, cell) => {
+      /* ... */
+      return anHTMLElement
+    },
+  }
+  ```
+
+  Each function has the signature `(value, row, cell) => HTMLElement`:
+  - `value` — the cell's raw decoded value (the same value the built-in
+    link/badge/format path would have received).
+  - `row` — the full row object for a table/tables/tree column; `undefined`
+    for a scalar entry or a detail-panel element addressed by a bare field
+    (there is no sibling row to hand over).
+  - `cell` — a small context object, currently `{key?: string}`: the
+    column key, the entry key, or the detail element's field name,
+    whichever declared the renderer.
+  - The function must return a real `HTMLElement` synchronously. Anything
+    else — a string, a Promise, `undefined` — is treated as a failure (see
+    below).
+
+- **Trust model.** The module is deployment-owned code, not content
+  Drakkar generates — it runs with the same trust as the rest of `ui.*`
+  config (link templates, badge colors) and with full DOM access to
+  whatever element it returns. Serving it same-origin is a deliberate
+  choice: a deployment that configures `ui.custom_renderers_path` is
+  choosing to run its own JS in the debug UI's origin, the same way it
+  already chooses the URLs behind its link templates.
+- **Fallback rules.** Loading and rendering are both best-effort; nothing a
+  broken or unconfigured renderer does can take the surrounding
+  table/panel down with it. Every one of the following degrades to the
+  cell's plain-text fallback plus one `console.warn`, never a thrown error
+  the UI must catch elsewhere:
+  1. `ui.custom_renderers_path` unconfigured, or `custom_renderers` is
+     `false`/absent on `GET /api/v1/identity` — the module is never
+     fetched.
+  2. The fetch/dynamic-import fails (network error, non-200, syntax error
+     in the module).
+  3. The module's default export is not a plain object.
+  4. No entry exists under the declared `renderer` name.
+  5. The named entry is not a function.
+  6. The function throws.
+  7. The function returns something other than an `HTMLElement`.
+
+  The fallback text is the plain rendering the cell would have used had no
+  renderer been declared at all: for a table/tables/tree column, the same
+  `text` `renderCell` would compute from the column's other fields; for a
+  scalar `view="custom"` entry or a detail-panel `view="custom"` element —
+  neither of which calls `renderCell` — `String(value)`, or `"—"` for
+  `null`/`undefined`/`""`, matching every other scalar/detail view's own
+  null rendering.
+
+- **Where `renderer` is legal, and exclusivity.** `renderer:str|null` is
+  added to `ProbeDetailsColumn` (table/tables/tree columns — also covers
+  `UIPageWidget.columns`, which reuses the same schema), `ProbeDetailsEntry`
+  (scalar entries, gated by a new `view="custom"` enum value), and
+  `ProbeDetailsElement` (detail-panel elements, same new `view="custom"`
+  value). On the wire, `renderer` is **boot-time exclusive** with
+  `link_template`/`badge_colors`/`format` — the backend validates this at
+  startup (a column or entry declaring both is a config error, rejected
+  before the worker serves any probe), not negotiated per request. The UI
+  therefore never has to choose between, say, a badge and a custom
+  renderer at render time; each call site checks `renderer` first purely
+  so the branch order matches the schema's stated precedence, not because
+  two declarations could ever collide in practice. `hint` is not in that
+  exclusion list, so a column may declare `renderer` and `hint` together;
+  the resolved hint still lands as the `title` attribute on the cell's
+  `<td>` wrapper, next to whatever the renderer mounts inside it.
+
 ## Appendix: divergence resolutions from the 2026-06 audit
 
 Canonical choices where the two reference backends disagreed; each backend

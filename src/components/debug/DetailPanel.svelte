@@ -6,6 +6,7 @@
   import type { ProbeDetail, ProbeDetailElement } from '../../lib/types'
   import { resolveTemplate, type LinkBases } from '../../lib/enrich'
   import { elementHeading, keyValueEntries, nestedTableColumns } from '../../lib/userDetails'
+  import CustomCell from '../CustomCell.svelte'
 
   let { detail, row, bases }: { detail: ProbeDetail; row: Record<string, unknown>; bases: LinkBases } =
     $props()
@@ -23,6 +24,20 @@
     {#if el.view === 'string'}
       {@const value = el.field ? row[el.field] : undefined}
       <p class="mono value">{value === null || value === undefined || value === '' ? '—' : String(value)}</p>
+    {:else if el.view === 'custom'}
+      {@const value = el.field ? row[el.field] : undefined}
+      <!-- This file renders raw row values, not renderCell output — 'custom'
+           is its own closed view (no link_template/badge_colors/format
+           layered underneath it), so there is no precedence question here. -->
+      <p class="mono value">
+        <CustomCell
+          name={el.renderer ?? ''}
+          {value}
+          {row}
+          cellKey={el.field ?? undefined}
+          fallbackText={value === null || value === undefined || value === '' ? '—' : String(value)}
+        />
+      </p>
     {:else if el.view === 'keyvalue'}
       {@const entries = keyValueEntries(el.field ? row[el.field] : undefined)}
       {#if entries.length === 0}

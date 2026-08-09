@@ -11,6 +11,7 @@
   import { badgeColor, formatValue, getLinkBases } from '../../lib/enrich'
   import { NO_SORT, sortRows, type SortState } from '../../lib/sort'
   import SortableTh from '../SortableTh.svelte'
+  import CustomCell from '../CustomCell.svelte'
 
   let { widget, refreshSeq = 0 }: { widget: UIPageWidget; refreshSeq?: number } = $props()
 
@@ -107,7 +108,20 @@
         <tr>
           {#each columns as col (col.key)}
             {@const cell = renderCell(row[col.key], row, col, getLinkBases())}
-            {#if col.badge_colors}
+            {#if col.renderer}
+              <!-- renderer is boot-time exclusive with link_template/badge_colors/format
+                   (the backend rejects declaring both), so checking it first here never
+                   shadows a badge/link cell that also wants to render. -->
+              <td title={cell.title}>
+                <CustomCell
+                  name={col.renderer}
+                  value={row[col.key]}
+                  {row}
+                  cellKey={col.key}
+                  fallbackText={cell.text}
+                />
+              </td>
+            {:else if col.badge_colors}
               <td><span class="badge{cell.badge ? ` badge-${cell.badge}` : ''}" title={cell.title}>{cell.text}</span></td>
             {:else if cell.href}
               <td class="mono"><a href={cell.href} target="_blank" rel="noopener noreferrer" title={cell.title}>{cell.text}</a></td>
