@@ -504,6 +504,10 @@ miss and degrades to an empty page list, so the app shell renders unaffected
   | `tasks` | `GET /api/v1/live/task-results?limit=<source.limit\|\|200>` | one row per task result |
   | `metrics` | `GET /api/v1/debug/metrics`, summed over the samples of the family named `source.metric` | none (`[]`) — `metrics` is scalar-only, for `view:"stat"` widgets |
 
+  The `ts` and `kind` stamped onto an `annotations` row are applied after
+  spreading `metadata`, so they win over any `ts`/`kind` keys the payload
+  itself happens to carry.
+
   `source.event_types` (an array of strings) is absent-safe: a missing or
   non-array value degrades to `[]`, which the backend reads as "no filter"
   (every event type). This path is defensive only — the backend contract

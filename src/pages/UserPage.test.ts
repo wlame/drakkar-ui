@@ -438,4 +438,88 @@ describe('UserPage live refresh', () => {
 
     target.remove()
   })
+
+  it('drops a stale reload response that resolves after a newer one', async () => {
+    // Regression for WidgetBody's stale-response race: the component
+    // instance is reused across reloads (widgets are keyed by index — a
+    // live-refresh bump or a slug navigation both reload the same
+    // WidgetBody), so an older in-flight request can settle after a newer
+    // one. Without a generation guard, the older response would land last
+    // and overwrite the newer rows.
+    const page: UIPage = {
+      slug: 'orders',
+      title: 'Orders',
+      widgets: [
+        {
+          title: 'Recent tasks',
+          view: 'table',
+          source: { kind: 'tasks' },
+          columns: [{ key: 'task_id', label: 'Task' }],
+        },
+      ],
+    }
+
+    function taskRow(taskId: string): TaskResult {
+      return {
+        ts: 1,
+        task_id: taskId,
+        partition: 0,
+        source_offsets: null,
+        hook_duration: null,
+        exec_duration: 0.1,
+        status: 'completed',
+        exit_code: 0,
+        output_message_count: 1,
+      }
+    }
+
+    // Each /live/task-results call gets its own resolver here instead of
+    // resolving immediately, so the test controls exactly which request
+    // settles first.
+    const resolvers: Array<(rows: TaskResult[]) => void> = []
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/pages')) return okJson([page])
+      if (url.includes('/live/task-results')) {
+        return new Promise<Response>((resolve) => {
+          resolvers.push((rows) => resolve(okJson(rows)))
+        })
+      }
+      return okJson([])
+    })
+    await loadUiPages()
+
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+    const app = mount(UserPage, { target, props: { params: { slug: 'orders' } } })
+    await settled()
+
+    // The mount-time reload is in flight as resolvers[0]. Trigger a second
+    // reload of the same widget via a live-refresh event — the same
+    // refreshSeq bump that a WS frame or a slug navigation would cause.
+    expect(resolvers).toHaveLength(1)
+    const opts = mockedCreateLiveSocket.mock.calls[0][0]
+
+    vi.useFakeTimers()
+    opts.onEvent({ event: 'task_completed', ts: 2 } as WsEvent)
+    await vi.advanceTimersByTimeAsync(500)
+    vi.useRealTimers()
+    flushSync()
+    await settled()
+
+    expect(resolvers).toHaveLength(2)
+
+    // Resolve the SECOND (newer) request first, then the FIRST (stale) one:
+    // the stale response must not clobber the newer rows.
+    resolvers[1]([taskRow('second')])
+    await settled()
+    resolvers[0]([taskRow('first')])
+    await settled()
+
+    expect(target.textContent).toContain('second')
+    expect(target.textContent).not.toContain('first')
+
+    unmount(app)
+    target.remove()
+  })
 })

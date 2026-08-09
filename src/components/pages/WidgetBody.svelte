@@ -39,7 +39,16 @@
     unsupportedReason = reason
   }
 
+  // Bumped at the start of every reload() call; a call only applies what it
+  // fetched if it is still the latest one once its awaited fetch settles.
+  // The component instance is reused across navigation (widgets are keyed by
+  // index — see UserPage.svelte), so an old widget's in-flight request can
+  // resolve after a new widget's, and without this guard the stale response
+  // would land last and overwrite the correct rows/statValue.
+  let requestId = 0
+
   async function reload() {
+    const currentRequest = ++requestId
     status = 'loading'
     unsupportedReason = null
     if (!KNOWN_VIEWS.has(widget.view)) {
@@ -53,9 +62,12 @@
           markUnsupported('config')
           return
         }
-        statValue = await fetchStatValue(metric)
+        const value = await fetchStatValue(metric)
+        if (currentRequest !== requestId) return
+        statValue = value
       } else {
         const result = await fetchWidgetRows(widget)
+        if (currentRequest !== requestId) return
         if (result === null) {
           markUnsupported('source')
           return
@@ -64,6 +76,7 @@
       }
       status = 'ready'
     } catch (e) {
+      if (currentRequest !== requestId) return
       console.warn(`failed to load widget "${widget.title}"`, e)
       status = 'error'
     }
