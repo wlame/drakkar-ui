@@ -8,6 +8,7 @@
 
 import { writable } from 'svelte/store'
 import { setLinkBases } from './enrich'
+import { loadCustomRenderers } from './renderers'
 import type { Identity, LiveOverview } from './types'
 
 export interface RuntimeConfig {
@@ -64,4 +65,9 @@ export function setIdentity(value: Identity): void {
   // fetch (App.svelte) and the version panel's lazy fallback (VersionBadge)
   // cover it from one place.
   setLinkBases(value.link_bases ?? {})
+  // Only bother fetching renderers.js when the backend actually has one
+  // configured — an unconfigured backend serves a 404, which
+  // loadCustomRenderers already tolerates, but the flag avoids a pointless
+  // request on every boot for the common case.
+  if (value.custom_renderers) void loadCustomRenderers()
 }

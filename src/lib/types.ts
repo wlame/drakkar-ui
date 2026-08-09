@@ -109,6 +109,10 @@ export interface Identity {
   // Named link-template bases (ui.link_bases), always present (possibly {})
   // on a fresh backend; absent entirely on backends that predate enrichment.
   link_bases?: Record<string, string>
+  // Whether this backend has a deployment-provided renderers.js module
+  // configured (ui.custom_renderers_path). Absent on backends that predate
+  // the feature; gates whether loadCustomRenderers() is worth calling at all.
+  custom_renderers?: boolean
 }
 
 export interface WorkerPeer {
@@ -601,6 +605,8 @@ export interface ProbeDetailsColumn {
   badge_colors?: Record<string, string> | null
   format?: string | null
   hint?: string | null
+  /** Named deployment-provided cell renderer for this column; null when unused. */
+  renderer?: string | null
 }
 
 /** One external link inside a detail panel's 'links' element. */
@@ -611,10 +617,12 @@ export interface ProbeDetailLink {
 
 /** One block of a declared detail panel, rendered top to bottom. */
 export interface ProbeDetailElement {
-  view: 'string' | 'keyvalue' | 'table' | 'links'
+  view: 'string' | 'keyvalue' | 'table' | 'links' | 'custom'
   field?: string | null
   label?: string | null
   links?: ProbeDetailLink[] | null
+  /** Named deployment-provided cell renderer for a 'custom' element; null when unused. */
+  renderer?: string | null
 }
 
 /** A declared right-panel layout, opened by clicking a row. */
@@ -644,6 +652,8 @@ export interface ProbeDetailsEntry {
   badge_colors?: Record<string, string> | null
   format?: string | null
   hint?: string | null
+  /** Named deployment-provided cell renderer for this entry; null when unused. */
+  renderer?: string | null
   /** A declared right-panel layout for this row-bearing view; null/absent otherwise. */
   detail?: ProbeDetail | null
 }
