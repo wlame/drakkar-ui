@@ -279,6 +279,23 @@ describe('deriveMarkers', () => {
     ])
   })
 
+  it('re-anchors the collapse window on the KEPT pin, not the last-visited one', () => {
+    // Three pins at left 0, 8, 16 with collapsePx=12: 8 merges into 0 (8px
+    // apart), but 16 must compare against the KEPT pin at 0 (16px apart, >
+    // 12) rather than the just-merged pin at 8 (which would wrongly stay
+    // within 8px and merge too).
+    const tasks = [
+      task({ start_ts: 0, labels: { env: 'a' } }),
+      task({ start_ts: 8, labels: { env: 'b' } }),
+      task({ start_ts: 16, labels: { env: 'c' } }),
+    ]
+    const pins = deriveMarkers(tasks, 'env', 0, 1, 12)
+    expect(pins).toEqual([
+      { left: 0, ts: 0, values: ['a', 'b'] },
+      { left: 16, ts: 16, values: ['c'] },
+    ])
+  })
+
   it('ignores tasks that lack the marker label', () => {
     const tasks = [
       task({ start_ts: 10, labels: { env: 'a' } }),
