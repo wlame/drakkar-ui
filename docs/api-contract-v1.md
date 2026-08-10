@@ -791,11 +791,17 @@ the raw-databases list above it is unaffected.
   distinguishable error — same non-disclosure shape as `/debug/download`.
   The token rides as `?token=` exactly like `/debug/download`, since a
   plain `<a>` navigation cannot carry an `Authorization` header.
-- **Not mergeable.** Archives never appear in, or as input to,
-  `/debug/merge` — they are already a merged, compressed, terminal product
-  of that same pipeline, not raw material for it. The UI's Archives section
-  is consequently read-only: it lists and downloads, with no selection
-  checkboxes and no path into the merge request.
+- **Not offered for merging.** The UI never lists an archive as a merge
+  candidate — the Archives section is read-only, with no selection
+  checkboxes and no path into the merge request. `/debug/merge` itself does
+  not reject an archive filename passed to it by hand: filename hardening
+  only checks for path traversal and unsafe characters, so a well-formed
+  archive name resolves and passes that check. The merge engine then fails
+  to open it as sqlite (it is gzip bytes) and — per its existing "a source
+  that cannot be opened or read is skipped rather than failing the whole
+  merge" behavior — silently drops it from the result instead of rejecting
+  the request; the response is still `200`, just without that source
+  counted in `source_files`.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 
