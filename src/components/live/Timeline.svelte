@@ -56,6 +56,7 @@
   import {
     barGeometry,
     barTexts,
+    tagLeftOffset,
     deriveMarkers,
     tickMarks,
     followScrollLeft,
@@ -217,9 +218,13 @@
     width: number
     color: string
     // Text drawn inside the bar, already truncated and fitted by barTexts;
-    // absent when the role is unbound, the task lacks the label, or the bar
-    // is too narrow.
+    // absent when the role is unbound, the task lacks the label, or the
+    // visible part of the bar is too narrow.
     tag?: string
+    // Offset of the tag from the bar's left edge. Positioned from the left
+    // rather than anchored `right: 3px` so it can clamp to the viewport's
+    // right edge while the bar still runs past it.
+    tagLeft: number
     caption?: string
     // Readable text color for `color`; '' when the bar draws no text.
     textColor: string
@@ -342,6 +347,12 @@
     const tagKey = roles.tag
     const captionKey = roles.caption
     const drawsText = tagKey !== undefined || captionKey !== undefined
+    // The right edge of what the operator can actually see. Bar text is
+    // fitted and placed against the visible slice of a bar rather than its
+    // full width, because a running bar is drawn past this edge on purpose —
+    // see tagLeftOffset in src/lib/timeline.ts. Unmeasured viewport (first
+    // paint): no clamp, so the bar's own width governs as before.
+    const visibleRight = culling ? scrollLeft + viewportWidth : Number.POSITIVE_INFINITY
     const out: Bar[] = []
     for (const t of tasks) {
       // `now` still ticks every 250ms, so a running bar's right edge still
@@ -356,9 +367,10 @@
       const { left, width } = barGeometry(t.start_ts, end, originTs, pxPerSec, MIN_BAR_PX)
       if (culling && (left + width < visibleFrom || left > visibleTo)) continue
       const color = cachedBarColor(t, colorRules)
+      const visibleWidth = Math.min(left + width, visibleRight) - left
       const texts = drawsText
         ? barTexts(
-            width,
+            visibleWidth,
             tagKey !== undefined ? t.labels?.[tagKey] : undefined,
             captionKey !== undefined ? t.labels?.[captionKey] : undefined,
           )
@@ -376,6 +388,7 @@
         width,
         color,
         tag: texts.tag,
+        tagLeft: texts.tag ? tagLeftOffset(visibleWidth, texts.tag) : 0,
         caption: texts.caption,
         textColor: texts.tag || texts.caption ? cachedTextColor(color) : '',
         emph: passes,
@@ -775,7 +788,7 @@
             aria-label={b.task.task_id}
           >
             {#if b.caption}<span class="bar-caption">{b.caption}</span>{/if}
-            {#if b.tag}<span class="bar-tag">{b.tag}</span>{/if}
+            {#if b.tag}<span class="bar-tag" style:left={`${b.tagLeft}px`}>{b.tag}</span>{/if}
           </a>
         {/each}
       </div>
@@ -1091,9 +1104,12 @@
   }
   /* Bar text. Both pieces are drawn only when barTexts said they fit, and
      both are click-through so the bar itself stays the hover/link target. */
+  /* Positioned from the left (`style:left` per bar, from tagLeftOffset), not
+     anchored to the right edge: a running bar extends past the viewport, and
+     the tag has to stop at the viewport edge instead of following the tip.
+     The 2px padding + 1px border here are what TAG_CHROME_PX accounts for. */
   .bar-tag {
     position: absolute;
-    right: 3px;
     top: 50%;
     transform: translateY(-50%);
     padding: 0 2px;

@@ -10,6 +10,7 @@ import { flushSync, mount, unmount } from 'svelte'
 import Timeline from './Timeline.svelte'
 import type { TaskView } from '../../lib/live'
 import type { TimelineConfig } from '../../lib/types'
+import { tagBoxWidth, TAG_EDGE_MARGIN_PX } from '../../lib/timeline'
 
 const NOW = Date.now() / 1000
 
@@ -103,6 +104,26 @@ function barFor(target: HTMLElement, taskId: string): HTMLAnchorElement {
   return bar as HTMLAnchorElement
 }
 
+// happy-dom does no layout, so the viewport measures 0 and the component
+// treats the whole strip as visible. Stamp a size and a scroll position on
+// it, then let the component's rAF-coalesced sync pick them up.
+async function measureViewport(target: HTMLElement, width: number, scrollLeft: number) {
+  const viewport = target.querySelector('.tl-viewport') as HTMLElement
+  Object.defineProperty(viewport, 'clientWidth', { value: width, configurable: true })
+  Object.defineProperty(viewport, 'scrollLeft', {
+    value: scrollLeft,
+    writable: true,
+    configurable: true,
+  })
+  viewport.dispatchEvent(new Event('scroll'))
+  await new Promise((resolve) => requestAnimationFrame(() => resolve(null)))
+  flushSync()
+}
+
+function styleNumber(el: HTMLElement, property: 'left' | 'width'): number {
+  return parseFloat(el.style.getPropertyValue(property))
+}
+
 const mounted: { target: HTMLElement; component: Record<string, unknown> }[] = []
 
 function renderTracked(props: Record<string, unknown> = {}) {
@@ -150,6 +171,47 @@ describe('Timeline', () => {
     const bar = barFor(target, 'big')
     expect(bar.querySelector('.bar-tag')?.textContent).toBe('12.4K')
     expect(bar.querySelector('.bar-caption')?.textContent).toBe('first_input_file.csv')
+  })
+
+  it('clamps a running bar tag to the viewport edge and leaves a visible bar tag on its own edge', async () => {
+    // A running bar is drawn out to `now`, which is past the viewport's right
+    // edge by design; a fully visible completed bar sits next to it.
+    const running = task('running', 60, {
+      status: 'running',
+      end_ts: null,
+      duration: null,
+      stdout_size: null,
+      labels: { file_size: '12.4K', file_name: 'first_input_file.csv', request: '0:41' },
+    })
+    const done = task('done', 58, {
+      end_ts: NOW - 48,
+      duration: 10,
+      labels: { file_size: '12.4K', file_name: 'second_input_file.csv', request: '0:42' },
+    })
+    const { target } = renderTracked({ tasks: [running, done] })
+
+    const runningBar = barFor(target, 'running')
+    const viewportWidth = 300
+    // Scroll so the running bar starts exactly at the viewport's left edge:
+    // bar-local offsets and viewport-local offsets then coincide.
+    await measureViewport(target, viewportWidth, styleNumber(runningBar, 'left'))
+
+    expect(styleNumber(runningBar, 'width')).toBeGreaterThan(viewportWidth)
+    const runningTag = runningBar.querySelector('.bar-tag') as HTMLElement
+    const tagWidth = tagBoxWidth(runningTag.textContent ?? '')
+    // Rides the viewport edge, not the bar's right edge far off-screen.
+    expect(styleNumber(runningTag, 'left')).toBe(viewportWidth - tagWidth - TAG_EDGE_MARGIN_PX)
+    expect(styleNumber(runningTag, 'left') + tagWidth).toBeLessThanOrEqual(
+      viewportWidth - TAG_EDGE_MARGIN_PX,
+    )
+
+    // The completed bar ends inside the viewport, so its tag stays on the
+    // bar's own right edge.
+    const doneBar = barFor(target, 'done')
+    const doneWidth = styleNumber(doneBar, 'width')
+    expect(doneWidth).toBeLessThan(viewportWidth)
+    const doneTag = doneBar.querySelector('.bar-tag') as HTMLElement
+    expect(styleNumber(doneTag, 'left')).toBe(doneWidth - tagWidth - TAG_EDGE_MARGIN_PX)
   })
 
   it('draws no bar text when the roles are unbound', () => {

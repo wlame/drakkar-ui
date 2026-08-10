@@ -166,6 +166,10 @@ function estWidth(text: string): number {
  * left over once the tag fits. With no tag text, the caption is tried alone
  * against the tag's own gate — otherwise a caption-only bar would need to
  * clear a gap meant for a tag that's never drawn.
+ *
+ * Callers pass the width the bar is actually *visible* over, which for a
+ * running bar drawn past the viewport edge is less than its full width — see
+ * {@link tagLeftOffset}.
  */
 export function barTexts(
   barWidth: number,
@@ -190,6 +194,39 @@ export function barTexts(
     if (remaining >= estWidth(captionText)) result.caption = captionText
   }
   return result
+}
+
+/** Horizontal chrome the tag element draws around its text: 2px of padding
+ * plus a 1px border on each side (see `.bar-tag` in Timeline.svelte). */
+export const TAG_CHROME_PX = 6
+/** Gap the tag keeps from the right edge it is anchored to. */
+export const TAG_EDGE_MARGIN_PX = 3
+
+/** Estimated rendered width of a bar tag, text plus its own chrome. Uses the
+ * same per-character estimate as the fit math — no DOM measurement. */
+export function tagBoxWidth(tag: string): number {
+  return estWidth(tag) + TAG_CHROME_PX
+}
+
+/**
+ * Where a bar's tag starts, as an offset from the bar's left edge, given the
+ * width the bar is visible over.
+ *
+ * A running bar is deliberately drawn past the viewport's right edge (the
+ * timeline follows `now - RENDER_DELAY_SEC`, which parks the jittery growing
+ * tip off-screen). Anchoring the tag to the bar's true right edge would drag
+ * it back into view and jitter with the tip, so the caller passes
+ * `min(barRight, visibleRight) - barLeft` here and to {@link barTexts}: the
+ * tag then rides the viewport edge while the tip is hidden and settles onto
+ * the bar's own edge once that edge is on screen, as one continuous clamp
+ * rather than two states.
+ *
+ * Never negative. It cannot in fact clamp for a tag {@link barTexts} accepted:
+ * that gate needs `visibleWidth >= estWidth(tag) + 10`, and this consumes
+ * `estWidth(tag) + 6 + 3`.
+ */
+export function tagLeftOffset(visibleWidth: number, tag: string): number {
+  return Math.max(0, visibleWidth - tagBoxWidth(tag) - TAG_EDGE_MARGIN_PX)
 }
 
 // WCAG relative-luminance gamma correction for one sRGB channel (0-255 in, 0-1 out).

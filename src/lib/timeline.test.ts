@@ -7,10 +7,15 @@ import {
   rebase,
   RENDER_DELAY_SEC,
   barTexts,
+  tagBoxWidth,
+  tagLeftOffset,
   textColorFor,
   deriveMarkers,
   TAG_MAX_CHARS,
   CAPTION_MAX_CHARS,
+  TAG_CHROME_PX,
+  TAG_EDGE_MARGIN_PX,
+  TEXT_PX_PER_CHAR,
 } from './timeline'
 import type { TaskView } from './live'
 
@@ -222,6 +227,41 @@ describe('barTexts', () => {
     const caption = 'x'.repeat(CAPTION_MAX_CHARS + 1)
     const truncated = 'x'.repeat(CAPTION_MAX_CHARS - 1) + '…'
     expect(barTexts(202, undefined, caption)).toEqual({ caption: truncated })
+  })
+})
+
+describe('tagLeftOffset', () => {
+  const tag = '12.4K' // 5 chars -> 30px of text, 36px with its chrome
+
+  it('measures the tag box as text plus its own chrome', () => {
+    expect(tagBoxWidth(tag)).toBe(tag.length * TEXT_PX_PER_CHAR + TAG_CHROME_PX)
+    expect(tagBoxWidth(tag)).toBe(36)
+  })
+
+  it('places the tag against the right edge of the width it is given', () => {
+    expect(tagLeftOffset(160, tag)).toBe(160 - 36 - TAG_EDGE_MARGIN_PX)
+  })
+
+  it('follows a shrinking visible width instead of the bar edge', () => {
+    // The same bar, first fully visible and then clipped by the viewport:
+    // the offset only ever depends on the width passed in, so the tag slides
+    // with the visible edge rather than jumping between two anchors.
+    expect(tagLeftOffset(400, tag)).toBe(361)
+    expect(tagLeftOffset(300, tag)).toBe(261)
+    expect(tagLeftOffset(299.5, tag)).toBe(260.5)
+  })
+
+  it('never returns a negative offset', () => {
+    expect(tagLeftOffset(10, tag)).toBe(0)
+    expect(tagLeftOffset(0, tag)).toBe(0)
+  })
+
+  it('never has to clamp for a tag that barTexts accepted', () => {
+    // barTexts' gate is estWidth + 10, and the offset consumes estWidth + 9,
+    // so the narrowest accepted bar still leaves the tag a positive offset.
+    const narrowest = tag.length * TEXT_PX_PER_CHAR + 10
+    expect(barTexts(narrowest, tag, undefined)).toEqual({ tag })
+    expect(tagLeftOffset(narrowest, tag)).toBe(1)
   })
 })
 
