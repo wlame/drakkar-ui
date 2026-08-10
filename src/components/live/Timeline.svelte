@@ -53,6 +53,7 @@
     type RoleOverrides,
     type TimelineRole,
   } from '../../lib/timelineRoles'
+  import type { SharedTimelineControls } from '../../lib/cluster'
   import {
     barGeometry,
     barTexts,
@@ -74,6 +75,10 @@
     minDurationMs = 0,
     timeline = undefined,
     workerId = '',
+    showHeader = true,
+    showToolbar = true,
+    shared = undefined,
+    taskUrlBase = '',
   }: {
     tasks?: TaskView[]
     laneCount?: number
@@ -85,6 +90,23 @@
     timeline?: TimelineConfig
     // Which worker's role overrides to read/write (they are per worker).
     workerId?: string
+    // Cluster view turns the built-in "Timeline" heading off — the page draws
+    // a per-worker heading instead.
+    showHeader?: boolean
+    // Cluster view renders the toolbar on exactly one Timeline instance; the
+    // rest hide theirs and follow `shared`.
+    showToolbar?: boolean
+    // Shared toolbar state for cluster view. When set, zoom, the
+    // highlight/filter inputs, "Now →" and the role-override gear read from
+    // and write to this object, so one toolbar drives every stacked timeline.
+    // Undefined (single-worker view) keeps all of that local, as before.
+    shared?: SharedTimelineControls
+    // Origin to prefix task links with. A peer timeline sets it to the peer's
+    // debug-server origin, so clicking a bar opens the task page on the
+    // worker that actually owns the task — the router's `link` action lets
+    // absolute http(s) hrefs fall through to a normal full navigation.
+    // Empty (the default) keeps the same-origin client-side route.
+    taskUrlBase?: string
   } = $props()
 
   const LANE_H = 22
@@ -100,8 +122,15 @@
   const MIN_FOLLOW_THRESHOLD_PX = 6
 
   // Zoom is a factor over the base px/sec, exactly like the reference's
-  // zoomLevel (default 2x, halving/doubling between 0.25x and 64x).
-  let zoomLevel = $state(2)
+  // zoomLevel (default 2x, halving/doubling between 0.25x and 64x). In
+  // cluster view the factor lives on the shared controls object instead, so
+  // every stacked timeline zooms together.
+  let localZoomLevel = $state(2)
+  const zoomLevel = $derived(shared ? shared.zoom : localZoomLevel)
+  function setZoomLevel(v: number) {
+    if (shared) shared.zoom = v
+    else localZoomLevel = v
+  }
   let following = $state(true)
   let now = $state(Date.now() / 1000)
   let viewport = $state<HTMLDivElement>()
@@ -123,8 +152,13 @@
   const backendRoles = $derived(timeline?.labels ?? {})
   // Writable derived: it re-reads storage whenever the worker identity lands
   // or changes, and the popover handlers assign to it directly after a write
-  // so an override applies on the same tick it is made.
-  let overrides = $derived<RoleOverrides>(loadRoleOverrides(workerId))
+  // so an override applies on the same tick it is made. In cluster view the
+  // write happens in the page (for every worker at once); the overridesSeq
+  // read makes each timeline re-read storage after such a write.
+  let overrides = $derived.by<RoleOverrides>(() => {
+    void shared?.overridesSeq
+    return loadRoleOverrides(workerId)
+  })
   const roles = $derived(resolveRoles(backendRoles, overrides))
 
   // Chosen once at mount, one full window back — pre-existing tasks from the
@@ -265,8 +299,20 @@
   //
   // Both are kept as strings: an empty box means "inactive", which a number
   // binding could not express, and the filter needle is a string anyway.
-  let highlightInput = $state('')
-  let filterInput = $state('')
+  // Cluster view moves both onto the shared controls so one toolbar's inputs
+  // emphasize/dim the bars of every stacked timeline.
+  let localHighlightInput = $state('')
+  let localFilterInput = $state('')
+  const highlightInput = $derived(shared ? shared.highlightInput : localHighlightInput)
+  const filterInput = $derived(shared ? shared.filterInput : localFilterInput)
+  function setHighlightInput(v: string) {
+    if (shared) shared.highlightInput = v
+    else localHighlightInput = v
+  }
+  function setFilterInput(v: string) {
+    if (shared) shared.filterInput = v
+    else localFilterInput = v
+  }
 
   const highlightKey = $derived(roles.highlight ?? '')
   const filterKey = $derived(roles.filter ?? '')
@@ -516,7 +562,7 @@
   function zoomTo(target: number) {
     const clamped = Math.min(64, Math.max(0.25, target))
     if (!viewport || following) {
-      zoomLevel = clamped
+      setZoomLevel(clamped)
       return
     }
     const oldPxPerSec = pxPerSec
@@ -533,10 +579,14 @@
     // to the DOM before the scrollLeft write, so the browser clamps against
     // the correct, already-widened strip.
     flushSync(() => {
-      zoomLevel = clamped
+      setZoomLevel(clamped)
     })
     applyScrollLeft((rightEdgeTs - originTs) * pxPerSec - viewport.clientWidth)
   }
+  // Only the instance whose toolbar was clicked runs zoomTo's right-edge
+  // preservation; sibling timelines in cluster view just see the shared zoom
+  // change. The ones auto-following re-snap on the next frame; one that was
+  // scrolled away shifts — a shared zoom cannot preserve every viewport.
   function zoomIn() {
     zoomTo(zoomLevel * 2)
   }
@@ -549,9 +599,24 @@
   function jumpNow() {
     // The follow effect calls followTick() synchronously as soon as
     // `following` flips true, so this snaps to the live edge immediately
-    // rather than waiting for the next animation frame.
+    // rather than waiting for the next animation frame. In cluster view the
+    // bump travels through the shared controls so EVERY stacked timeline
+    // re-arms — including this one, via the effect below.
+    if (shared) {
+      shared.followSeq += 1
+      return
+    }
     following = true
   }
+
+  // Cluster view's "Now →": any bump of the shared follow signal re-arms
+  // this instance's auto-follow. The seq starts at 0 and only ever grows, so
+  // the guard keeps the effect's first run (mount) from forcing a follow the
+  // operator may have already scrolled away from.
+  $effect(() => {
+    if (!shared) return
+    if (shared.followSeq > 0) following = true
+  })
 
   // --- role-override popover --------------------------------------------------
   //
@@ -588,14 +653,29 @@
   function applyRoleSelection(role: TimelineRole, value: string) {
     // '' is the "(none)" option — an explicit disable, stored as null. That
     // is not the same as having no override, which follows the backend.
-    saveRoleOverride(workerId, role, value === '' ? null : value)
+    // Cluster view: the page writes the override for every stacked worker and
+    // bumps overridesSeq, which re-derives `overrides` here.
+    const v = value === '' ? null : value
+    if (shared) {
+      shared.applyRole(role, v)
+      return
+    }
+    saveRoleOverride(workerId, role, v)
     overrides = loadRoleOverrides(workerId)
   }
   function resetRole(role: TimelineRole) {
+    if (shared) {
+      shared.resetRole(role)
+      return
+    }
     clearRoleOverride(workerId, role)
     overrides = loadRoleOverrides(workerId)
   }
   function resetAllRoles() {
+    if (shared) {
+      shared.resetAllRoles()
+      return
+    }
     clearAllRoleOverrides(workerId)
     overrides = loadRoleOverrides(workerId)
   }
@@ -635,13 +715,16 @@
   }
 </script>
 
-<h2 class="tl-title">
-  Timeline
-  <span class="tl-note"
-    >(last {maxAgeMinutes} min, {RENDER_DELAY_SEC} sec delayed{#if minDurationMs > 0}, tasks &ge; {minDurationMs}ms{/if})</span
-  >
-</h2>
+{#if showHeader}
+  <h2 class="tl-title">
+    Timeline
+    <span class="tl-note"
+      >(last {maxAgeMinutes} min, {RENDER_DELAY_SEC} sec delayed{#if minDurationMs > 0}, tasks &ge; {minDurationMs}ms{/if})</span
+    >
+  </h2>
+{/if}
 
+{#if showToolbar}
 <div class="tl-toolbar">
   <div class="zoom">
     <span class="zoom-lbl">Zoom:</span>
@@ -659,7 +742,7 @@
         type="number"
         placeholder="n"
         value={highlightInput}
-        oninput={(e) => (highlightInput = e.currentTarget.value)}
+        oninput={(e) => setHighlightInput(e.currentTarget.value)}
       />
     </label>
   {/if}
@@ -671,7 +754,7 @@
         type="text"
         placeholder="contains"
         value={filterInput}
-        oninput={(e) => (filterInput = e.currentTarget.value)}
+        oninput={(e) => setFilterInput(e.currentTarget.value)}
       />
     </label>
   {/if}
@@ -723,6 +806,7 @@
     {/if}
   </div>
 </div>
+{/if}
 
 <div class="tl-panel">
   <div class="tl-viewport" bind:this={viewport} onscroll={onScroll}>
@@ -776,7 +860,7 @@
             class="bar"
             class:emph={b.emph}
             class:dim={b.dim}
-            href={`/task/${encodeURIComponent(baseTaskId(b.task.task_id))}`}
+            href={`${taskUrlBase}/task/${encodeURIComponent(baseTaskId(b.task.task_id))}`}
             use:link
             style:left={`${b.left}px`}
             style:top={`${b.lane * (LANE_H + LANE_GAP)}px`}

@@ -19,10 +19,19 @@
 // failures (close codes 4401/4403) are surfaced as distinct statuses and NOT
 // retried — reconnecting with a bad token would loop forever.
 
-import { wsUrl } from './api'
+import { wsUrl, wsUrlFor } from './api'
 import type { WsEvent } from './types'
 
 export type WsStatus = 'connecting' | 'connected' | 'disconnected' | 'unauthorized' | 'forbidden'
+
+/** Operator-facing wording for each status, shared by every WS badge. */
+export const WS_STATUS_LABELS: Record<WsStatus, string> = {
+  connecting: 'connecting',
+  connected: 'connected',
+  disconnected: 'disconnected',
+  unauthorized: 'unauthorized',
+  forbidden: 'forbidden origin',
+}
 
 const RECONNECT_MS = 3000
 
@@ -42,6 +51,11 @@ export interface LiveSocketOptions {
   onGap?: (dropped: number) => void
   /** Event types this page renders. Omit to receive everything. */
   eventTypes?: string[]
+  /**
+   * http(s) origin of the worker to connect to. Omit for the page's own
+   * worker (the normal case); cluster view sets it to reach each peer's /ws.
+   */
+  baseUrl?: string
 }
 
 export interface LiveSocket {
@@ -75,7 +89,7 @@ export function createLiveSocket(opts: LiveSocketOptions): LiveSocket {
       const path = opts.eventTypes?.length
         ? `/ws?events=${encodeURIComponent(opts.eventTypes.join(','))}`
         : '/ws'
-      ws = new WebSocket(wsUrl(path))
+      ws = new WebSocket(opts.baseUrl ? wsUrlFor(opts.baseUrl, path) : wsUrl(path))
     } catch {
       scheduleReconnect()
       return

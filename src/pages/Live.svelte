@@ -6,16 +6,21 @@
   // fast tasks). The on_*_complete result feeds poll every 5s like the reference.
   import { onMount } from 'svelte'
   import { api } from '../lib/api'
-  import type { ArrangeTaskState, TaskResult, MessageResult, WindowResult, WsEvent } from '../lib/api'
-  import { hash, setHash, link } from '../lib/router'
+  import type { ArrangeTaskState, TaskResult, MessageResult, WindowResult, WsEvent, WorkerPeer } from '../lib/api'
+  import { hash, setHash } from '../lib/router'
   import { hydrateFromOverview, runtimeConfig, identity } from '../lib/config'
-  import { createLiveSocket, type WsStatus, type LiveSocket } from '../lib/ws'
+  import { createLiveSocket, WS_STATUS_LABELS, type WsStatus, type LiveSocket } from '../lib/ws'
   import { pausableInterval, visibilityGate } from '../lib/visibility'
   import { DEFAULT_MAX_AGE_MINUTES } from '../lib/timeline'
-  import { fmtTimeMs, dur2, fmtBytes, safeJsonParse } from '../lib/format'
+  import { peerBaseUrl, sameClusterPeers, type SharedTimelineControls } from '../lib/cluster'
+  import { applyTaskEvent, mergeRecentTasks } from '../lib/taskStore'
   import {
-    baseTaskId,
-    taskFromRecent,
+    saveRoleOverride,
+    clearRoleOverride,
+    clearAllRoleOverrides,
+    type TimelineRole,
+  } from '../lib/timelineRoles'
+  import {
     normalizeRecentTasks,
     arrangeFromEvent,
     annotationFromEvent,
@@ -25,10 +30,10 @@
     type AnnotationView,
   } from '../lib/live'
   import Timeline from '../components/live/Timeline.svelte'
+  import PeerTimeline from '../components/live/PeerTimeline.svelte'
   import ArrangeTab from '../components/live/ArrangeTab.svelte'
   import ResultsTab from '../components/live/ResultsTab.svelte'
   import RuntimeTab from '../components/live/RuntimeTab.svelte'
-  import Expandable from '../components/Expandable.svelte'
 
   let { params: _params = {} }: { params?: Record<string, string> } = $props()
 
@@ -92,30 +97,61 @@
   })
 
   const tasksList = $derived(Object.values(allTasks))
-  // How many finished rows the table actually renders.
-  //
-  // This used to slice to maxHistory, which is `ui.max_rows` (5000 by
-  // default). A worker that finishes hundreds of tasks a second fills that
-  // instantly, so the page built a five-thousand-row table and rebuilt it on
-  // every resync. Nobody reads past the first screen of a live feed, and the
-  // full history is a click away on the History page.
-  //
-  // Where `ui.timeline` exists, its depth is the operator's answer to "how
-  // much recent history is worth keeping on screen", and it is exactly what
-  // the resync asks the backend for (history_factor x lanes). Reuse it here so
-  // one knob governs the timeline and the table below it. A backend that
-  // predates `ui.timeline` offers no such knob — keep the fixed cap there.
-  const LEGACY_FINISHED_RENDER_LIMIT = 200
-  const finishedRenderLimit = $derived(
-    timelineConfig ? timelineConfig.history_factor * laneCount : LEGACY_FINISHED_RENDER_LIMIT,
-  )
 
-  const finishedAll = $derived(
-    tasksList
-      .filter((t) => t.status === 'completed' || t.status === 'failed')
-      .sort((a, b) => (b.end_ts ?? 0) - (a.end_ts ?? 0)),
-  )
-  const finished = $derived(finishedAll.slice(0, finishedRenderLimit))
+  // --- cluster view (Executors tab) -------------------------------------------
+  //
+  // Stacks a timeline for every worker of this cluster under one shared
+  // toolbar. Deliberately NOT persisted: a refresh or navigation always comes
+  // back in single-worker view.
+  let clusterView = $state(false)
+  let clusterPeers = $state<WorkerPeer[]>([])
+  let clusterLoadFailed = $state(false)
+
+  // Every worker id shown in cluster view — role overrides are stored per
+  // worker, and the shared gear applies to all of them at once.
+  const clusterWorkerIds = $derived([
+    ...($identity?.worker_id ? [$identity.worker_id] : []),
+    ...clusterPeers.map((w) => w.worker_name),
+  ])
+
+  // The one toolbar's state, shared by every stacked timeline (the first
+  // Timeline renders the toolbar; the rest follow this object).
+  const sharedControls = $state<SharedTimelineControls>({
+    zoom: 2,
+    highlightInput: '',
+    filterInput: '',
+    followSeq: 0,
+    overridesSeq: 0,
+    applyRole(role: TimelineRole, value: string | null) {
+      for (const id of clusterWorkerIds) saveRoleOverride(id, role, value)
+      sharedControls.overridesSeq += 1
+    },
+    resetRole(role: TimelineRole) {
+      for (const id of clusterWorkerIds) clearRoleOverride(id, role)
+      sharedControls.overridesSeq += 1
+    },
+    resetAllRoles() {
+      for (const id of clusterWorkerIds) clearAllRoleOverrides(id)
+      sharedControls.overridesSeq += 1
+    },
+  })
+
+  function toggleClusterView() {
+    clusterView = !clusterView
+    if (clusterView) void loadClusterPeers()
+  }
+
+  async function loadClusterPeers() {
+    clusterLoadFailed = false
+    try {
+      // A peer that advertised no reachable address cannot be connected to —
+      // skip it rather than letting its WS client retry an unbuildable URL.
+      clusterPeers = sameClusterPeers(await api.workers()).filter((w) => peerBaseUrl(w) !== '')
+    } catch {
+      clusterPeers = []
+      clusterLoadFailed = true
+    }
+  }
 
   // --- tabs (hash-routed) ---
   type Tab = 'arrange' | 'execute' | 'task-results' | 'message-results' | 'window-results' | 'runtime'
@@ -158,33 +194,6 @@
       "Runtime health: how promptly the worker's runtime schedules work, what blocked it (stall stacks), and a census of what it is carrying.",
   }
 
-  // Pool utilization bar: green under 50%, amber to 80%, red above — the
-  // reference's bg-emerald-400 / bg-amber-400 / bg-red-400 thresholds.
-  const poolPct = $derived(pool.max > 0 ? Math.min(100, (pool.active / pool.max) * 100) : 0)
-  const poolColor = $derived(poolPct > 80 ? '#f87171' : poolPct > 50 ? '#fbbf24' : '#34d399')
-
-  // Stdin cell: "-" when the task read nothing, otherwise lines + byte size.
-  function fmtStdin(t: TaskView): string {
-    if (!t.stdin_size) return '-'
-    return `${t.stdin_lines ?? 0} lines, ${fmtBytes(t.stdin_size)}`
-  }
-
-  // Stdout cell, same shape. The line count is a newer WS field — an older
-  // backend sends only stdout_size, so fall back to bytes alone then.
-  function fmtStdout(t: TaskView): string {
-    if (!t.stdout_size) return '-'
-    if (t.stdout_lines == null) return fmtBytes(t.stdout_size)
-    return `${t.stdout_lines} lines, ${fmtBytes(t.stdout_size)}`
-  }
-
-  const statusLabel: Record<WsStatus, string> = {
-    connecting: 'connecting',
-    connected: 'connected',
-    disconnected: 'disconnected',
-    unauthorized: 'unauthorized',
-    forbidden: 'forbidden origin',
-  }
-
   // --- WS event handling ---
   function applyPool(e: WsEvent) {
     if (e.pool_active !== undefined) pool.active = e.pool_active
@@ -193,71 +202,13 @@
 
   function onEvent(e: WsEvent) {
     switch (e.event) {
-      case 'task_started': {
-        if (!e.task_id) return
-        const existing = allTasks[e.task_id]
-        // Archive a re-started (retried) task under a :r suffix before overwriting.
-        if (existing && existing.status !== 'running') {
-          allTasks[`${e.task_id}:r${existing.start_ts}`] = existing
-        }
-        // The recorder's task_started metadata carries env + source_offsets
-        // (used by the timeline hover detail, like the reference).
-        const meta = safeJsonParse<Record<string, unknown>>(e.metadata ?? undefined, {})
-        allTasks[e.task_id] = {
-          task_id: e.task_id,
-          partition: e.partition ?? null,
-          start_ts: e.ts,
-          end_ts: null,
-          duration: null,
-          status: 'running',
-          exit_code: null,
-          args: e.args ?? null,
-          pid: e.pid ?? null,
-          slot: e.slot ?? null,
-          labels: safeJsonParse(e.labels ?? undefined, null),
-          origin: e.origin ?? 'kafka',
-          client_name: e.client_name ?? null,
-          request_id: e.request_id ?? null,
-          stdout_size: null,
-          stdout_lines: null,
-          stdin_lines: e.stdin_lines ?? null,
-          stdin_size: e.stdin_size ?? null,
-          env: (meta.env as Record<string, string> | undefined) ?? null,
-          source_offsets: Array.isArray(meta.source_offsets)
-            ? (meta.source_offsets as number[])
-            : null,
-        }
-        applyPool(e)
-        break
-      }
+      case 'task_started':
       case 'task_completed':
       case 'task_failed': {
-        if (!e.task_id) return
-        const done = e.event === 'task_completed' ? 'completed' : 'failed'
-        const ex = allTasks[e.task_id]
-        const start = ex?.start_ts ?? e.ts - (e.duration ?? 0)
-        allTasks[e.task_id] = {
-          task_id: e.task_id,
-          partition: e.partition ?? ex?.partition ?? null,
-          start_ts: start,
-          end_ts: e.ts,
-          duration: e.duration ?? (ex ? e.ts - ex.start_ts : null),
-          status: done,
-          exit_code: e.exit_code ?? null,
-          args: ex?.args ?? e.args ?? null,
-          pid: e.pid ?? ex?.pid ?? null,
-          slot: ex?.slot ?? e.slot ?? null,
-          labels: ex?.labels ?? safeJsonParse(e.labels ?? undefined, null),
-          origin: e.origin ?? ex?.origin ?? 'kafka',
-          client_name: e.client_name ?? ex?.client_name ?? null,
-          request_id: e.request_id ?? ex?.request_id ?? null,
-          stdout_size: e.stdout_size ?? null,
-          stdout_lines: e.stdout_lines ?? null,
-          stdin_lines: ex?.stdin_lines ?? e.stdin_lines ?? null,
-          stdin_size: ex?.stdin_size ?? e.stdin_size ?? null,
-          env: ex?.env ?? null,
-          source_offsets: ex?.source_offsets ?? null,
-        }
+        // Shared with PeerTimeline (lib/taskStore) so the local worker and
+        // the cluster peers interpret the stream identically — including the
+        // retry archiving under composite `:r<start_ts>` keys.
+        applyTaskEvent(allTasks, e)
         applyPool(e)
         break
       }
@@ -341,33 +292,11 @@
     }
   }
 
-  // Fold one good /recent-tasks payload into the page state.
+  // Fold one good /recent-tasks payload into the page state. The WS-only
+  // fields (stdin/stdout_lines/env/source_offsets/exit_code) survive the
+  // rebuild — see mergeRecentTasks in lib/taskStore.
   function applyRecentTasks(rt: NormalizedRecentTasks) {
-    const map: Record<string, TaskView> = {}
-    for (const t of rt.tasks) {
-      const v = taskFromRecent(t)
-      // /recent-tasks doesn't carry stdin/stdout_lines/env/source_offsets/
-      // exit_code — keep the WS-provided values so the Stdin/Stdout columns,
-      // hover detail, and exit_code color rules survive resyncs. stdout_size
-      // comes from both paths, so take whichever side actually has it rather
-      // than letting one wipe the other (an older backend omits it from the
-      // resync row; the WS frame is missing for a task that finished before
-      // this page connected).
-      const prev = allTasks[t.task_id]
-      if (prev) {
-        v.stdin_lines = prev.stdin_lines
-        v.stdin_size = prev.stdin_size
-        v.stdout_size = v.stdout_size ?? prev.stdout_size
-        v.stdout_lines = prev.stdout_lines
-        v.env = v.env ?? prev.env
-        v.source_offsets = prev.source_offsets
-        // exit_code is WS-only too and is color-rule-relevant, so a resync
-        // must not wipe a WS-delivered value back to null.
-        v.exit_code = v.exit_code ?? prev.exit_code
-      }
-      map[t.task_id] = v
-    }
-    allTasks = map
+    allTasks = mergeRecentTasks(allTasks, rt.tasks)
     if (rt.lane_count) laneCount = rt.lane_count
     truncated = rt.truncated
   }
@@ -459,12 +388,20 @@
     if (!f) void resync() // catch up on unfreeze
   }
   function onKey(e: KeyboardEvent) {
-    if (e.code !== 'Space') return
     const t = e.target as HTMLElement
     const tag = (t.tagName || '').toLowerCase()
     if (tag === 'input' || tag === 'textarea' || tag === 'select' || t.isContentEditable) return
-    e.preventDefault()
-    setFrozen(!frozen)
+    if (e.code === 'Space') {
+      e.preventDefault()
+      setFrozen(!frozen)
+      return
+    }
+    // Plain "c" toggles cluster view; modifiers are left alone so it never
+    // shadows browser shortcuts (same guard App.svelte uses for "f").
+    if ((e.key === 'c' || e.key === 'C') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault()
+      toggleClusterView()
+    }
   }
 
   onMount(() => {
@@ -537,7 +474,7 @@
 
 <div class="head">
   <h1>Live Pipeline</h1>
-  <span class="badge status-{status}">WS: {statusLabel[status]}</span>
+  <span class="badge status-{status}">WS: {WS_STATUS_LABELS[status]}</span>
   <button class="freeze" class:on={frozen} onclick={() => setFrozen(!frozen)}>{frozen ? 'Frozen' : 'Live'}</button>
   <span class="spacer"></span>
   <span class="pool">Pool: {pool.active} / {pool.max} slots, <span class="waiting">{pool.waiting}</span> waiting</span>
@@ -561,59 +498,61 @@
 {#if activeTab === 'arrange'}
   <ArrangeTab {arranges} states={arrangeStates} {annotations} />
 {:else if activeTab === 'execute'}
-  <div class="pool-bar">
-    <div class="pool-fill" style:width={`${poolPct}%`} style:background={poolColor}></div>
-  </div>
   {#if truncated}
     <p class="truncated-note">
       Showing the most recent tasks only — this worker produced more in the window than the timeline
       scan returns.
     </p>
   {/if}
-  <Timeline
-    tasks={tasksList}
-    {laneCount}
-    paused={frozen}
-    minDurationMs={$runtimeConfig.wsMinDurationMs}
-    timeline={timelineConfig}
-    workerId={$identity?.worker_id}
-  />
-
-  <h2>
-    Finished <span class="count">({finishedAll.length})</span>
-    {#if finishedAll.length > finished.length}
-      <span class="count">— newest {finished.length} shown</span>
-    {/if}
-  </h2>
-  {#if finished.length === 0}
-    <p class="muted">No finished tasks.</p>
+  <div class="tl-actions">
+    <button
+      class="cluster-toggle"
+      class:on={clusterView}
+      onclick={toggleClusterView}
+      title="Stack a timeline for every worker in this cluster (c)"
+    >{clusterView ? 'Cluster view: on' : 'Cluster view'}</button>
+  </div>
+  {#if !clusterView}
+    <Timeline
+      tasks={tasksList}
+      {laneCount}
+      paused={frozen}
+      minDurationMs={$runtimeConfig.wsMinDurationMs}
+      timeline={timelineConfig}
+      workerId={$identity?.worker_id}
+    />
   {:else}
-    <table>
-      <thead>
-        <tr><th>Task ID</th><th>Partition</th><th>Labels</th><th>Status</th><th>Duration</th><th>Time</th><th>CLI Args</th><th>Stdin</th><th>Stdout</th></tr>
-      </thead>
-      <tbody>
-        {#each finished as t (t.task_id)}
-          <tr>
-            <td class="mono xs"><a href={`/task/${encodeURIComponent(baseTaskId(t.task_id))}`} use:link style:color={t.status === 'failed' ? '#dc2626' : '#059669'}>{t.task_id}</a></td>
-            <td class="mono">{t.partition ?? '-'}</td>
-            <td class="xs">
-              {#if t.labels}
-                <span class="lchips">
-                  {#each Object.entries(t.labels) as [k, v]}<span class="lchip">{k}={v}</span>{/each}
-                </span>
-              {/if}
-            </td>
-            <td><span style:color={t.status === 'failed' ? '#dc2626' : '#059669'}>{t.status}</span></td>
-            <td class="mono">{t.duration != null ? dur2(t.duration) : ''}</td>
-            <td class="time nowrap">{fmtTimeMs(t.end_ts)}</td>
-            <td>{#if t.args}<Expandable text={t.args} />{/if}</td>
-            <td class="mono xs stdin">{fmtStdin(t)}</td>
-            <td class="mono xs stdout" class:has-output={!!t.stdout_size}>{fmtStdout(t)}</td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
+    <!-- This worker first, with the one toolbar; peers stack under it and
+         follow the toolbar through sharedControls. -->
+    <div class="peer-head">
+      <h3 class="peer-name">{$identity?.worker_id ?? 'this worker'}</h3>
+      <span class="tag-current">current</span>
+    </div>
+    <Timeline
+      tasks={tasksList}
+      {laneCount}
+      paused={frozen}
+      minDurationMs={$runtimeConfig.wsMinDurationMs}
+      timeline={timelineConfig}
+      workerId={$identity?.worker_id}
+      shared={sharedControls}
+      showHeader={false}
+    />
+    {#if clusterLoadFailed}
+      <p class="truncated-note">Could not load the worker list — peer timelines are unavailable.</p>
+    {:else if clusterPeers.length === 0}
+      <p class="muted">No other workers found in this cluster.</p>
+    {/if}
+    {#each clusterPeers as w (w.worker_name)}
+      <PeerTimeline
+        peer={w}
+        shared={sharedControls}
+        paused={frozen}
+        minDurationMs={$runtimeConfig.wsMinDurationMs}
+        timeline={timelineConfig}
+        fallbackLaneCount={laneCount}
+      />
+    {/each}
   {/if}
 {:else if activeTab === 'task-results'}
   <ResultsTab kind="task" rows={taskResults} />
@@ -626,43 +565,6 @@
 {/if}
 
 <style>
-  .count {
-    color: var(--muted);
-    font-weight: 400;
-    font-size: 0.9rem;
-  }
-  .lchips {
-    display: inline-flex;
-    flex-wrap: wrap;
-    gap: 0.25rem;
-  }
-  .lchip {
-    font-family: var(--mono);
-    font-size: 0.75rem;
-    color: var(--accent);
-    background: #f0fdfa;
-    border: 1px solid #99f6e4;
-    border-radius: 3px;
-    padding: 0 3px;
-  }
-  .xs {
-    font-size: 0.75rem;
-  }
-  .time {
-    color: #9ca3af;
-    font-size: 0.75rem;
-  }
-  .stdin {
-    color: #9ca3af;
-  }
-  .stdout {
-    color: #9ca3af;
-  }
-  /* Non-empty stdout reads as "the task produced something" — same green
-     as the completed status. */
-  .stdout.has-output {
-    color: #059669;
-  }
   .head {
     display: flex;
     align-items: center;
@@ -738,23 +640,44 @@
     color: var(--text);
     border-bottom-color: #0d9488;
   }
-  /* Pool utilization bar (reference: h-3 bg-cream-200 rounded-full mb-4). */
-  .pool-bar {
-    height: 0.75rem;
-    background: var(--line);
-    border-radius: 999px;
-    overflow: hidden;
-    margin-bottom: 1rem;
+  /* Cluster-view toggle row, right-aligned above the timeline(s). The button
+     reuses the freeze button's idiom (neutral pill, blue when active). */
+  .tl-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 0.5rem;
   }
-  .pool-fill {
-    height: 100%;
-    border-radius: 999px;
-    transition:
-      width 200ms ease,
-      background 200ms ease;
+  .cluster-toggle {
+    font-size: 0.75rem;
+    border-radius: 0.25rem;
+    padding: 0.125rem 0.5rem;
+    background: #f5f3ee;
+    color: #6b7280;
+    border: 1px solid #ddd9ce;
   }
-  .nowrap {
-    white-space: nowrap;
+  .cluster-toggle.on {
+    background: #dbeafe;
+    color: #1e40af;
+    border-color: #93c5fd;
+  }
+  /* Per-worker heading in cluster view (peers render their own, with a WS
+     badge, in PeerTimeline). */
+  .peer-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0 0 0.5rem;
+  }
+  .peer-name {
+    font-size: 1rem;
+    font-weight: 600;
+    font-family: var(--mono);
+    color: #1a1a1a;
+    margin: 0;
+  }
+  .tag-current {
+    font-size: 0.7rem;
+    color: #9ca3af;
   }
   .truncated-note {
     font-size: 0.75rem;

@@ -370,6 +370,18 @@ describe('Timeline', () => {
     expect(localStorage.getItem('dk.timeline.roles.worker-a')).toBeNull()
   })
 
+  it('links bars to the same-origin task route by default', () => {
+    const { target } = renderTracked()
+    expect(barFor(target, 'big').getAttribute('href')).toBe('/task/big')
+  })
+
+  it('links bars to the owning worker when taskUrlBase is set (cluster peers)', () => {
+    const { target } = renderTracked({ taskUrlBase: 'http://worker-2:8080' })
+    // Absolute http(s) hrefs fall through the router's link action, so the
+    // click becomes a full navigation to the peer's own task page.
+    expect(barFor(target, 'big').getAttribute('href')).toBe('http://worker-2:8080/task/big')
+  })
+
   it('takes the window note and the stale cut from the configured depth', () => {
     const { target } = renderTracked({
       tasks: [...tasks, task('ancient', 25 * 60)],

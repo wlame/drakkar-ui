@@ -1,24 +1,29 @@
 // Mounts the real Live page against a stubbed backend. Two behaviors are
 // pinned here: a degraded /recent-tasks response must leave the last good
 // state on screen behind a visible notice (it used to freeze the page in
-// silence), and the finished table must follow the configured timeline depth
-// instead of a fixed cap.
+// silence), and the cluster-view toggle must stack a timeline per worker
+// without persisting anything.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushSync, mount, unmount } from 'svelte'
 import Live from './Live.svelte'
 import { identity } from '../lib/config'
 import { hash } from '../lib/router'
-import type { Identity, RecentTask, TimelineConfig } from '../lib/types'
+import type { Identity, RecentTask, TimelineConfig, WorkerPeer } from '../lib/types'
 
 // Stubbed rather than opening a real socket: happy-dom's WebSocket would try
 // to connect, and these tests drive the page entirely through its HTTP resync.
-vi.mock('../lib/ws', () => ({
-  createLiveSocket: vi.fn(() => ({
-    close: vi.fn(),
-    setFrozen: vi.fn(),
-    setSuspended: vi.fn(),
-  })),
-}))
+// The rest of the module (WS_STATUS_LABELS) stays real.
+vi.mock('../lib/ws', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/ws')>()
+  return {
+    ...actual,
+    createLiveSocket: vi.fn(() => ({
+      close: vi.fn(),
+      setFrozen: vi.fn(),
+      setSuspended: vi.fn(),
+    })),
+  }
+})
 
 const NOW = Date.now() / 1000
 const RESYNC_INTERVAL_MS = 5000
@@ -62,10 +67,13 @@ function okJson(data: unknown) {
 // What GET /api/v1/recent-tasks answers with next. Reassigned mid-test to make
 // the backend degrade and recover.
 let recentPayload: unknown
+// What GET /api/v1/workers answers with (cluster-view tests set it).
+let workersPayload: WorkerPeer[] = []
 
 const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
   const url = String(input)
   if (url.includes('/recent-tasks')) return okJson(recentPayload)
+  if (url.includes('/workers')) return okJson(workersPayload)
   if (url.includes('/live/overview')) {
     return okJson({
       pool_max: 4,
@@ -85,6 +93,7 @@ beforeEach(() => {
   // clock installed afterwards.
   vi.useFakeTimers()
   recentPayload = { tasks: [recentTask('t-1', 2), recentTask('t-2', 1)], lane_count: 4 }
+  workersPayload = []
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
   identity.set(null)
@@ -128,8 +137,10 @@ function mountLive() {
   }
 }
 
+// The finished table is gone; the timeline's bars are the page's task view.
+// Sorted, because bar order is map-insertion order, not display order.
 function taskIds(target: HTMLElement): string[] {
-  return [...target.querySelectorAll('tbody tr td:first-child')].map((td) => td.textContent ?? '')
+  return [...target.querySelectorAll('a.bar')].map((a) => a.getAttribute('aria-label') ?? '').sort()
 }
 
 // Switches tabs the way an operator does — the button writes the fragment the
@@ -141,18 +152,12 @@ function selectTab(target: HTMLElement, label: string) {
   flushSync()
 }
 
-// The timeline renders its own <h2>, so pick the finished table's by its text.
-function finishedHeading(target: HTMLElement): string {
-  const h = [...target.querySelectorAll('h2')].find((el) => el.textContent?.includes('Finished'))
-  return h?.textContent?.replace(/\s+/g, ' ').trim() ?? ''
-}
-
 describe('Live degraded resync', () => {
-  it('renders the finished tasks a healthy resync returns', async () => {
+  it('renders the tasks a healthy resync returns', async () => {
     const { target, teardown } = mountLive()
     await settled()
 
-    expect(taskIds(target)).toEqual(['t-2', 't-1'])
+    expect(taskIds(target)).toEqual(['t-1', 't-2'])
     expect(target.querySelector('.stale-note')).toBeNull()
 
     teardown()
@@ -161,12 +166,12 @@ describe('Live degraded resync', () => {
   it('keeps the last good tasks and shows a notice when the payload is unavailable', async () => {
     const { target, teardown } = mountLive()
     await settled()
-    expect(taskIds(target)).toEqual(['t-2', 't-1'])
+    expect(taskIds(target)).toEqual(['t-1', 't-2'])
 
     recentPayload = { tasks: [], lane_count: 4, truncated: false, unavailable: true }
     await nextResync()
 
-    expect(taskIds(target)).toEqual(['t-2', 't-1'])
+    expect(taskIds(target)).toEqual(['t-1', 't-2'])
     expect(target.querySelector('.stale-note')?.textContent).toContain('Live data unavailable')
 
     teardown()
@@ -182,7 +187,7 @@ describe('Live degraded resync', () => {
     recentPayload = []
     await nextResync()
 
-    expect(taskIds(target)).toEqual(['t-2', 't-1'])
+    expect(taskIds(target)).toEqual(['t-1', 't-2'])
     expect(target.querySelector('.stale-note')).not.toBeNull()
 
     teardown()
@@ -197,7 +202,7 @@ describe('Live degraded resync', () => {
     })
     await nextResync()
 
-    expect(taskIds(target)).toEqual(['t-2', 't-1'])
+    expect(taskIds(target)).toEqual(['t-1', 't-2'])
     expect(target.querySelector('.stale-note')).not.toBeNull()
 
     teardown()
@@ -210,7 +215,7 @@ describe('Live degraded resync', () => {
     const { target, teardown } = mountLive()
     await settled()
     selectTab(target, 'Arrange')
-    expect(target.querySelector('table')).toBeNull() // the Executors panel is gone
+    expect(target.querySelector('.tl-panel')).toBeNull() // the Executors panel is gone
 
     recentPayload = { tasks: [], lane_count: 4, unavailable: true }
     await nextResync()
@@ -244,32 +249,74 @@ describe('Live degraded resync', () => {
   })
 })
 
-describe('Live finished-table cap', () => {
-  it('follows the configured timeline depth (history_factor x lanes)', async () => {
-    identity.set(identityWith(timelineConfig(1)))
-    recentPayload = {
-      tasks: [recentTask('t-1', 3), recentTask('t-2', 2), recentTask('t-3', 1)],
-      lane_count: 2,
+describe('Live cluster view', () => {
+  function peer(over: Partial<WorkerPeer>): WorkerPeer {
+    return {
+      worker_name: 'w1',
+      cluster: 'analytics-prod',
+      url: 'http://w1:8080/',
+      is_current: false,
+      ip_address: null,
+      debug_port: null,
+      debug_url: null,
+      ...over,
     }
+  }
+
+  function clusterToggle(target: HTMLElement): HTMLButtonElement {
+    const btn = target.querySelector('.cluster-toggle')
+    if (!btn) throw new Error('no cluster toggle')
+    return btn as HTMLButtonElement
+  }
+
+  it('stacks a timeline per cluster worker under one toolbar', async () => {
+    identity.set(identityWith(timelineConfig(1)))
+    workersPayload = [
+      peer({ worker_name: 'w1', is_current: true }),
+      peer({ worker_name: 'w3', url: 'http://w3:8080/' }),
+      peer({ worker_name: 'w2', url: 'http://w2:8080/' }),
+      peer({ worker_name: 'elsewhere', cluster: 'analytics-staging' }),
+    ]
     const { target, teardown } = mountLive()
     await settled()
 
-    expect(taskIds(target)).toEqual(['t-3', 't-2'])
-    expect(finishedHeading(target)).toContain('newest 2 shown')
+    clusterToggle(target).click()
+    await settled()
+
+    const names = [...target.querySelectorAll('.peer-name')].map((el) => el.textContent)
+    expect(names).toEqual(['w1', 'w2', 'w3'])
+    // One shared toolbar for the whole stack.
+    expect(target.querySelectorAll('.tl-toolbar')).toHaveLength(1)
+    expect(target.querySelectorAll('.tl-panel')).toHaveLength(3)
 
     teardown()
   })
 
-  it('keeps the legacy cap when the backend serves no timeline config', async () => {
-    recentPayload = {
-      tasks: Array.from({ length: 201 }, (_, i) => recentTask(`t-${i}`, 201 - i)),
-      lane_count: 4,
-    }
+  it('toggles with the "c" key and back off again', async () => {
     const { target, teardown } = mountLive()
     await settled()
 
-    expect(target.querySelectorAll('tbody tr')).toHaveLength(200)
-    expect(finishedHeading(target)).toContain('newest 200 shown')
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'c' }))
+    await settled()
+    expect(clusterToggle(target).textContent).toContain('on')
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'c' }))
+    await settled()
+    expect(clusterToggle(target).textContent).not.toContain('on')
+    expect(target.querySelectorAll('.tl-panel')).toHaveLength(1)
+
+    teardown()
+  })
+
+  it('says so when the cluster has no other workers', async () => {
+    workersPayload = [peer({ is_current: true })]
+    const { target, teardown } = mountLive()
+    await settled()
+
+    clusterToggle(target).click()
+    await settled()
+
+    expect(target.textContent).toContain('No other workers found in this cluster.')
 
     teardown()
   })

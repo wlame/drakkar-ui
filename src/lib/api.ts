@@ -100,14 +100,23 @@ function qs(params: Record<string, string | number | undefined | null>): string 
   return s ? `?${s}` : ''
 }
 
-// wsUrl builds the absolute WebSocket URL for the live stream. Browsers can't set
-// an Authorization header on a WS handshake, so the token rides as `?token=` when
-// configured (the backend accepts either). /ws is served at the site root, not
-// under /api/v1.
-export function wsUrl(path = '/ws'): string {
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+// wsUrlFor builds the WebSocket URL for the live stream of an arbitrary worker,
+// given its http(s) origin. Browsers can't set an Authorization header on a WS
+// handshake, so the token rides as `?token=` when configured (the backend
+// accepts either) — appended with `&` when the path already carries a query
+// (e.g. `/ws?events=...`). /ws is served at the site root, not under /api/v1.
+export function wsUrlFor(origin: string, path = '/ws'): string {
+  const url = new URL(path, origin)
+  const proto = url.protocol === 'https:' ? 'wss:' : 'ws:'
   const token = authToken()
-  return `${proto}//${window.location.host}${path}${token ? `?token=${encodeURIComponent(token)}` : ''}`
+  const sep = url.search ? '&' : '?'
+  const tokenPart = token ? `${sep}token=${encodeURIComponent(token)}` : ''
+  return `${proto}//${url.host}${url.pathname}${url.search}${tokenPart}`
+}
+
+// wsUrl is wsUrlFor pinned to the page's own origin — the normal same-origin case.
+export function wsUrl(path = '/ws'): string {
+  return wsUrlFor(window.location.origin, path)
 }
 
 // downloadUrl builds a same-tab navigation URL (e.g. a DB download). Like the WS

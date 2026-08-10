@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { api, wsUrl, downloadUrl } from './api'
+import { api, wsUrl, wsUrlFor, downloadUrl } from './api'
 
 // Hermetic: fetch is a stub (no network), localStorage comes from happy-dom.
 const fetchMock = vi.fn()
@@ -127,6 +127,30 @@ describe('wsUrl', () => {
   it('appends the token as an encoded query param (WS cannot set headers)', () => {
     localStorage.setItem('drakkar_token', 'a b/c')
     expect(wsUrl('/ws')).toBe(`ws://${window.location.host}/ws?token=a%20b%2Fc`)
+  })
+
+  it('appends the token with & when the path already carries a query', () => {
+    localStorage.setItem('drakkar_token', 't')
+    expect(wsUrl('/ws?events=task_started')).toBe(
+      `ws://${window.location.host}/ws?events=task_started&token=t`,
+    )
+  })
+})
+
+describe('wsUrlFor', () => {
+  it('targets the given peer origin instead of the page host', () => {
+    expect(wsUrlFor('http://peer:8081', '/ws')).toBe('ws://peer:8081/ws')
+  })
+
+  it('maps an https peer origin to wss', () => {
+    expect(wsUrlFor('https://peer:8443', '/ws')).toBe('wss://peer:8443/ws')
+  })
+
+  it('keeps the path query and appends the token after it', () => {
+    localStorage.setItem('drakkar_token', 't k')
+    expect(wsUrlFor('http://peer:8081', '/ws?events=a,b')).toBe(
+      'ws://peer:8081/ws?events=a,b&token=t%20k',
+    )
   })
 })
 

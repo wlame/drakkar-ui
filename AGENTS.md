@@ -67,7 +67,15 @@ downloads can't set headers, so the token rides as `?token=` there
   defaults until the response lands.
 - **Live page**: WebSocket `/ws` stream (reconnect 3s, freeze on Space) +
   5s DB resync via `/api/v1/recent-tasks`; retried tasks archive under
-  composite keys `task_id:r<start_ts>` (server and client agree on this).
+  composite keys `task_id:r<start_ts>` (server and client agree on this —
+  including rewriting the archived copy's own `task_id`, which is the
+  timeline's each-key; see `src/lib/taskStore.ts`).
+- **Cluster view** (Executors tab, `c` key, not persisted): stacks a
+  timeline per same-cluster worker under ONE toolbar (`SharedTimelineControls`
+  in `src/lib/cluster.ts`). Peers are fed by direct cross-origin WebSockets
+  only — their REST API is unreachable from the browser (no CORS headers on
+  backends), so peer strips have no history backfill and no resync
+  (`src/components/live/PeerTimeline.svelte`).
 - **The bundle knows its version**: `__APP_VERSION__` is injected via Vite
   `define` from `DRAKKAR_UI_VERSION` (set by `build.sh bundle` and
   release.yml) and shown in the header — operators can always tell which
