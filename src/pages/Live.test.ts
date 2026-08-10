@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushSync, mount, unmount } from 'svelte'
 import Live from './Live.svelte'
 import { identity } from '../lib/config'
+import { hash } from '../lib/router'
 import type { Identity, RecentTask, TimelineConfig } from '../lib/types'
 
 // Stubbed rather than opening a real socket: happy-dom's WebSocket would try
@@ -87,12 +88,16 @@ beforeEach(() => {
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
   identity.set(null)
+  // The router's fragment store is module-global, so a tab selected by one
+  // test would otherwise decide the active tab of the next one.
+  hash.set('')
 })
 
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.useRealTimers()
   identity.set(null)
+  hash.set('')
 })
 
 // Drains the page's awaited fetches (bootstrap, resync, feed reloads) against
@@ -125,6 +130,15 @@ function mountLive() {
 
 function taskIds(target: HTMLElement): string[] {
   return [...target.querySelectorAll('tbody tr td:first-child')].map((td) => td.textContent ?? '')
+}
+
+// Switches tabs the way an operator does — the button writes the fragment the
+// page routes on.
+function selectTab(target: HTMLElement, label: string) {
+  const tab = [...target.querySelectorAll('.tab')].find((b) => b.textContent?.trim() === label)
+  if (!tab) throw new Error(`no such tab: ${label}`)
+  ;(tab as HTMLButtonElement).click()
+  flushSync()
 }
 
 // The timeline renders its own <h2>, so pick the finished table's by its text.
@@ -185,6 +199,29 @@ describe('Live degraded resync', () => {
 
     expect(taskIds(target)).toEqual(['t-2', 't-1'])
     expect(target.querySelector('.stale-note')).not.toBeNull()
+
+    teardown()
+  })
+
+  // Every tab on this page is fed by the same resync, so the notice belongs
+  // above the tab strip rather than inside the Executors panel — an operator
+  // watching Arrange or Runtime is looking at equally stale data.
+  it('shows the notice on a tab other than Executors, and clears it on recovery', async () => {
+    const { target, teardown } = mountLive()
+    await settled()
+    selectTab(target, 'Arrange')
+    expect(target.querySelector('table')).toBeNull() // the Executors panel is gone
+
+    recentPayload = { tasks: [], lane_count: 4, unavailable: true }
+    await nextResync()
+
+    const notes = target.querySelectorAll('.stale-note')
+    expect(notes).toHaveLength(1)
+    expect(notes[0].textContent).toContain('Live data unavailable')
+
+    recentPayload = { tasks: [recentTask('t-9', 1)], lane_count: 4 }
+    await nextResync()
+    expect(target.querySelector('.stale-note')).toBeNull()
 
     teardown()
   })

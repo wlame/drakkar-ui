@@ -544,6 +544,14 @@
 </div>
 <p class="tab-hint">{TAB_HINTS[activeTab]}</p>
 
+<!-- Above the tabs, not inside one: every tab on this page is fed by the same
+     resync, so they all go stale together and all need to say so. -->
+{#if dataUnavailable}
+  <p class="truncated-note stale-note">
+    Live data unavailable — the worker's recorder may be degraded; check its logs.
+  </p>
+{/if}
+
 <div class="tabs">
   {#each availableTabs as t}
     <button class="tab" class:active={activeTab === t} onclick={() => setHash(`#${t}`)}>{TAB_LABELS[t]}</button>
@@ -556,12 +564,6 @@
   <div class="pool-bar">
     <div class="pool-fill" style:width={`${poolPct}%`} style:background={poolColor}></div>
   </div>
-  {#if dataUnavailable}
-    <p class="truncated-note stale-note">
-      Live data unavailable — showing the last loaded state. The worker's recorder may be degraded;
-      check its logs.
-    </p>
-  {/if}
   {#if truncated}
     <p class="truncated-note">
       Showing the most recent tasks only — this worker produced more in the window than the timeline
