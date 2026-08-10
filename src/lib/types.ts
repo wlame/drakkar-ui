@@ -94,6 +94,47 @@ export interface SinkStatus {
   last_error_ts: number | null
 }
 
+// One condition of a timeline color rule (ui.timeline.color_rules[].when[]):
+// a task label or a task field compared with op/value. Exactly one of
+// label/field is set by a compliant backend; value is absent for the
+// value-less ops exists/missing.
+export interface TimelineCondition {
+  label?: string
+  field?: string
+  op: string
+  value?: string | number
+}
+
+// A first-match-wins bar-coloring rule. `when` is always an array (AND of
+// its conditions), even when the source config wrote a single condition.
+// `name` is '' when the rule has no display name — the legend falls back to
+// generated condition text in that case.
+export interface TimelineColorRule {
+  name: string
+  when: TimelineCondition[]
+  color: string
+}
+
+// Which task label fills each special timeline role (tag/caption/highlight/
+// filter/marker). Only bound roles are present; an unbound role is absent
+// entirely, never an empty string.
+export interface TimelineRoleBindings {
+  tag?: string
+  caption?: string
+  highlight?: string
+  filter?: string
+  marker?: string
+}
+
+// Timeline history depth, bar-color rules, and label-role bindings from
+// ui.timeline (v1.7). See src/lib/timelineRules.ts for the color-rule engine.
+export interface TimelineConfig {
+  history_factor: number
+  max_age_minutes: number
+  color_rules: TimelineColorRule[]
+  labels: TimelineRoleBindings
+}
+
 // Worker self-identity from GET /api/v1/identity (v1.1, extended v1.2).
 // config_summary is the one-line worker config string the reference debug
 // page shows in its banner. The v1.2 fields are optional: older backends
@@ -113,6 +154,9 @@ export interface Identity {
   // configured (ui.custom_renderers_path). Absent on backends that predate
   // the feature; gates whether loadCustomRenderers() is worth calling at all.
   custom_renderers?: boolean
+  // ui.timeline config, verbatim. Absent on backends that predate it — the
+  // UI keeps its legacy fixed-window, fixed-color timeline behavior then.
+  timeline?: TimelineConfig
 }
 
 export interface WorkerPeer {
@@ -172,6 +216,10 @@ export interface RecentTask {
   origin: string
   client_name: string | null
   request_id: string | null
+  // Captured stdout byte count; null while the task is running and on
+  // failed-only tasks. Selected on the resync path (v1.7) so color rules
+  // keyed on it work for resync-loaded rows, not only WS-updated ones.
+  stdout_size?: number | null
 }
 
 export interface RecentTasksResponse {

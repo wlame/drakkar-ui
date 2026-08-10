@@ -654,6 +654,89 @@ never fetches the module and never reaches `CustomCell`.
   the resolved hint still lands as the `title` attribute on the cell's
   `<td>` wrapper, next to whatever the renderer mounts inside it.
 
+## v1.7 additions (2026-08-10)
+
+Timeline tuning: configurable history depth, declarative bar-color rules,
+and label-role bindings for the Live timeline, replacing the previous
+hardcoded 10-minute window and fixed origin/status coloring. Additive: one
+new `Identity` field, two new schemas, one new query parameter, one new
+response field. A backend that predates this section omits `timeline` from
+`GET /api/v1/identity` entirely, which is the only thing the UI checks —
+it keeps its previous fixed-window, fixed-color timeline behavior whenever
+that field is absent.
+
+- `GET /api/v1/identity` gains `timeline: TimelineSettings`, the
+  `ui.timeline` config verbatim: `{history_factor:int, max_age_minutes:int,
+  color_rules:[TimelineColorRule], labels:{tag?,caption?,highlight?,
+  filter?,marker?}}`. `labels` carries only the bound roles — an unbound
+  role is absent, never an empty string.
+- **`TimelineColorRule`**: `{name:str, when:[TimelineRuleCondition],
+  color:str}`. `when` always arrives as an array — even a single-condition
+  rule is normalized to a one-element list on the backend — and is
+  evaluated as an AND: every condition must match for the rule to apply.
+  `name` is `''` when the rule has no display name; the legend then falls
+  back to generated condition text (see below).
+- **`TimelineRuleCondition`**: `{label?:str, field?:str, op:str,
+  value?:str|number}`. Exactly one of `label`/`field` is present
+  (backend-validated at startup; both or neither is a boot error): `label`
+  reads a task label (`labels[key]`, absent when the key is unset), `field`
+  reads one of a fixed set of task fields (`status`, `origin`,
+  `client_name`, `exit_code`, `duration`, `stdout_size`, `stdout_lines`,
+  `stdin_size`, `stdin_lines`, `partition`). `op` is one of `eq`, `ne`,
+  `contains`, `prefix`, `gt`, `ge`, `lt`, `le`, `exists`, `missing`; `value`
+  is absent for the value-less ops `exists`/`missing`, required otherwise.
+- **UI-side evaluation** (`src/lib/timelineRules.ts` — these semantics are
+  enforced client-side, not carried on the wire):
+  - A missing label or a null/undefined field is "absent": every op except
+    `missing` fails against it, and `missing` succeeds; `exists` is the
+    inverse. Deliberate consequence: `{field: stdout_size, op: eq, value:
+    0}` matches only a finished empty-output task — a running task's
+    `stdout_size` is still `null`.
+  - `gt`/`ge`/`lt`/`le` parse both sides with `parseFloat`; either side
+    failing to parse (`NaN`) makes the condition false.
+  - `eq`/`ne` compare numerically when both sides parse as finite numbers,
+    else as strings (`String(actual) === String(value)`); `ne` is the exact
+    negation of `eq`.
+  - `contains`/`prefix` are case-sensitive substring/prefix checks on the
+    string form of both sides.
+  - Rules evaluate in config order; the first rule whose `when` fully
+    matches wins. No match → `origin === 'http'` gets `#9c27b0` (today's
+    `.bar.http` styling, now an overridable implicit rule rather than a CSS
+    `!important`), else the task's status color (`completed` `#34d399`,
+    `failed` `#f87171`, `running` `#fbbf24`).
+  - `color` is a palette name or a literal `#rrggbb` hex. The eight-name
+    palette is defined once, in `TIMELINE_PALETTE`:
+
+    | name | hex | | name | hex |
+    |---|---|---|---|---|
+    | green | `#34d399` | | gray | `#9ca3af` |
+    | red | `#f87171` | | lightgray | `#d1d5db` |
+    | yellow | `#fbbf24` | | purple | `#a78bfa` |
+    | blue | `#60a5fa` | | orange | `#fb923c` |
+
+    An unrecognized name (or a malformed hex) falls back to `gray`.
+  - The legend shows one chip per configured rule: `name` when set,
+    otherwise generated text per condition (`<target> <op> <value>`, e.g.
+    `stdout_size eq 0`) joined with `&` for a multi-condition rule.
+- `GET /api/v1/recent-tasks`:
+  - New optional `limit` query parameter (`1`–`100000`). Omitted → the
+    backend resolves it from `history_factor × <executor pool size>` (pool
+    not yet attached → `× 8`, matching the existing lane-count fallback),
+    itself clamped to `100000` since neither config value has its own
+    ceiling.
+  - `minutes`'s allowed range rises to `1`–`1440`; requests are
+    additionally clamped server-side to `ui.timeline.max_age_minutes` when
+    that config is smaller.
+  - Each `RecentTaskEntry` gains `stdout_size:int|null` — the existing
+    recorder column, now selected on the resync path so color rules keyed
+    on it work for resync-loaded rows too, not only rows a
+    `task_completed` WS frame has already patched. `null` while the task is
+    running, and on a failed task that captured no stdout.
+  - `truncated:bool` is now a required field on `RecentTasks`, formalizing
+    behavior the UI already read: `true` when the row cap dropped older
+    events from the query window, or when the assembled result was trimmed
+    down to `limit` tasks.
+
 ## Appendix: divergence resolutions from the 2026-06 audit
 
 Canonical choices where the two reference backends disagreed; each backend
