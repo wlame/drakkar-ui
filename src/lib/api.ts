@@ -5,6 +5,7 @@
 // docs/api-contract-v1.md; the shapes live in ./types.
 
 import type {
+  ArchivesResponse,
   ArrangeTaskState,
   CacheEntriesResponse,
   CacheEntryDetail,
@@ -180,6 +181,19 @@ export const api = {
   debugMerge: (filenames: string[]) => post<MergeResult>('/debug/merge', { filenames }),
   debugDownloadUrl: (filename: string) =>
     downloadUrl(`/debug/download/${encodeURIComponent(filename)}`),
+
+  // Debug: archives (v1.8). 404 is a defined contract answer (a backend
+  // that predates archiving) — mapped to null, not an error, so the
+  // Archives section can hide itself rather than showing a banner (same
+  // idiom as runtimeHealth above).
+  debugArchives: async (): Promise<ArchivesResponse | null> => {
+    const res = await fetch(`${API_BASE}/debug/archives`, { headers: authHeaders() })
+    if (res.status === 404) return null
+    if (!res.ok) return fail('GET', '/debug/archives', res)
+    return (await res.json()) as ArchivesResponse
+  },
+  debugArchiveDownloadUrl: (name: string) =>
+    downloadUrl(`/debug/archives/${encodeURIComponent(name)}`),
 
   // Debug: cache browser
   cacheStats: () => get<CacheStats>('/debug/cache/stats'),

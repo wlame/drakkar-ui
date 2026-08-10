@@ -2,8 +2,10 @@
   // Databases tab: list recorder DB files (grouped by cluster), select ≥2 to merge,
   // and download (ports debug.html databases). Files with zero events are hidden
   // (count surfaced). Download/merge carry the bearer token where configured.
+  // Archives (below the raw list) are a separate, read-only listing of already
+  // compressed/merged files — they never join `selected` or the merge request.
   import { onMount } from 'svelte'
-  import { api, type DbInfo, type MergeResult } from '../../lib/api'
+  import { api, type ArchiveEntry, type DbInfo, type MergeResult } from '../../lib/api'
   import { fmtBytes, fmtDateTimeMs } from '../../lib/format'
 
   let all = $state<DbInfo[]>([])
@@ -15,6 +17,7 @@
   let merge = $state<MergeResult | null>(null)
   let mergeError = $state<string | null>(null)
   let merging = $state(false)
+  let archives = $state<ArchiveEntry[]>([])
 
   async function load() {
     error = null
@@ -22,6 +25,20 @@
       all = await api.debugDatabases()
     } catch (e) {
       error = e instanceof Error ? e.message : String(e)
+    }
+    await loadArchives()
+  }
+
+  // Archives degrade silently: a 404 (old backend, api.debugArchives()
+  // already maps that to null) or any other fetch failure just leaves the
+  // section hidden rather than surfacing a second error banner next to the
+  // raw-databases one above.
+  async function loadArchives() {
+    try {
+      const res = await api.debugArchives()
+      archives = res?.archives ?? []
+    } catch {
+      archives = []
     }
   }
 
@@ -167,6 +184,32 @@
       </tbody>
     </table>
   {/each}
+{/if}
+
+{#if archives.length > 0}
+  <h2>Archives ({archives.length})</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Cluster</th>
+        <th>Window</th>
+        <th class="num">Size</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {#each archives as a (a.name)}
+        <tr>
+          <td class="mono">{a.name}</td>
+          <td class="mono">{a.cluster}</td>
+          <td class="muted nowrap">{fmtTs(a.from_ts)} → {fmtTs(a.to_ts)}</td>
+          <td class="num mono">{fmtBytes(a.size_bytes)}</td>
+          <td><a href={api.debugArchiveDownloadUrl(a.name)} title="Download">↓</a></td>
+        </tr>
+      {/each}
+    </tbody>
+  </table>
 {/if}
 
 <style>

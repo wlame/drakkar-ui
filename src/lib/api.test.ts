@@ -143,4 +143,31 @@ describe('downloadUrl', () => {
   it('encodes filenames in the debug download helper', () => {
     expect(api.debugDownloadUrl('a b.db')).toBe('/api/v1/debug/download/a%20b.db')
   })
+
+  it('encodes archive names in the debug archive download helper', () => {
+    expect(api.debugArchiveDownloadUrl('cluster a-2026-08-09_00-00__2026-08-10_00-00.db.gz')).toBe(
+      '/api/v1/debug/archives/cluster%20a-2026-08-09_00-00__2026-08-10_00-00.db.gz',
+    )
+  })
+})
+
+describe('debugArchives', () => {
+  it('returns the parsed envelope on 200', async () => {
+    const body = {
+      archives: [{ name: 'a.db.gz', cluster: 'c1', from_ts: 1, to_ts: 2, size_bytes: 3 }],
+    }
+    fetchMock.mockResolvedValue(okJson(body))
+    await expect(api.debugArchives()).resolves.toEqual(body)
+    expect(call().url).toBe('/api/v1/debug/archives')
+  })
+
+  it('maps a 404 to null rather than throwing (a backend that predates archiving)', async () => {
+    fetchMock.mockResolvedValue(httpError(404, '{"error":"not found"}'))
+    await expect(api.debugArchives()).resolves.toBeNull()
+  })
+
+  it('still throws on a genuine server error', async () => {
+    fetchMock.mockResolvedValue(httpError(500, '{"error":"boom"}'))
+    await expect(api.debugArchives()).rejects.toThrow('GET /debug/archives → HTTP 500')
+  })
 })

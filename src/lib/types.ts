@@ -481,6 +481,29 @@ export interface MergeResult {
   source_files: string[]
 }
 
+// --- Debug: archives ---
+
+// One compressed recorder archive (GET /api/v1/debug/archives, v1.8): a
+// merged, gzip-compressed sqlite db that a periodic archive pass folded a
+// finished time window into and removed the raw files for. Parsed entirely
+// from the file name `<cluster>-<from>__<to>.db.gz` on the backend, so
+// from_ts/to_ts are epoch-seconds window bounds, not per-event timestamps.
+// Archives are terminal — never candidates for /debug/merge, so this type
+// deliberately has no filename-selection counterpart in the UI.
+export interface ArchiveEntry {
+  name: string
+  cluster: string
+  from_ts: number
+  to_ts: number
+  size_bytes: number
+}
+
+// GET /api/v1/debug/archives response envelope. archives is newest-first by
+// to_ts, already sorted server-side — the UI renders it as received.
+export interface ArchivesResponse {
+  archives: ArchiveEntry[]
+}
+
 // --- Debug: cache ---
 
 export type CacheScope = 'local' | 'cluster' | 'global'

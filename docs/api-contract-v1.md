@@ -177,6 +177,12 @@ the appendix.
   application/x-sqlite3`, `Content-Disposition: attachment; filename="..."`,
   `Cache-Control: no-store, private`. Filename hardening as merge. Token may
   ride as `?token=` (plain `<a>` downloads cannot set headers).
+- `GET /api/v1/debug/archives` → `{archives:[{name, cluster, from_ts, to_ts,
+  size_bytes}]}`, newest-first by `to_ts`. See v1.8 below.
+- `GET /api/v1/debug/archives/{name}` → gzip file attachment; `Content-Type:
+  application/gzip`, `Cache-Control: no-store, private`. 404 for a name that
+  fails the archive naming pattern or does not exist. Token may ride as
+  `?token=`, same as `/debug/download`.
 - `GET /api/v1/debug/trace?partition=&offset=` (both required int) → array of
   event rows. `partition` must fit int32 → 422 otherwise.
 - `GET /api/v1/debug/label-keys` → sorted array of distinct label-key strings.
@@ -750,6 +756,46 @@ that field is absent.
     data is stale; they clear the notice on the next payload that carries
     real data. Rendering an empty timeline here is wrong — it is
     indistinguishable from an idle worker.
+
+## v1.8 additions (2026-08-10)
+
+Read-only access to compressed recorder archives: the periodic archive pass
+(`ui.recorder.archive_enabled`) folds a finished time window's raw
+`<worker>-*.db` files into one gzip-compressed, merged sqlite db per
+cluster and deletes the raw files it merged. Additive: two new endpoints,
+two new schemas. A backend that predates this section has no
+`/api/v1/debug/archives` route; the UI's Archives section treats that 404
+the same as any other optional-endpoint miss and hides itself entirely —
+the raw-databases list above it is unaffected.
+
+- `GET /api/v1/debug/archives` → `{archives:[ArchiveEntry]}`, newest-first
+  by `to_ts`, already sorted server-side. Name-only: every field is parsed
+  from the archive file name, so listing costs one directory scan plus one
+  `stat` per match, never an open of the file itself.
+- **`ArchiveEntry`**: `{name:str, cluster:str, from_ts:number, to_ts:number,
+  size_bytes:int}`. `from_ts`/`to_ts` are the window's epoch-second bounds
+  (`[from_ts, to_ts)`), not per-event timestamps — a file belongs to the
+  window holding its own start time, so an archive can carry a handful of
+  events past its own `to_ts`.
+- **Name grammar**: `<cluster>-<from>__<to>.db.gz`, where `<cluster>` is
+  `[a-zA-Z0-9_-]+` (files with no cluster set fall under `default`) and
+  `<from>`/`<to>` are `YYYY-MM-DD_HH-MM` in UTC, minute precision — window
+  bounds always land on a multiple of the configured window width, so
+  seconds carry no information. `name` is opaque to the UI: it is passed
+  straight through to the download endpoint and never parsed client-side.
+- `GET /api/v1/debug/archives/{name}` → the archive file as an attachment:
+  `Content-Type: application/gzip`, `Content-Disposition: attachment;
+  filename="..."`, `Cache-Control: no-store, private`. `name` must match
+  the naming grammar above and resolve inside the backend's `db_dir`; a
+  rejected, path-escaping, or missing name all answer `404`, never a
+  distinguishable error — same non-disclosure shape as `/debug/download`.
+  The token rides as `?token=` exactly like `/debug/download`, since a
+  plain `<a>` navigation cannot carry an `Authorization` header.
+- **Not mergeable.** Archives never appear in, or as input to,
+  `/debug/merge` — they are already a merged, compressed, terminal product
+  of that same pipeline, not raw material for it. The UI's Archives section
+  is consequently read-only: it lists and downloads, with no selection
+  checkboxes and no path into the merge request.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 
