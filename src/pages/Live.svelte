@@ -333,12 +333,13 @@
       const map: Record<string, TaskView> = {}
       for (const t of rt.tasks) {
         const v = taskFromRecent(t)
-        // /recent-tasks doesn't carry stdin/stdout_lines/env/source_offsets —
-        // keep the WS-provided values so the Stdin/Stdout columns and hover
-        // detail survive resyncs. stdout_size comes from both paths, so take
-        // whichever side actually has it rather than letting one wipe the
-        // other (an older backend omits it from the resync row; the WS frame
-        // is missing for a task that finished before this page connected).
+        // /recent-tasks doesn't carry stdin/stdout_lines/env/source_offsets/
+        // exit_code — keep the WS-provided values so the Stdin/Stdout columns,
+        // hover detail, and exit_code color rules survive resyncs. stdout_size
+        // comes from both paths, so take whichever side actually has it rather
+        // than letting one wipe the other (an older backend omits it from the
+        // resync row; the WS frame is missing for a task that finished before
+        // this page connected).
         const prev = allTasks[t.task_id]
         if (prev) {
           v.stdin_lines = prev.stdin_lines
@@ -347,6 +348,9 @@
           v.stdout_lines = prev.stdout_lines
           v.env = v.env ?? prev.env
           v.source_offsets = prev.source_offsets
+          // exit_code is WS-only too and is color-rule-relevant, so a resync
+          // must not wipe a WS-delivered value back to null.
+          v.exit_code = v.exit_code ?? prev.exit_code
         }
         map[t.task_id] = v
       }
