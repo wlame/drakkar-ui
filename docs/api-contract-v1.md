@@ -596,9 +596,9 @@ never fetches the module and never reaches `CustomCell`.
   Each function has the signature `(value, row, cell) => HTMLElement`:
   - `value` — the cell's raw decoded value (the same value the built-in
     link/badge/format path would have received).
-  - `row` — the full row object for a table/tables/tree column; `undefined`
-    for a scalar entry or a detail-panel element addressed by a bare field
-    (there is no sibling row to hand over).
+  - `row` — the full row object for a table/tables/tree column, or the
+    clicked row for a detail-panel element; `undefined` only for a scalar
+    entry (there is no sibling row to hand over).
   - `cell` — a small context object, currently `{key?: string}`: the
     column key, the entry key, or the detail element's field name,
     whichever declared the renderer.

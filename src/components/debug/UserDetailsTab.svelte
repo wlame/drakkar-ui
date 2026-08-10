@@ -169,10 +169,12 @@
             </p>
           {:else if entry.view === 'custom'}
             {@const value = details.data[entry.key]}
+            {@const cell = renderCell(value, undefined, entry, getLinkBases())}
             <!-- 'custom' is a closed view on its own (not layered on top of
-                 link_template/badge_colors/format), so there is no
-                 renderCell call and no precedence question here either. -->
-            <p class="value">
+                 link_template/badge_colors/format), so renderCell is only
+                 used here to resolve `hint` — its text/link/badge output is
+                 unused, since those are mutually exclusive with renderer. -->
+            <p class="value" title={cell.title}>
               <CustomCell
                 name={entry.renderer ?? ''}
                 {value}

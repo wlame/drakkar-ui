@@ -78,4 +78,11 @@ describe('getRenderer', () => {
   it('returns null before any load has been attempted', () => {
     expect(getRenderer('widget')).toBeNull()
   })
+
+  it('returns null for an inherited Object.prototype name instead of resolving it', async () => {
+    stubImport({ default: { known: () => document.createElement('div') } })
+    await loadCustomRenderers()
+
+    expect(getRenderer('constructor')).toBeNull()
+  })
 })

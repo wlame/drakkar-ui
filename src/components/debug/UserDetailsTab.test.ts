@@ -493,6 +493,40 @@ describe('UserDetailsTab custom cell rendering — scalar entry', () => {
     expect(target.querySelector('.value')?.textContent).toBe('ok')
     cleanup()
   })
+
+  it('resolves entry.hint into a title attribute on the wrapping element', () => {
+    mockedGetRenderer.mockReturnValue(() => {
+      const el = document.createElement('em')
+      el.textContent = 'scalar-pill'
+      return el
+    })
+    const hintedDetails: ProbeUserDetails = {
+      model: 'CustomScalarDetails',
+      layout: {
+        sections: [
+          {
+            title: 'Section',
+            entries: [
+              {
+                key: 'status',
+                label: 'Status',
+                view: 'custom',
+                columns: null,
+                renderer: 'statusPill',
+                hint: 'Status hint: {value}',
+              },
+            ],
+          },
+        ],
+      },
+      data: { status: 'ok' },
+      writes: [{ field: 'status', op: 'set', origin_stage: 'arrange', ms_since_start: 1 }],
+    }
+    const { target, cleanup } = renderTab(hintedDetails)
+
+    expect(target.querySelector('.value')?.getAttribute('title')).toBe('Status hint: ok')
+    cleanup()
+  })
 })
 
 describe('UserDetailsTab detail panel custom element', () => {

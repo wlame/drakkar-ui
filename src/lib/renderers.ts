@@ -75,8 +75,15 @@ export async function loadCustomRenderers(): Promise<void> {
 
 // Returns the named renderer, or null when the module is absent, the name
 // is unknown, or the entry is not a function.
+//
+// The renderer-name grammar (^[a-zA-Z_][a-zA-Z0-9_]*$) admits 'constructor',
+// 'toString', 'hasOwnProperty', and other Object.prototype member names, so a
+// plain `registry?.[name]` lookup would silently resolve those to inherited
+// functions instead of a real "not registered" miss. Object.hasOwn gates the
+// lookup to the module's own declared entries.
 export function getRenderer(name: string): RendererFn | null {
-  const entry = registry?.[name]
+  if (!registry || !Object.hasOwn(registry, name)) return null
+  const entry = registry[name]
   return typeof entry === 'function' ? (entry as RendererFn) : null
 }
 
