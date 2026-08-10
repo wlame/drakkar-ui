@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   TIMELINE_ROLES,
@@ -190,6 +190,40 @@ describe('isOverridden', () => {
 
   it('is false when both the stored value and backend are absent for a role', () => {
     expect(isOverridden(backend, { highlight: undefined }, 'highlight')).toBe(false)
+  })
+})
+
+describe('storage access failures (private-mode denial)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('loadRoleOverrides returns {} when getItem throws', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('denied')
+    })
+    expect(loadRoleOverrides('worker-a')).toEqual({})
+  })
+
+  it('saveRoleOverride does not throw when setItem throws', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('denied')
+    })
+    expect(() => saveRoleOverride('worker-a', 'tag', 'module')).not.toThrow()
+  })
+
+  it('clearRoleOverride does not throw when setItem throws', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('denied')
+    })
+    expect(() => clearRoleOverride('worker-a', 'tag')).not.toThrow()
+  })
+
+  it('clearAllRoleOverrides does not throw when removeItem throws', () => {
+    vi.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => {
+      throw new Error('denied')
+    })
+    expect(() => clearAllRoleOverrides('worker-a')).not.toThrow()
   })
 })
 
