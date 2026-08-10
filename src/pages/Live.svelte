@@ -8,7 +8,7 @@
   import { api } from '../lib/api'
   import type { ArrangeTaskState, TaskResult, MessageResult, WindowResult, WsEvent } from '../lib/api'
   import { hash, setHash, link } from '../lib/router'
-  import { hydrateFromOverview, runtimeConfig } from '../lib/config'
+  import { hydrateFromOverview, runtimeConfig, identity } from '../lib/config'
   import { createLiveSocket, type WsStatus, type LiveSocket } from '../lib/ws'
   import { pausableInterval, visibilityGate } from '../lib/visibility'
   import { fmtTimeMs, dur2, fmtBytes, safeJsonParse } from '../lib/format'
@@ -66,6 +66,12 @@
   let windowResults = $state<WindowResult[]>([])
 
   let socket: LiveSocket | null = null
+
+  // ui.timeline (bar colors, label roles, history depth) travels on the
+  // identity payload. Absent on backends that predate it — the timeline then
+  // keeps its legacy 10-minute window and fixed status colors.
+  const timelineConfig = $derived($identity?.timeline)
+  const maxAgeMinutes = $derived(timelineConfig?.max_age_minutes ?? 10)
 
   const tasksList = $derived(Object.values(allTasks))
   // How many finished rows the table actually renders.
@@ -311,18 +317,21 @@
   async function resync() {
     if (frozen) return
     try {
-      const rt = await api.recentTasks(10)
+      const rt = await api.recentTasks(maxAgeMinutes)
       const map: Record<string, TaskView> = {}
       for (const t of rt.tasks) {
         const v = taskFromRecent(t)
-        // /recent-tasks doesn't carry stdin/stdout/env/source_offsets — keep
-        // the WS-provided values so the Stdin/Stdout columns and hover detail
-        // survive resyncs.
+        // /recent-tasks doesn't carry stdin/stdout_lines/env/source_offsets —
+        // keep the WS-provided values so the Stdin/Stdout columns and hover
+        // detail survive resyncs. stdout_size comes from both paths, so take
+        // whichever side actually has it rather than letting one wipe the
+        // other (an older backend omits it from the resync row; the WS frame
+        // is missing for a task that finished before this page connected).
         const prev = allTasks[t.task_id]
         if (prev) {
           v.stdin_lines = prev.stdin_lines
           v.stdin_size = prev.stdin_size
-          v.stdout_size = prev.stdout_size
+          v.stdout_size = v.stdout_size ?? prev.stdout_size
           v.stdout_lines = prev.stdout_lines
           v.env = v.env ?? prev.env
           v.source_offsets = prev.source_offsets
@@ -509,7 +518,14 @@
       scan returns.
     </p>
   {/if}
-  <Timeline tasks={tasksList} {laneCount} paused={frozen} minDurationMs={$runtimeConfig.wsMinDurationMs} />
+  <Timeline
+    tasks={tasksList}
+    {laneCount}
+    paused={frozen}
+    minDurationMs={$runtimeConfig.wsMinDurationMs}
+    timeline={timelineConfig}
+    workerId={$identity?.worker_id}
+  />
 
   <h2>
     Finished <span class="count">({finishedAll.length})</span>

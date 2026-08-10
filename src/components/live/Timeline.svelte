@@ -2,11 +2,12 @@
   // Executor timeline, ported from live.html's Executors tab: an h2 with the
   // window note, a Zoom toolbar + legend row, and a white panel containing the
   // time axis, one lane per executor slot and a fixed-height hover-detail strip.
-  // Bars are colored by status; the view auto-follows "now" until the operator
-  // scrolls away from the right edge.
+  // Bars are colored by the configured rules (falling back to status); the
+  // view auto-follows "now" until the operator scrolls away from the right
+  // edge.
   //
   // Coordinate system: bar/tick positions are computed against a fixed
-  // `originTs`, not against "now". An earlier version used `now - WINDOW_SEC`
+  // `originTs`, not against "now". An earlier version used `now - maxAgeSec`
   // as the origin, which steps every 250ms — every bar's absolute pixel
   // position (and the strip's width) was recomputed against a moving target,
   // which reads as a jump, not a slide, four times a second. Here `originTs`
@@ -19,13 +20,31 @@
   import { baseTaskId, type TaskView } from '../../lib/live'
   import { fmtTime, fmtTimeMs, fmtBytes } from '../../lib/format'
   import { pausableInterval, isHidden } from '../../lib/visibility'
+  import type { TimelineConfig } from '../../lib/types'
+  import { barColorFor, legendEntries } from '../../lib/timelineRules'
+  import {
+    TIMELINE_ROLES,
+    loadRoleOverrides,
+    saveRoleOverride,
+    clearRoleOverride,
+    clearAllRoleOverrides,
+    resolveRoles,
+    labelKeyUnion,
+    isOverridden,
+    type RoleOverrides,
+    type TimelineRole,
+  } from '../../lib/timelineRoles'
   import {
     barGeometry,
+    barTexts,
+    deriveMarkers,
+    textColorFor,
     tickMarks,
     followScrollLeft,
     shouldRebase,
     rebase,
     RENDER_DELAY_SEC,
+    type MarkerPin,
   } from '../../lib/timeline'
 
   let {
@@ -33,10 +52,23 @@
     laneCount = 8,
     paused = false,
     minDurationMs = 0,
-  }: { tasks?: TaskView[]; laneCount?: number; paused?: boolean; minDurationMs?: number } =
-    $props()
+    timeline = undefined,
+    workerId = '',
+  }: {
+    tasks?: TaskView[]
+    laneCount?: number
+    paused?: boolean
+    minDurationMs?: number
+    // ui.timeline from GET /api/v1/identity: bar-color rules, label-role
+    // bindings and the history depth. Undefined on backends that predate it,
+    // which keeps the legacy 10-minute, status-colored timeline.
+    timeline?: TimelineConfig
+    // Which worker's role overrides to read/write (they are per worker).
+    workerId?: string
+  } = $props()
 
-  const WINDOW_SEC = 600 // 10 minutes
+  // How far back the timeline draws when the backend says nothing.
+  const DEFAULT_MAX_AGE_MIN = 10
   const LANE_H = 22
   const LANE_GAP = 2
   const BASE_PX_PER_SEC = 8
@@ -56,13 +88,34 @@
   let now = $state(Date.now() / 1000)
   let viewport = $state<HTMLDivElement>()
   let hovered = $state<TaskView | null>(null)
+  let hoveredMarker = $state<MarkerPin | null>(null)
   let hiddenState = $state(isHidden())
 
+  // --- configured depth, colors and label roles -------------------------------
+
+  // The visible history depth, in seconds. Everything that used to be the
+  // fixed 10-minute WINDOW_SEC reads this instead: the stale cut, the rebase
+  // step, and the heading note.
+  const maxAgeMinutes = $derived(timeline?.max_age_minutes ?? DEFAULT_MAX_AGE_MIN)
+  const maxAgeSec = $derived(maxAgeMinutes * 60)
+
+  const colorRules = $derived(timeline?.color_rules ?? [])
+  const ruleLegend = $derived(legendEntries(colorRules))
+  // The backend's role bindings; the viewer's local overrides win over them.
+  const backendRoles = $derived(timeline?.labels ?? {})
+  // Writable derived: it re-reads storage whenever the worker identity lands
+  // or changes, and the popover handlers assign to it directly after a write
+  // so an override applies on the same tick it is made.
+  let overrides = $derived<RoleOverrides>(loadRoleOverrides(workerId))
+  const roles = $derived(resolveRoles(backendRoles, overrides))
+
   // Chosen once at mount, one full window back — pre-existing tasks from the
-  // last WINDOW_SEC have room to draw; anything older still clamps to the
+  // last `maxAgeSec` have room to draw; anything older still clamps to the
   // left edge via barGeometry, same as the old windowStart clamp did. Only
-  // `maybeRebase` moves it again after that.
-  let originTs = $state(Date.now() / 1000 - WINDOW_SEC)
+  // `maybeRebase` and the deepening effect move it again after that.
+  // untrack: this is an initial value, not a subscription — a depth that
+  // lands later is picked up by that effect.
+  let originTs = $state(Date.now() / 1000 - untrack(() => maxAgeSec))
 
   $effect(() => {
     if (paused) return
@@ -82,24 +135,41 @@
     return () => document.removeEventListener('visibilitychange', onVisibilityChange)
   })
 
-  // Slide the origin forward by one window once the strip has grown to more
-  // than twice WINDOW_SEC, so the DOM/coordinate range doesn't grow forever.
-  // The viewport's scrollLeft shifts by the exact same pixel delta in the same
-  // synchronous step, which is what makes the jump invisible — see the
-  // pixel-delta invariant documented and tested next to `rebase()` in
-  // src/lib/timeline.ts. Runs from the 250ms tick above (not the follow rAF
-  // loop) so it keeps happening even while the operator has scrolled away and
-  // auto-follow is off.
-  function maybeRebase() {
-    if (!shouldRebase(now, originTs, WINDOW_SEC)) return
-    const newOrigin = rebase(originTs, WINDOW_SEC)
+  // Moves the coordinate origin and shifts the viewport's scrollLeft by the
+  // exact same pixel delta in the same synchronous step, which is what makes
+  // the move invisible — see the pixel-delta invariant documented and tested
+  // next to `rebase()` in src/lib/timeline.ts. Both callers below depend on
+  // that pairing.
+  function setOrigin(newOrigin: number) {
     const deltaPx = (newOrigin - originTs) * pxPerSec
     originTs = newOrigin
     if (viewport) applyScrollLeft(viewport.scrollLeft - deltaPx)
   }
 
+  // Slide the origin forward by one window once the strip has grown to more
+  // than twice maxAgeSec, so the DOM/coordinate range doesn't grow forever.
+  // Runs from the 250ms tick above (not the follow rAF loop) so it keeps
+  // happening even while the operator has scrolled away and auto-follow is
+  // off.
+  function maybeRebase() {
+    if (!shouldRebase(now, originTs, maxAgeSec)) return
+    setOrigin(rebase(originTs, maxAgeSec))
+  }
+
+  // The identity payload (and with it the configured depth) usually lands
+  // after this component mounts, so the origin picked at mount can be far too
+  // recent for the window the backend actually serves — a 60-minute history
+  // would pile up against the left edge of a 10-minute strip. Pull the origin
+  // back once when a deeper depth appears.
+  $effect(() => {
+    const wanted = Date.now() / 1000 - maxAgeSec
+    untrack(() => {
+      if (wanted < originTs) setOrigin(wanted)
+    })
+  })
+
   const pxPerSec = $derived(BASE_PX_PER_SEC * zoomLevel)
-  const windowStart = $derived(now - WINDOW_SEC)
+  const windowStart = $derived(now - maxAgeSec)
   const lanesHeight = $derived(laneCount * (LANE_H + LANE_GAP))
 
   interface Bar {
@@ -108,17 +178,58 @@
     left: number
     width: number
     color: string
+    // Text drawn inside the bar, already truncated and fitted by barTexts;
+    // absent when the role is unbound, the task lacks the label, or the bar
+    // is too narrow.
+    tag?: string
+    caption?: string
+    // Readable text color for `color`; '' when the bar draws no text.
+    textColor: string
+    // Toolbar highlight/filter outcome. Both false while no input is active,
+    // which is what keeps an untouched timeline looking exactly as before.
+    emph: boolean
+    dim: boolean
   }
 
-  function barColor(s: string): string {
-    if (s === 'completed') return '#34d399'
-    if (s === 'failed') return '#f87171'
-    return '#fbbf24'
+  // Shared empty result so the common "no tag/caption roles bound" case
+  // allocates nothing per bar per frame.
+  const NO_BAR_TEXTS: { tag?: string; caption?: string } = {}
+
+  // --- toolbar role inputs ----------------------------------------------------
+  //
+  // Both are kept as strings: an empty box means "inactive", which a number
+  // binding could not express, and the filter needle is a string anyway.
+  let highlightInput = $state('')
+  let filterInput = $state('')
+
+  const highlightKey = $derived(roles.highlight ?? '')
+  const filterKey = $derived(roles.filter ?? '')
+  const highlightThreshold = $derived(
+    highlightInput.trim() === '' ? Number.NaN : Number(highlightInput),
+  )
+  const highlightActive = $derived(highlightKey !== '' && Number.isFinite(highlightThreshold))
+  const filterNeedle = $derived(filterInput.trim().toLowerCase())
+  const filterActive = $derived(filterKey !== '' && filterNeedle !== '')
+  const roleInputActive = $derived(highlightActive || filterActive)
+
+  // A task missing the label never matches an active input — it cannot be
+  // shown to clear the threshold or contain the needle.
+  function matchesHighlight(t: TaskView, key: string, threshold: number): boolean {
+    const raw = t.labels?.[key]
+    if (raw === undefined) return false
+    const value = parseFloat(raw)
+    return Number.isFinite(value) && value > threshold
+  }
+  function matchesFilter(t: TaskView, key: string, needle: string): boolean {
+    const raw = t.labels?.[key]
+    if (raw === undefined) return false
+    return raw.toLowerCase().includes(needle)
   }
 
   // Horizontal culling bounds, tracked from the viewport's scroll position.
   //
-  // The strip is WINDOW_SEC * pxPerSec wide — 9600px at the default zoom —
+  // The strip is maxAgeSec * pxPerSec wide — 9600px at the default zoom and
+  // the default depth —
   // while the viewport shows perhaps 1200px of it. Without culling roughly 85%
   // of the bars were in the DOM purely to sit off-screen, and every `now` tick
   // re-laid-out all of them. On a worker producing hundreds of tasks a second
@@ -166,6 +277,10 @@
     const culling = viewportWidth > 0
     const visibleFrom = scrollLeft - CULL_MARGIN_PX
     const visibleTo = scrollLeft + viewportWidth + CULL_MARGIN_PX
+    // Read the role bindings once per pass, not once per bar.
+    const tagKey = roles.tag
+    const captionKey = roles.caption
+    const drawsText = tagKey !== undefined || captionKey !== undefined
     const out: Bar[] = []
     for (const t of tasks) {
       // `now` still ticks every 250ms, so a running bar's right edge still
@@ -179,9 +294,52 @@
       const lane = Math.min(Math.max(t.slot ?? 0, 0), Math.max(laneCount - 1, 0))
       const { left, width } = barGeometry(t.start_ts, end, originTs, pxPerSec, MIN_BAR_PX)
       if (culling && (left + width < visibleFrom || left > visibleTo)) continue
-      out.push({ task: t, lane, left, width, color: barColor(t.status) })
+      const color = barColorFor(t, colorRules)
+      const texts = drawsText
+        ? barTexts(
+            width,
+            tagKey !== undefined ? t.labels?.[tagKey] : undefined,
+            captionKey !== undefined ? t.labels?.[captionKey] : undefined,
+          )
+        : NO_BAR_TEXTS
+      // Every active input must pass; with none active no bar is marked, so
+      // emph/dim never touch the default look.
+      const passes =
+        roleInputActive &&
+        (!highlightActive || matchesHighlight(t, highlightKey, highlightThreshold)) &&
+        (!filterActive || matchesFilter(t, filterKey, filterNeedle))
+      out.push({
+        task: t,
+        lane,
+        left,
+        width,
+        color,
+        tag: texts.tag,
+        caption: texts.caption,
+        textColor: texts.tag || texts.caption ? textColorFor(color) : '',
+        emph: passes,
+        dim: roleInputActive && !passes,
+      })
     }
     return out
+  })
+
+  // Marker pins for the marker-role label, one per distinct value at its
+  // earliest start. Deliberately NOT derived on scrollLeft: this walks every
+  // loaded task, so it recomputes only when the tasks, the role, the origin
+  // or the zoom actually change — never on a scroll or a `now` tick.
+  const markerKey = $derived(roles.marker ?? '')
+  const markers = $derived(deriveMarkers(tasks, markerKey, originTs, pxPerSec))
+
+  // Culled the same way bars are: a deep window with a high-cardinality
+  // marker label can produce thousands of pins, and only the visible band
+  // needs to exist in the DOM. Filtering the precomputed array is cheap
+  // enough to redo per frame.
+  const visibleMarkers = $derived.by<MarkerPin[]>(() => {
+    if (viewportWidth <= 0 || markers.length === 0) return markers
+    const visibleFrom = scrollLeft - CULL_MARGIN_PX
+    const visibleTo = scrollLeft + viewportWidth + CULL_MARGIN_PX
+    return markers.filter((m) => m.left >= visibleFrom && m.left <= visibleTo)
   })
 
   // Axis ticks: HH:MM:SS labels at a zoom-dependent interval (the reference's
@@ -304,6 +462,56 @@
     following = true
   }
 
+  // --- role-override popover --------------------------------------------------
+  //
+  // Lives in the toolbar, outside every keyed {#each}, so applying an override
+  // cannot detach the very element the click started on while the bar list
+  // re-renders underneath.
+  let gearOpen = $state(false)
+  let gearEl = $state<HTMLDivElement>()
+
+  // Scanning every loaded task for label keys is only worth it while the
+  // picker is actually open.
+  const labelKeys = $derived(gearOpen ? labelKeyUnion(tasks, backendRoles) : [])
+  const anyOverridden = $derived(
+    TIMELINE_ROLES.some((role) => isOverridden(backendRoles, overrides, role)),
+  )
+
+  // The union plus the role's own resolved key, so an override pointing at a
+  // key no loaded task currently carries still shows as the selected option
+  // instead of silently reading as "(none)".
+  function roleOptions(role: TimelineRole): string[] {
+    const current = roles[role]
+    if (!current || labelKeys.includes(current)) return labelKeys
+    return [...labelKeys, current].sort()
+  }
+
+  function applyRoleSelection(role: TimelineRole, value: string) {
+    // '' is the "(none)" option — an explicit disable, stored as null. That
+    // is not the same as having no override, which follows the backend.
+    saveRoleOverride(workerId, role, value === '' ? null : value)
+    overrides = loadRoleOverrides(workerId)
+  }
+  function resetRole(role: TimelineRole) {
+    clearRoleOverride(workerId, role)
+    overrides = loadRoleOverrides(workerId)
+  }
+  function resetAllRoles() {
+    clearAllRoleOverrides(workerId)
+    overrides = loadRoleOverrides(workerId)
+  }
+
+  // Close on a click anywhere outside the gear. pointerdown rather than click
+  // so the decision is made against the DOM as it was when the press started.
+  $effect(() => {
+    if (!gearOpen) return
+    function onPointerDown(e: PointerEvent) {
+      if (gearEl && !gearEl.contains(e.target as Node)) gearOpen = false
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  })
+
   // Ident mirrors the reference taskIdent(): p<partition>:o<offset> for Kafka
   // tasks, <client>:<request_id[:8]> for HTTP ones.
   function taskIdent(t: TaskView): string {
@@ -331,7 +539,7 @@
 <h2 class="tl-title">
   Timeline
   <span class="tl-note"
-    >(last 10 min, {RENDER_DELAY_SEC} sec delayed{#if minDurationMs > 0}, tasks &ge; {minDurationMs}ms{/if})</span
+    >(last {maxAgeMinutes} min, {RENDER_DELAY_SEC} sec delayed{#if minDurationMs > 0}, tasks &ge; {minDurationMs}ms{/if})</span
   >
 </h2>
 
@@ -344,10 +552,76 @@
     <button class="tbtn reset" onclick={zoomReset} title="Reset zoom">Reset</button>
   </div>
   <button class="tbtn now" onclick={jumpNow}>Now &rarr;</button>
+  {#if highlightKey}
+    <label class="role-input" title={`Emphasize tasks whose ${highlightKey} label exceeds n`}>
+      <span class="role-key">{highlightKey} &gt;</span>
+      <input
+        class="role-num"
+        type="number"
+        placeholder="n"
+        value={highlightInput}
+        oninput={(e) => (highlightInput = e.currentTarget.value)}
+      />
+    </label>
+  {/if}
+  {#if filterKey}
+    <label class="role-input" title={`Emphasize tasks whose ${filterKey} label contains the text`}>
+      <span class="role-key">{filterKey} &ni;</span>
+      <input
+        class="role-text"
+        type="text"
+        placeholder="contains"
+        value={filterInput}
+        oninput={(e) => (filterInput = e.currentTarget.value)}
+      />
+    </label>
+  {/if}
   <div class="legend">
     <span><i style:background="#34d399"></i>completed</span>
     <span><i style:background="#fbbf24"></i>running</span>
     <span><i style:background="#f87171"></i>failed</span>
+    {#each ruleLegend as entry}
+      <span><i style:background={entry.color}></i>{entry.label}</span>
+    {/each}
+  </div>
+  <div class="roles" bind:this={gearEl}>
+    <button
+      class="tbtn gear"
+      onclick={() => (gearOpen = !gearOpen)}
+      title="Label roles"
+      aria-label="Label roles"
+      aria-expanded={gearOpen}
+    >
+      &#9881;{#if anyOverridden}<i class="dot"></i>{/if}
+    </button>
+    {#if gearOpen}
+      <div class="role-pop">
+        <div class="role-pop-head">
+          <span>Label roles</span>
+          <button class="tbtn" onclick={resetAllRoles}>Reset all</button>
+        </div>
+        {#each TIMELINE_ROLES as role}
+          <div class="role-row">
+            <span class="role-name"
+              >{role}{#if isOverridden(backendRoles, overrides, role)}<i class="dot"></i>{/if}</span
+            >
+            <select
+              value={roles[role] ?? ''}
+              onchange={(e) => applyRoleSelection(role, e.currentTarget.value)}
+              aria-label={`${role} label`}
+            >
+              <option value="">(none)</option>
+              {#each roleOptions(role) as key}
+                <option value={key}>{key}{backendRoles[role] === key ? ' (default)' : ''}</option>
+              {/each}
+            </select>
+            <button class="tbtn" onclick={() => resetRole(role)} disabled={!(role in overrides)}
+              >Reset</button
+            >
+          </div>
+        {/each}
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -360,6 +634,26 @@
           <div class="tick-label" style:left={`${tk.left}px`}>{tk.label}</div>
         {/each}
       </div>
+      {#if markerKey}
+        <div class="tl-markers">
+          {#each visibleMarkers as m (m.ts)}
+            <button
+              class="marker-pin"
+              type="button"
+              style:left={`${m.left}px`}
+              onmouseenter={() => (hoveredMarker = m)}
+              onmouseleave={() => (hoveredMarker = null)}
+              onfocus={() => (hoveredMarker = m)}
+              onblur={() => (hoveredMarker = null)}
+            >
+              <span class="marker-val">{m.values[0]}</span>
+              {#if m.values.length > 1}
+                <span class="marker-count">+{m.values.length - 1}</span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      {/if}
       <div class="tl-lanes" style:height={`${lanesHeight}px`}>
         {#each Array(laneCount) as _, i}
           {#if i % 2 === 0}
@@ -367,26 +661,37 @@
           {/if}
           <div class="lane-label" style:top={`${i * (LANE_H + LANE_GAP)}px`}>#{i}</div>
         {/each}
+        {#each visibleMarkers as m (m.ts)}
+          <div class="marker-line" style:left={`${m.left}px`}></div>
+        {/each}
         {#each bars as b (b.task.task_id)}
           <a
             class="bar"
-            class:http={b.task.origin === 'http'}
+            class:emph={b.emph}
+            class:dim={b.dim}
             href={`/task/${encodeURIComponent(baseTaskId(b.task.task_id))}`}
             use:link
             style:left={`${b.left}px`}
             style:top={`${b.lane * (LANE_H + LANE_GAP)}px`}
             style:width={`${b.width}px`}
             style:background={b.color}
+            style:color={b.textColor}
             onmouseenter={() => (hovered = b.task)}
             onmouseleave={() => (hovered = null)}
             aria-label={b.task.task_id}
-          ></a>
+          >
+            {#if b.caption}<span class="bar-caption">{b.caption}</span>{/if}
+            {#if b.tag}<span class="bar-tag">{b.tag}</span>{/if}
+          </a>
         {/each}
       </div>
     </div>
   </div>
 
   <div class="tl-hover">
+    <!-- A hovered bar wins: a pin whose element was culled away mid-hover
+         never got its mouseleave, and a stale marker must not shadow the
+         task detail the operator is actually pointing at. -->
     {#if hovered}
       <span class="hl">Task:</span><span class="hv">{hovered.task_id}</span>
       <span class="hl">Slot:</span><span class="hv"
@@ -430,6 +735,9 @@
           <span class="chip env-chip">{k}={v}</span>
         {/each}
       {/if}
+    {:else if hoveredMarker}
+      <span class="hl">marker:</span><span class="hv">{hoveredMarker.values.join(', ')}</span>
+      <span class="hl">at</span><span class="hv">{fmtTimeMs(hoveredMarker.ts)}</span>
     {:else}
       <span class="hint">hover over a task bar to see details</span>
     {/if}
@@ -493,9 +801,38 @@
   .tbtn.now {
     padding: 0.25rem 0.5rem;
   }
+  /* Toolbar inputs for the highlight (numeric) and filter (substring) roles.
+     Rendered only when the role resolves to a label key. */
+  .role-input {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.75rem;
+    color: #6b7280;
+  }
+  .role-key {
+    font-family: var(--mono);
+    color: #9ca3af;
+  }
+  .role-input input {
+    border: 1px solid var(--line);
+    border-radius: 0.25rem;
+    padding: 0.0625rem 0.25rem;
+    font-size: 0.75rem;
+    font-family: var(--mono);
+    background: #fff;
+  }
+  .role-num {
+    width: 5rem;
+  }
+  .role-text {
+    width: 7rem;
+  }
+
   .legend {
     margin-left: auto;
     display: flex;
+    flex-wrap: wrap;
     gap: 0.5rem;
     font-size: 0.75rem;
     color: #6b7280;
@@ -510,6 +847,69 @@
     height: 0.75rem;
     border-radius: 0.25rem;
     margin-right: 0.25rem;
+  }
+
+  /* Role-override popover. Anchored to the gear button and kept in the
+     toolbar, well away from the bar list that re-renders under it. */
+  .roles {
+    position: relative;
+  }
+  .gear {
+    font-size: 0.875rem;
+    line-height: 1.2;
+  }
+  .dot {
+    display: inline-block;
+    width: 0.375rem;
+    height: 0.375rem;
+    border-radius: 50%;
+    background: #0d9488;
+    margin-left: 0.25rem;
+    vertical-align: middle;
+  }
+  .role-pop {
+    position: absolute;
+    top: calc(100% + 0.25rem);
+    right: 0;
+    z-index: 20;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 0.375rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    padding: 0.5rem;
+    min-width: 20rem;
+  }
+  .role-pop-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    color: #6b7280;
+    margin-bottom: 0.375rem;
+  }
+  .role-row {
+    display: grid;
+    grid-template-columns: 5rem 1fr auto;
+    align-items: center;
+    gap: 0.375rem;
+    margin-top: 0.25rem;
+  }
+  .role-name {
+    font-size: 0.75rem;
+    color: #6b7280;
+  }
+  .role-row select {
+    font-size: 0.75rem;
+    font-family: var(--mono);
+    border: 1px solid var(--line);
+    border-radius: 0.25rem;
+    padding: 0.0625rem 0.25rem;
+    background: #fff;
+    max-width: 100%;
+  }
+  .role-row button:disabled {
+    opacity: 0.4;
   }
 
   /* White card wrapping axis + lanes + hover strip (bg-white rounded-lg
@@ -583,11 +983,83 @@
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
     border: 1px solid rgba(0, 0, 0, 0.15);
     z-index: 2;
+    overflow: hidden;
   }
-  /* HTTP-origin tasks: distinct purple, same as the reference .task--http. */
-  .bar.http {
-    background: #9c27b0 !important;
-    border-color: #6a1b9a !important;
+  /* Highlight/filter result. Neither class is applied while every toolbar
+     input is empty, so an untouched timeline is unaffected. */
+  .bar.emph {
+    outline: 2px solid #1f2937;
+    opacity: 1;
+    z-index: 3;
+  }
+  .bar.dim {
+    opacity: 0.25;
+  }
+  /* Bar text. Both pieces are drawn only when barTexts said they fit, and
+     both are click-through so the bar itself stays the hover/link target. */
+  .bar-tag {
+    position: absolute;
+    right: 3px;
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 0 2px;
+    border: 1px solid currentColor;
+    border-radius: 2px;
+    font-family: var(--mono);
+    font-size: 10px;
+    line-height: 1.3;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  .bar-caption {
+    position: absolute;
+    left: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    line-height: 1.3;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+
+  /* Marker rail between the axis and the lanes: one pin per distinct value
+     of the marker-role label, with its guide line drawn down the lanes. */
+  .tl-markers {
+    position: relative;
+    height: 14px;
+  }
+  .marker-pin {
+    position: absolute;
+    top: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    background: transparent;
+    border: none;
+    border-left: 1px solid #9ca3af;
+    border-radius: 0;
+    padding: 0 3px;
+    font-family: var(--mono);
+    font-size: 9px;
+    line-height: 14px;
+    color: #6b7280;
+    white-space: nowrap;
+    cursor: default;
+  }
+  .marker-count {
+    background: #e5e7eb;
+    border-radius: 6px;
+    padding: 0 3px;
+    color: #4b5563;
+  }
+  .marker-line {
+    position: absolute;
+    top: 0;
+    width: 1px;
+    height: 100%;
+    background: #9ca3af;
+    pointer-events: none;
+    z-index: 1;
   }
 
   /* Hover-detail strip: fixed 9em height so the panel doesn't jump as tasks

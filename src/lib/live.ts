@@ -22,11 +22,12 @@ export interface TaskView {
   origin: string
   client_name: string | null
   request_id: string | null
-  // Stdout size/lines arrive on WS task_completed frames only; stdin/env/
-  // source_offsets on WS task_started frames only (the /recent-tasks resync
-  // carries none of them) — all kept nullable and merged across resyncs so
-  // the finished-table Stdin/Stdout columns and the timeline hover detail
-  // survive a resync.
+  // stdout_size comes from both paths (WS task_completed frames and the
+  // /recent-tasks resync, v1.7); stdout_lines arrives on WS frames only, and
+  // stdin/env/source_offsets on WS task_started frames only — all kept
+  // nullable and merged across resyncs so the finished-table Stdin/Stdout
+  // columns, the timeline hover detail, and stdout_size color rules survive
+  // a resync.
   stdout_size: number | null
   stdout_lines: number | null
   stdin_lines: number | null
@@ -56,7 +57,8 @@ export function taskFromRecent(r: RecentTask): TaskView {
     origin: r.origin,
     client_name: r.client_name,
     request_id: r.request_id,
-    stdout_size: null,
+    // Present since v1.7; an older backend omits it entirely.
+    stdout_size: r.stdout_size ?? null,
     stdout_lines: null,
     stdin_lines: null,
     stdin_size: null,
