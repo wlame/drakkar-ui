@@ -737,6 +737,19 @@ that field is absent.
     behavior the UI already read: `true` when the row cap dropped older
     events from the query window, or when the assembled result was trimmed
     down to `limit` tasks.
+  - `unavailable:bool` (optional) marks a payload the backend could not
+    fill: the recorder read failed because no reader connection was
+    available, or the bounded main-loop dispatch timed out. `tasks` is then
+    an empty placeholder, not a measurement — the worker may well be busy.
+    A backend that predates this field answers the same condition with a
+    bare `[]` instead of an object, so a client must treat any response
+    that is not an object carrying a `tasks` array as equivalent to
+    `unavailable: true` rather than as zero tasks. **Degradation
+    semantics**: on either form, clients keep the tasks, lane count, and
+    truncation state they are already showing and surface a notice that the
+    data is stale; they clear the notice on the next payload that carries
+    real data. Rendering an empty timeline here is wrong — it is
+    indistinguishable from an idle worker.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 

@@ -231,6 +231,15 @@ export interface RecentTasksResponse {
    * as a complete one — on a high-fan-out worker the cap is reachable.
    */
   truncated?: boolean
+  /**
+   * The recorder data could not be read at all (no reader connection, or the
+   * bounded main-loop dispatch timed out), so the rest of this payload is an
+   * empty placeholder rather than a measurement. Absent on backends that
+   * predate the flag — those answer a degraded read with a bare `[]`, which
+   * `normalizeRecentTasks` treats the same way. Clients keep the tasks they
+   * already show and surface a notice; they never render this as "no tasks".
+   */
+  unavailable?: boolean
 }
 
 export interface ArrangeTaskState {

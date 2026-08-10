@@ -3,6 +3,7 @@ import {
   arrangeFromEvent,
   baseTaskId,
   taskFromRecent,
+  normalizeRecentTasks,
   annotationFromEvent,
   annotationsForArrange,
   type AnnotationView,
@@ -71,6 +72,102 @@ describe('taskFromRecent', () => {
   it('leaves stdout_size null when the row omits it (pre-v1.7 backend)', () => {
     expect(taskFromRecent(recent).stdout_size).toBeNull()
     expect(taskFromRecent({ ...recent, stdout_size: null }).stdout_size).toBeNull()
+  })
+})
+
+describe('normalizeRecentTasks', () => {
+  const row: RecentTask = {
+    task_id: 'p0-1',
+    partition: 0,
+    start_ts: 1,
+    end_ts: 2,
+    duration: 1,
+    status: 'completed',
+    args: null,
+    pid: null,
+    slot: null,
+    labels: null,
+    env: null,
+    origin: 'kafka',
+    client_name: null,
+    request_id: null,
+  }
+
+  it('passes a well-formed payload through untouched', () => {
+    const n = normalizeRecentTasks({ tasks: [row], lane_count: 12, truncated: false })
+    expect(n.unavailable).toBe(false)
+    expect(n.tasks).toEqual([row])
+    expect(n.lane_count).toBe(12)
+    expect(n.truncated).toBe(false)
+  })
+
+  it('keeps a truncated flag on an otherwise good payload', () => {
+    expect(normalizeRecentTasks({ tasks: [], lane_count: 8, truncated: true })).toEqual({
+      tasks: [],
+      lane_count: 8,
+      truncated: true,
+      unavailable: false,
+    })
+  })
+
+  it('flags a payload the backend marked unavailable', () => {
+    const n = normalizeRecentTasks({
+      tasks: [],
+      lane_count: 16,
+      truncated: false,
+      unavailable: true,
+    })
+    expect(n.unavailable).toBe(true)
+    expect(n.tasks).toEqual([])
+    // The placeholder still reports a real lane count, so it is worth keeping.
+    expect(n.lane_count).toBe(16)
+  })
+
+  // An unavailable payload is a placeholder, never a measurement — even if
+  // some backend were to send rows alongside the flag, they are not data.
+  it('discards tasks that arrive with the unavailable flag set', () => {
+    const n = normalizeRecentTasks({ tasks: [row], lane_count: 8, unavailable: true })
+    expect(n.unavailable).toBe(true)
+    expect(n.tasks).toEqual([])
+  })
+
+  // The bug this guard exists for: a degraded backend that predates the
+  // `unavailable` flag answers with a bare array, which used to be iterated
+  // as `payload.tasks` and throw.
+  it('treats a bare array as unavailable rather than as zero tasks', () => {
+    expect(normalizeRecentTasks([])).toEqual({
+      tasks: [],
+      lane_count: null,
+      truncated: false,
+      unavailable: true,
+    })
+    expect(normalizeRecentTasks([row]).unavailable).toBe(true)
+  })
+
+  it('treats an object without a tasks array as unavailable', () => {
+    expect(normalizeRecentTasks({ lane_count: 8 })).toEqual({
+      tasks: [],
+      lane_count: 8,
+      truncated: false,
+      unavailable: true,
+    })
+    expect(normalizeRecentTasks({ tasks: null, lane_count: 8 }).unavailable).toBe(true)
+    expect(normalizeRecentTasks({ tasks: 'nope' }).unavailable).toBe(true)
+  })
+
+  it.each([[null], [undefined], ['[]'], [42]])('treats %p as unavailable', (payload) => {
+    const n = normalizeRecentTasks(payload)
+    expect(n.unavailable).toBe(true)
+    expect(n.tasks).toEqual([])
+    expect(n.lane_count).toBeNull()
+  })
+
+  // laneCount on the page has its own fallback; a missing or nonsensical lane
+  // count must leave it alone rather than collapse the timeline to zero lanes.
+  it('reports no lane count when the payload carries none it can use', () => {
+    expect(normalizeRecentTasks({ tasks: [] }).lane_count).toBeNull()
+    expect(normalizeRecentTasks({ tasks: [], lane_count: 0 }).lane_count).toBeNull()
+    expect(normalizeRecentTasks({ tasks: [], lane_count: '8' }).lane_count).toBeNull()
   })
 })
 

@@ -3,7 +3,7 @@
 // resync and the incremental WS frames.
 
 import { parseAnnotation } from './events'
-import type { RecentTask, WsEvent } from './types'
+import type { RecentTask, RecentTasksResponse, WsEvent } from './types'
 
 export type TaskStatus = 'running' | 'completed' | 'failed'
 
@@ -39,6 +39,45 @@ export interface TaskView {
 // baseTaskId strips a `:r<ts>` retry suffix so links and lookups use the canonical id.
 export function baseTaskId(id: string): string {
   return id.split(':r')[0]
+}
+
+// What the Live page actually consumes from a /recent-tasks response, after
+// the payload has been vetted.
+export interface NormalizedRecentTasks {
+  tasks: RecentTask[]
+  // null when the payload carried no usable lane count — the caller then keeps
+  // the lane count it already had rather than collapsing the timeline.
+  lane_count: number | null
+  truncated: boolean
+  // True when the payload is a placeholder rather than a measurement: the
+  // backend flagged a degraded read, or the response did not have the
+  // documented shape at all.
+  unavailable: boolean
+}
+
+/**
+ * Vet a /api/v1/recent-tasks response before the page iterates it.
+ *
+ * A degraded backend used to answer with a bare `[]`, which turned the
+ * resync's `for (const t of payload.tasks)` into a TypeError — swallowed by
+ * the surrounding catch, so the page silently froze on stale data. Current
+ * backends send `{tasks: [], ..., unavailable: true}` instead, but an older
+ * one still on the wire does not, so both are treated the same: no usable
+ * task list means "unavailable", never "zero tasks".
+ */
+export function normalizeRecentTasks(payload: unknown): NormalizedRecentTasks {
+  const obj =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? (payload as Partial<RecentTasksResponse>)
+      : null
+  const lane_count =
+    typeof obj?.lane_count === 'number' && obj.lane_count > 0 ? obj.lane_count : null
+  const truncated = obj?.truncated === true
+  const tasks = Array.isArray(obj?.tasks) ? (obj.tasks as RecentTask[]) : null
+  if (tasks === null || obj?.unavailable === true) {
+    return { tasks: [], lane_count, truncated, unavailable: true }
+  }
+  return { tasks, lane_count, truncated, unavailable: false }
 }
 
 export function taskFromRecent(r: RecentTask): TaskView {

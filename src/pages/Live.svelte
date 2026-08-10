@@ -16,8 +16,10 @@
   import {
     baseTaskId,
     taskFromRecent,
+    normalizeRecentTasks,
     arrangeFromEvent,
     annotationFromEvent,
+    type NormalizedRecentTasks,
     type TaskView,
     type ArrangeView,
     type AnnotationView,
@@ -54,6 +56,10 @@
   // The server capped the timeline scan — say so rather than presenting a
   // partial window as if it were the whole thing.
   let truncated = $state(false)
+  // The last resync brought back nothing usable — a degraded recorder read or
+  // a failed request. Everything on screen is then the last good state, which
+  // is worth saying out loud: a frozen live page looks like an idle worker.
+  let dataUnavailable = $state(false)
   let pool = $state({ active: 0, max: 0, waiting: 0 })
   // Bumped on runtime_health / runtime_stall WS frames; the Runtime tab
   // refetches its snapshot when this changes.
@@ -93,14 +99,23 @@
   // instantly, so the page built a five-thousand-row table and rebuilt it on
   // every resync. Nobody reads past the first screen of a live feed, and the
   // full history is a click away on the History page.
-  const FINISHED_RENDER_LIMIT = 200
+  //
+  // Where `ui.timeline` exists, its depth is the operator's answer to "how
+  // much recent history is worth keeping on screen", and it is exactly what
+  // the resync asks the backend for (history_factor x lanes). Reuse it here so
+  // one knob governs the timeline and the table below it. A backend that
+  // predates `ui.timeline` offers no such knob — keep the fixed cap there.
+  const LEGACY_FINISHED_RENDER_LIMIT = 200
+  const finishedRenderLimit = $derived(
+    timelineConfig ? timelineConfig.history_factor * laneCount : LEGACY_FINISHED_RENDER_LIMIT,
+  )
 
   const finishedAll = $derived(
     tasksList
       .filter((t) => t.status === 'completed' || t.status === 'failed')
       .sort((a, b) => (b.end_ts ?? 0) - (a.end_ts ?? 0)),
   )
-  const finished = $derived(finishedAll.slice(0, FINISHED_RENDER_LIMIT))
+  const finished = $derived(finishedAll.slice(0, finishedRenderLimit))
 
   // --- tabs (hash-routed) ---
   type Tab = 'arrange' | 'execute' | 'task-results' | 'message-results' | 'window-results' | 'runtime'
@@ -326,39 +341,52 @@
     }
   }
 
+  // Fold one good /recent-tasks payload into the page state.
+  function applyRecentTasks(rt: NormalizedRecentTasks) {
+    const map: Record<string, TaskView> = {}
+    for (const t of rt.tasks) {
+      const v = taskFromRecent(t)
+      // /recent-tasks doesn't carry stdin/stdout_lines/env/source_offsets/
+      // exit_code — keep the WS-provided values so the Stdin/Stdout columns,
+      // hover detail, and exit_code color rules survive resyncs. stdout_size
+      // comes from both paths, so take whichever side actually has it rather
+      // than letting one wipe the other (an older backend omits it from the
+      // resync row; the WS frame is missing for a task that finished before
+      // this page connected).
+      const prev = allTasks[t.task_id]
+      if (prev) {
+        v.stdin_lines = prev.stdin_lines
+        v.stdin_size = prev.stdin_size
+        v.stdout_size = v.stdout_size ?? prev.stdout_size
+        v.stdout_lines = prev.stdout_lines
+        v.env = v.env ?? prev.env
+        v.source_offsets = prev.source_offsets
+        // exit_code is WS-only too and is color-rule-relevant, so a resync
+        // must not wipe a WS-delivered value back to null.
+        v.exit_code = v.exit_code ?? prev.exit_code
+      }
+      map[t.task_id] = v
+    }
+    allTasks = map
+    if (rt.lane_count) laneCount = rt.lane_count
+    truncated = rt.truncated
+  }
+
   async function resync() {
     if (frozen) return
     try {
-      const rt = await api.recentTasks(maxAgeMinutes)
-      const map: Record<string, TaskView> = {}
-      for (const t of rt.tasks) {
-        const v = taskFromRecent(t)
-        // /recent-tasks doesn't carry stdin/stdout_lines/env/source_offsets/
-        // exit_code — keep the WS-provided values so the Stdin/Stdout columns,
-        // hover detail, and exit_code color rules survive resyncs. stdout_size
-        // comes from both paths, so take whichever side actually has it rather
-        // than letting one wipe the other (an older backend omits it from the
-        // resync row; the WS frame is missing for a task that finished before
-        // this page connected).
-        const prev = allTasks[t.task_id]
-        if (prev) {
-          v.stdin_lines = prev.stdin_lines
-          v.stdin_size = prev.stdin_size
-          v.stdout_size = v.stdout_size ?? prev.stdout_size
-          v.stdout_lines = prev.stdout_lines
-          v.env = v.env ?? prev.env
-          v.source_offsets = prev.source_offsets
-          // exit_code is WS-only too and is color-rule-relevant, so a resync
-          // must not wipe a WS-delivered value back to null.
-          v.exit_code = v.exit_code ?? prev.exit_code
-        }
-        map[t.task_id] = v
-      }
-      allTasks = map
-      if (rt.lane_count) laneCount = rt.lane_count
-      truncated = !!rt.truncated
+      // Vetted before use: a degraded backend answers with a placeholder
+      // payload (or, on older builds, a bare array), and iterating that as if
+      // it were data is what used to freeze this page without a word.
+      const rt = normalizeRecentTasks(await api.recentTasks(maxAgeMinutes))
+      // A degraded read keeps the last good timeline and table on screen — an
+      // empty render is indistinguishable from an idle worker — but says so.
+      dataUnavailable = rt.unavailable
+      if (!rt.unavailable) applyRecentTasks(rt)
     } catch {
-      // keep last good state
+      // Request failure: same operator experience as a degraded read, so the
+      // same notice. Payload-shape errors can no longer reach this catch.
+      dataUnavailable = true
     }
     // Refresh arrange-task states for the visible batches. Terminal states are
     // filtered out inside queueArrangeLookup, so in steady state this asks for
@@ -528,6 +556,12 @@
   <div class="pool-bar">
     <div class="pool-fill" style:width={`${poolPct}%`} style:background={poolColor}></div>
   </div>
+  {#if dataUnavailable}
+    <p class="truncated-note stale-note">
+      Live data unavailable — showing the last loaded state. The worker's recorder may be degraded;
+      check its logs.
+    </p>
+  {/if}
   {#if truncated}
     <p class="truncated-note">
       Showing the most recent tasks only — this worker produced more in the window than the timeline
@@ -728,5 +762,12 @@
     border-radius: 0.25rem;
     padding: 0.375rem 0.5rem;
     margin: 0 0 0.75rem;
+  }
+  /* Stale data is a fault, not a caveat — red rather than the amber the
+     truncation note uses, so the two read differently when both are up. */
+  .stale-note {
+    color: #991b1b;
+    background: #fef2f2;
+    border-color: #fca5a5;
   }
 </style>
