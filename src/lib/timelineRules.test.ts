@@ -132,6 +132,16 @@ describe('evalCondition — eq/ne', () => {
     expect(evalCondition(t, { label: 'module', op: 'ne', value: 'other' })).toBe(true)
   })
 
+  it('ne is false for a numerically-equal pair', () => {
+    const t = task({ stdout_size: 0 })
+    expect(evalCondition(t, { field: 'stdout_size', op: 'ne', value: 0 })).toBe(false)
+  })
+
+  it('ne is true for a differing string pair', () => {
+    const t = task({ labels: { module: 'scanner' } })
+    expect(evalCondition(t, { label: 'module', op: 'ne', value: 'other' })).toBe(true)
+  })
+
   it('ne is the exact negation of eq', () => {
     const t = task({ labels: { module: 'scanner' } })
     for (const value of ['scanner', 'other', 5, '5']) {
@@ -193,7 +203,9 @@ describe('barColorFor', () => {
       },
     ]
     const runningBigFile = task({ status: 'running', labels: { file_size_bytes: '20000' } })
-    expect(barColorFor(runningBigFile, rules)).not.toBe(TIMELINE_PALETTE.blue)
+    // Not blue (the rule needs status:completed too) — falls through to the
+    // implicit status fallback for a running, non-http task: yellow.
+    expect(barColorFor(runningBigFile, rules)).toBe(TIMELINE_PALETTE.yellow)
 
     const completedBigFile = task({ status: 'completed', labels: { file_size_bytes: '20000' } })
     expect(barColorFor(completedBigFile, rules)).toBe(TIMELINE_PALETTE.blue)

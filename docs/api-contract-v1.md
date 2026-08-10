@@ -731,7 +731,8 @@ that field is absent.
     recorder column, now selected on the resync path so color rules keyed
     on it work for resync-loaded rows too, not only rows a
     `task_completed` WS frame has already patched. `null` while the task is
-    running, and on a failed task that captured no stdout.
+    running and on failed tasks — neither backend writes `stdout_size` on
+    `task_failed` — set only once the task completes.
   - `truncated:bool` is now a required field on `RecentTasks`, formalizing
     behavior the UI already read: `true` when the row cap dropped older
     events from the query window, or when the assembled result was trimmed
