@@ -14,6 +14,11 @@
 
 import type { TaskView } from './live'
 
+/** How far back the timeline draws when the backend serves no ui.timeline
+ * config (`max_age_minutes`). Shared by the Live page's /recent-tasks request
+ * and the component's own window math so the two cannot disagree. */
+export const DEFAULT_MAX_AGE_MINUTES = 10
+
 /** Seconds of intentional display lag: the timeline follows `now - RENDER_DELAY_SEC`,
  * not `now` itself, so a task's tail end never draws past the edge the operator
  * is actually looking at. */
@@ -193,10 +198,16 @@ function srgbChannelLuminance(channel255: number): number {
   return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
 }
 
+// Where "light enough for dark text" begins, in WCAG relative luminance. The
+// cut sits at 0.5 because the palette's yellow (#fbbf24) measures 0.579: 10px
+// white text on it is not readable, dark slate is. Of the palette only yellow
+// and lightgray land above the cut.
+const LIGHT_BACKGROUND_LUMINANCE = 0.5
+
 /**
  * Picks a readable text color for a background hex color: dark slate on
  * light backgrounds, white on dark/saturated ones, based on WCAG relative
- * luminance (> 0.6 counts as light).
+ * luminance.
  */
 export function textColorFor(bgHex: string): string {
   const hex = bgHex.replace('#', '')
@@ -207,7 +218,7 @@ export function textColorFor(bgHex: string): string {
     0.2126 * srgbChannelLuminance(r) +
     0.7152 * srgbChannelLuminance(g) +
     0.0722 * srgbChannelLuminance(b)
-  return luminance > 0.6 ? '#1f2937' : '#ffffff'
+  return luminance > LIGHT_BACKGROUND_LUMINANCE ? '#1f2937' : '#ffffff'
 }
 
 export interface MarkerPin {

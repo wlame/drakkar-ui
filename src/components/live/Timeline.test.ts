@@ -182,6 +182,35 @@ describe('Timeline', () => {
     expect((target.querySelector('.tl-hover') as HTMLElement).textContent).toContain('0:41')
   })
 
+  it('clears the hovered marker when the cursor leaves the rail', () => {
+    const { target } = renderTracked()
+    ;(target.querySelector('.marker-pin') as HTMLElement).dispatchEvent(new Event('mouseenter'))
+    flushSync()
+    ;(target.querySelector('.tl-markers') as HTMLElement).dispatchEvent(new Event('mouseleave'))
+    flushSync()
+    expect((target.querySelector('.tl-hover') as HTMLElement).textContent).toContain(
+      'hover over a task bar',
+    )
+  })
+
+  it('clears the hovered marker when its pin leaves the rendered set', () => {
+    // Unbinding the marker role drops every pin without any mouseleave ever
+    // firing — the same shape as a pin culled away under the cursor.
+    const { target } = renderTracked()
+    ;(target.querySelector('.marker-pin') as HTMLElement).dispatchEvent(new Event('mouseenter'))
+    flushSync()
+    expect((target.querySelector('.tl-hover') as HTMLElement).textContent).toContain('marker:')
+    ;(target.querySelector('button.gear') as HTMLButtonElement).click()
+    flushSync()
+    const select = target.querySelector('select[aria-label="marker label"]') as HTMLSelectElement
+    select.value = ''
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+    flushSync()
+
+    expect(target.querySelector('.marker-pin')).toBeNull()
+    expect((target.querySelector('.tl-hover') as HTMLElement).textContent).not.toContain('marker:')
+  })
+
   it('marks no bar while both toolbar inputs are empty', () => {
     const { target } = renderTracked()
     expect(target.querySelector('a.bar.emph')).toBeNull()

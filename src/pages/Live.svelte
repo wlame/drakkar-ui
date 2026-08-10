@@ -11,6 +11,7 @@
   import { hydrateFromOverview, runtimeConfig, identity } from '../lib/config'
   import { createLiveSocket, type WsStatus, type LiveSocket } from '../lib/ws'
   import { pausableInterval, visibilityGate } from '../lib/visibility'
+  import { DEFAULT_MAX_AGE_MINUTES } from '../lib/timeline'
   import { fmtTimeMs, dur2, fmtBytes, safeJsonParse } from '../lib/format'
   import {
     baseTaskId,
@@ -71,7 +72,18 @@
   // identity payload. Absent on backends that predate it — the timeline then
   // keeps its legacy 10-minute window and fixed status colors.
   const timelineConfig = $derived($identity?.timeline)
-  const maxAgeMinutes = $derived(timelineConfig?.max_age_minutes ?? 10)
+  const maxAgeMinutes = $derived(timelineConfig?.max_age_minutes ?? DEFAULT_MAX_AGE_MINUTES)
+
+  // The first resync runs before /identity lands, so it asks for the default
+  // depth. Refetch as soon as the configured depth turns out to differ, rather
+  // than leaving a short window on screen until the next 5s tick.
+  let requestedMaxAgeMinutes = DEFAULT_MAX_AGE_MINUTES
+  $effect(() => {
+    const minutes = maxAgeMinutes
+    if (minutes === requestedMaxAgeMinutes) return
+    requestedMaxAgeMinutes = minutes
+    void resync()
+  })
 
   const tasksList = $derived(Object.values(allTasks))
   // How many finished rows the table actually renders.

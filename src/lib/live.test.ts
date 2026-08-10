@@ -54,10 +54,23 @@ describe('taskFromRecent', () => {
   it('leaves WS-only fields null (the resync payload does not carry them)', () => {
     const t = taskFromRecent(recent)
     expect(t.exit_code).toBeNull()
-    expect(t.stdout_size).toBeNull()
+    expect(t.stdout_lines).toBeNull()
     expect(t.stdin_lines).toBeNull()
     expect(t.stdin_size).toBeNull()
     expect(t.source_offsets).toBeNull()
+  })
+
+  // stdout_size is NOT WS-only: the resync row carries it (v1.7), which is
+  // what makes stdout_size color rules work for tasks that finished before
+  // the page connected.
+  it('forwards a stdout_size present on the resync row', () => {
+    expect(taskFromRecent({ ...recent, stdout_size: 4096 }).stdout_size).toBe(4096)
+    expect(taskFromRecent({ ...recent, stdout_size: 0 }).stdout_size).toBe(0)
+  })
+
+  it('leaves stdout_size null when the row omits it (pre-v1.7 backend)', () => {
+    expect(taskFromRecent(recent).stdout_size).toBeNull()
+    expect(taskFromRecent({ ...recent, stdout_size: null }).stdout_size).toBeNull()
   })
 })
 

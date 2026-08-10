@@ -1,3 +1,22 @@
+<script module lang="ts">
+  import { textColorFor } from '../../lib/timeline'
+
+  // `bars` re-derives on every scroll frame, and textColorFor runs gamma math
+  // over three channels. The input space is tiny — the rule palette plus any
+  // literal hexes a config names, well under a dozen strings — so memoize it
+  // for the lifetime of the module.
+  const TEXT_COLOR_BY_BACKGROUND = new Map<string, string>()
+
+  function cachedTextColor(backgroundHex: string): string {
+    let color = TEXT_COLOR_BY_BACKGROUND.get(backgroundHex)
+    if (color === undefined) {
+      color = textColorFor(backgroundHex)
+      TEXT_COLOR_BY_BACKGROUND.set(backgroundHex, color)
+    }
+    return color
+  }
+</script>
+
 <script lang="ts">
   // Executor timeline, ported from live.html's Executors tab: an h2 with the
   // window note, a Zoom toolbar + legend row, and a white panel containing the
@@ -15,12 +34,12 @@
   // position is stable between rebases and "time passing" is real scrolling,
   // driven by a requestAnimationFrame loop instead of state churn. The pure
   // math lives in src/lib/timeline.ts (tested independently of the DOM).
-  import { untrack, flushSync } from 'svelte'
+  import { untrack, flushSync, tick } from 'svelte'
   import { link } from '../../lib/router'
   import { baseTaskId, type TaskView } from '../../lib/live'
   import { fmtTime, fmtTimeMs, fmtBytes } from '../../lib/format'
   import { pausableInterval, isHidden } from '../../lib/visibility'
-  import type { TimelineConfig } from '../../lib/types'
+  import type { TimelineColorRule, TimelineConfig } from '../../lib/types'
   import { barColorFor, legendEntries } from '../../lib/timelineRules'
   import {
     TIMELINE_ROLES,
@@ -38,11 +57,11 @@
     barGeometry,
     barTexts,
     deriveMarkers,
-    textColorFor,
     tickMarks,
     followScrollLeft,
     shouldRebase,
     rebase,
+    DEFAULT_MAX_AGE_MINUTES,
     RENDER_DELAY_SEC,
     type MarkerPin,
   } from '../../lib/timeline'
@@ -67,8 +86,6 @@
     workerId?: string
   } = $props()
 
-  // How far back the timeline draws when the backend says nothing.
-  const DEFAULT_MAX_AGE_MIN = 10
   const LANE_H = 22
   const LANE_GAP = 2
   const BASE_PX_PER_SEC = 8
@@ -96,7 +113,7 @@
   // The visible history depth, in seconds. Everything that used to be the
   // fixed 10-minute WINDOW_SEC reads this instead: the stale cut, the rebase
   // step, and the heading note.
-  const maxAgeMinutes = $derived(timeline?.max_age_minutes ?? DEFAULT_MAX_AGE_MIN)
+  const maxAgeMinutes = $derived(timeline?.max_age_minutes ?? DEFAULT_MAX_AGE_MINUTES)
   const maxAgeSec = $derived(maxAgeMinutes * 60)
 
   const colorRules = $derived(timeline?.color_rules ?? [])
@@ -136,14 +153,35 @@
   })
 
   // Moves the coordinate origin and shifts the viewport's scrollLeft by the
-  // exact same pixel delta in the same synchronous step, which is what makes
-  // the move invisible — see the pixel-delta invariant documented and tested
-  // next to `rebase()` in src/lib/timeline.ts. Both callers below depend on
-  // that pairing.
-  function setOrigin(newOrigin: number) {
+  // exact same pixel delta, which is what keeps the move invisible — see the
+  // pixel-delta invariant documented and tested next to `rebase()` in
+  // src/lib/timeline.ts.
+  //
+  // Direction decides when the compensation can be applied:
+  //
+  //   * Forward (the rebase): the strip shrinks and the target scrollLeft is
+  //     smaller than the current one, so the write lands immediately and the
+  //     move is invisible within the same tick.
+  //   * Backward (deepening): the strip grows and the target scrollLeft is
+  //     LARGER than the current one — which the browser clamps to the strip's
+  //     current scrollWidth. The `.tl-inner` width binding has not committed
+  //     yet at that point, exactly the failure mode zoomTo() documents below,
+  //     so the compensation would be silently swallowed. zoomTo can reach for
+  //     flushSync because it runs from a click handler; this also runs from an
+  //     effect, where flushSync throws, so it waits one tick for the width to
+  //     commit instead.
+  //
+  // While auto-follow is on (the common case) the rAF loop re-snaps the right
+  // edge on the very next frame anyway; the compensation matters for an
+  // operator who has scrolled away before the config lands.
+  async function setOrigin(newOrigin: number) {
     const deltaPx = (newOrigin - originTs) * pxPerSec
     originTs = newOrigin
-    if (viewport) applyScrollLeft(viewport.scrollLeft - deltaPx)
+    if (!viewport) return
+    const target = viewport.scrollLeft - deltaPx
+    if (deltaPx < 0) await tick()
+    if (!viewport) return
+    applyScrollLeft(target)
   }
 
   // Slide the origin forward by one window once the strip has grown to more
@@ -153,7 +191,7 @@
   // off.
   function maybeRebase() {
     if (!shouldRebase(now, originTs, maxAgeSec)) return
-    setOrigin(rebase(originTs, maxAgeSec))
+    void setOrigin(rebase(originTs, maxAgeSec))
   }
 
   // The identity payload (and with it the configured depth) usually lands
@@ -164,7 +202,7 @@
   $effect(() => {
     const wanted = Date.now() / 1000 - maxAgeSec
     untrack(() => {
-      if (wanted < originTs) setOrigin(wanted)
+      if (wanted < originTs) void setOrigin(wanted)
     })
   })
 
@@ -194,6 +232,29 @@
   // Shared empty result so the common "no tag/caption roles bound" case
   // allocates nothing per bar per frame.
   const NO_BAR_TEXTS: { tag?: string; caption?: string } = {}
+
+  // Per-task bar color memo. barColorFor walks every rule's conditions with
+  // String()/parseFloat coercions per condition, and `bars` re-derives on
+  // every scroll frame — but a task's color only changes when the task object
+  // itself does. Both the resync and the WS handlers replace TaskView objects
+  // wholesale rather than mutating them, so a WeakMap keyed on the task
+  // expires exactly when the data does, with no eviction pass of our own. The
+  // whole cache is dropped when the rule list changes (a config reload).
+  let colorByTask = new WeakMap<TaskView, string>()
+  let cachedRules: TimelineColorRule[] = []
+
+  function cachedBarColor(task: TaskView, rules: TimelineColorRule[]): string {
+    if (rules !== cachedRules) {
+      colorByTask = new WeakMap()
+      cachedRules = rules
+    }
+    let color = colorByTask.get(task)
+    if (color === undefined) {
+      color = barColorFor(task, rules)
+      colorByTask.set(task, color)
+    }
+    return color
+  }
 
   // --- toolbar role inputs ----------------------------------------------------
   //
@@ -294,7 +355,7 @@
       const lane = Math.min(Math.max(t.slot ?? 0, 0), Math.max(laneCount - 1, 0))
       const { left, width } = barGeometry(t.start_ts, end, originTs, pxPerSec, MIN_BAR_PX)
       if (culling && (left + width < visibleFrom || left > visibleTo)) continue
-      const color = barColorFor(t, colorRules)
+      const color = cachedBarColor(t, colorRules)
       const texts = drawsText
         ? barTexts(
             width,
@@ -316,7 +377,7 @@
         color,
         tag: texts.tag,
         caption: texts.caption,
-        textColor: texts.tag || texts.caption ? textColorFor(color) : '',
+        textColor: texts.tag || texts.caption ? cachedTextColor(color) : '',
         emph: passes,
         dim: roleInputActive && !passes,
       })
@@ -340,6 +401,23 @@
     const visibleFrom = scrollLeft - CULL_MARGIN_PX
     const visibleTo = scrollLeft + viewportWidth + CULL_MARGIN_PX
     return markers.filter((m) => m.left >= visibleFrom && m.left <= visibleTo)
+  })
+
+  // A hovered pin can leave the rendered set under the cursor — culled by a
+  // scroll, or dropped when a resync re-derives the pins — and a removed
+  // element never fires mouseleave, so the strip would keep showing a marker
+  // that is no longer on screen. The rail's own mouseleave covers the cursor
+  // moving away; this covers the pin vanishing while the cursor stays put.
+  $effect(() => {
+    // Read the pins before any early return: this effect must depend on them
+    // even on the passes where nothing is hovered, or it would never run
+    // again once it bailed out early.
+    const pins = visibleMarkers
+    // untracked, so hovering a pin does not re-run this — at that moment the
+    // pin is in the set by construction.
+    const hoveredTs = untrack(() => hoveredMarker?.ts)
+    if (hoveredTs === undefined) return
+    if (!pins.some((m) => m.ts === hoveredTs)) hoveredMarker = null
   })
 
   // Axis ticks: HH:MM:SS labels at a zoom-dependent interval (the reference's
@@ -470,9 +548,17 @@
   let gearOpen = $state(false)
   let gearEl = $state<HTMLDivElement>()
 
-  // Scanning every loaded task for label keys is only worth it while the
-  // picker is actually open.
-  const labelKeys = $derived(gearOpen ? labelKeyUnion(tasks, backendRoles) : [])
+  // Snapshotted when the picker opens, not derived: labelKeyUnion scans every
+  // loaded task's labels, and as a derived it would redo that on every WS
+  // flush and every resync for as long as the dropdown stayed open. The list
+  // of label keys a worker emits is stable in practice, and reopening the
+  // picker refreshes it.
+  let labelKeys = $state<string[]>([])
+
+  function toggleGear() {
+    gearOpen = !gearOpen
+    if (gearOpen) labelKeys = labelKeyUnion(tasks, backendRoles)
+  }
   const anyOverridden = $derived(
     TIMELINE_ROLES.some((role) => isOverridden(backendRoles, overrides, role)),
   )
@@ -587,7 +673,7 @@
   <div class="roles" bind:this={gearEl}>
     <button
       class="tbtn gear"
-      onclick={() => (gearOpen = !gearOpen)}
+      onclick={toggleGear}
       title="Label roles"
       aria-label="Label roles"
       aria-expanded={gearOpen}
@@ -635,7 +721,15 @@
         {/each}
       </div>
       {#if markerKey}
-        <div class="tl-markers">
+        <!-- The rail clears the hover too: leaving a pin sideways moves the
+             cursor onto the rail, and leaving the rail is the one event that
+             still fires when the pin element itself is being replaced. -->
+        <div
+          class="tl-markers"
+          role="group"
+          aria-label="Timeline markers"
+          onmouseleave={() => (hoveredMarker = null)}
+        >
           {#each visibleMarkers as m (m.ts)}
             <button
               class="marker-pin"

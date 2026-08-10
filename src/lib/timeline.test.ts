@@ -233,6 +233,32 @@ describe('textColorFor', () => {
   it('picks white text on a saturated/dark background', () => {
     expect(textColorFor('#f87171')).toBe('#ffffff')
   })
+
+  // The whole rule palette in one place: only the two backgrounds above the
+  // 0.5 luminance cut take dark text. Yellow (0.579) is why the cut sits
+  // there — white 10px text on it is not readable.
+  it('maps every palette color to its readable text color', () => {
+    const expected: Record<string, string> = {
+      '#34d399': '#ffffff', // green, luminance 0.496
+      '#f87171': '#ffffff', // red, 0.330
+      '#fbbf24': '#1f2937', // yellow, 0.579
+      '#60a5fa': '#ffffff', // blue, 0.363
+      '#9ca3af': '#ffffff', // gray, 0.364
+      '#d1d5db': '#1f2937', // lightgray, 0.663
+      '#a78bfa': '#ffffff', // purple, 0.336
+      '#fb923c': '#ffffff', // orange, 0.414
+      '#9c27b0': '#ffffff', // the implicit http-origin purple, 0.117
+    }
+    const actual = Object.fromEntries(
+      Object.keys(expected).map((background) => [background, textColorFor(background)]),
+    )
+    expect(actual).toEqual(expected)
+  })
+
+  it('takes the extremes', () => {
+    expect(textColorFor('#ffffff')).toBe('#1f2937')
+    expect(textColorFor('#000000')).toBe('#ffffff')
+  })
 })
 
 describe('deriveMarkers', () => {
