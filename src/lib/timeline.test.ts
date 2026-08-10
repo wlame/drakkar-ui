@@ -6,7 +6,39 @@ import {
   shouldRebase,
   rebase,
   RENDER_DELAY_SEC,
+  barTexts,
+  textColorFor,
+  deriveMarkers,
+  TAG_MAX_CHARS,
+  CAPTION_MAX_CHARS,
 } from './timeline'
+import type { TaskView } from './live'
+
+function task(overrides: Partial<TaskView> = {}): TaskView {
+  return {
+    task_id: 't1',
+    partition: 0,
+    start_ts: 1000,
+    end_ts: 1005,
+    duration: 5,
+    status: 'completed',
+    exit_code: 0,
+    args: null,
+    pid: null,
+    slot: null,
+    labels: null,
+    origin: 'kafka',
+    client_name: null,
+    request_id: null,
+    stdout_size: null,
+    stdout_lines: null,
+    stdin_lines: null,
+    stdin_size: null,
+    env: null,
+    source_offsets: null,
+    ...overrides,
+  }
+}
 
 describe('barGeometry', () => {
   it('positions a bar relative to the origin', () => {
@@ -132,5 +164,133 @@ describe('shouldRebase / rebase', () => {
 describe('RENDER_DELAY_SEC', () => {
   it('is a small positive constant', () => {
     expect(RENDER_DELAY_SEC).toBe(2)
+  })
+})
+
+describe('barTexts', () => {
+  // tag "abcde" is 5 chars -> est = 30px; gate is width >= est + 10 = 40.
+  it('shows the tag exactly at its width threshold', () => {
+    expect(barTexts(40, 'abcde', undefined)).toEqual({ tag: 'abcde' })
+  })
+
+  it('hides the tag 1px below its width threshold', () => {
+    expect(barTexts(39, 'abcde', undefined)).toEqual({})
+  })
+
+  // Same tag (est 30) + caption "wxyz" (4 chars -> est 24). Caption gate is
+  // remaining = width - est(tag) - 12 >= est(caption), i.e. width >= 66.
+  it('adds the caption once the tag fits and the remaining width covers it', () => {
+    expect(barTexts(66, 'abcde', 'wxyz')).toEqual({ tag: 'abcde', caption: 'wxyz' })
+  })
+
+  it('shows the tag alone when the tag fits but the caption does not', () => {
+    expect(barTexts(65, 'abcde', 'wxyz')).toEqual({ tag: 'abcde' })
+  })
+
+  it('shows nothing when the tag itself does not fit, even if a caption alone would', () => {
+    expect(barTexts(39, 'abcde', 'w')).toEqual({})
+  })
+
+  // No tag text at all: the caption alone takes the tag's own gate (est + 10).
+  it('lets a caption take the tag gate when there is no tag', () => {
+    expect(barTexts(34, undefined, 'wxyz')).toEqual({ caption: 'wxyz' })
+  })
+
+  it('hides a tagless caption 1px below the tag gate', () => {
+    expect(barTexts(33, undefined, 'wxyz')).toEqual({})
+  })
+
+  it('leaves a tag exactly at TAG_MAX_CHARS untruncated', () => {
+    const tag = 'y'.repeat(TAG_MAX_CHARS)
+    // est = 16*6 = 96; gate = 106.
+    expect(barTexts(106, tag, undefined)).toEqual({ tag })
+  })
+
+  it('truncates a tag one char past TAG_MAX_CHARS with a trailing ellipsis', () => {
+    const tag = 'y'.repeat(TAG_MAX_CHARS + 1)
+    const truncated = 'y'.repeat(TAG_MAX_CHARS - 1) + '…'
+    expect(barTexts(106, tag, undefined)).toEqual({ tag: truncated })
+  })
+
+  it('leaves a caption exactly at CAPTION_MAX_CHARS untruncated', () => {
+    const caption = 'x'.repeat(CAPTION_MAX_CHARS)
+    // est = 32*6 = 192; gate = 202.
+    expect(barTexts(202, undefined, caption)).toEqual({ caption })
+  })
+
+  it('truncates a caption one char past CAPTION_MAX_CHARS with a trailing ellipsis', () => {
+    const caption = 'x'.repeat(CAPTION_MAX_CHARS + 1)
+    const truncated = 'x'.repeat(CAPTION_MAX_CHARS - 1) + '…'
+    expect(barTexts(202, undefined, caption)).toEqual({ caption: truncated })
+  })
+})
+
+describe('textColorFor', () => {
+  it('picks dark text on a light background', () => {
+    expect(textColorFor('#d1d5db')).toBe('#1f2937')
+  })
+
+  it('picks white text on a saturated/dark background', () => {
+    expect(textColorFor('#f87171')).toBe('#ffffff')
+  })
+})
+
+describe('deriveMarkers', () => {
+  it('places two distinct values at their transformed x positions', () => {
+    const tasks = [
+      task({ start_ts: 110, labels: { env: 'a' } }),
+      task({ start_ts: 150, labels: { env: 'b' } }),
+    ]
+    const pins = deriveMarkers(tasks, 'env', 100, 2)
+    expect(pins).toEqual([
+      { left: 20, ts: 110, values: ['a'] },
+      { left: 100, ts: 150, values: ['b'] },
+    ])
+  })
+
+  it('collapses three tasks sharing one value into a single pin at the earliest ts', () => {
+    const tasks = [
+      task({ start_ts: 30, labels: { env: 'a' } }),
+      task({ start_ts: 10, labels: { env: 'a' } }),
+      task({ start_ts: 20, labels: { env: 'a' } }),
+    ]
+    const pins = deriveMarkers(tasks, 'env', 0, 1)
+    expect(pins).toEqual([{ left: 10, ts: 10, values: ['a'] }])
+  })
+
+  it('merges two pins 8px apart (within the default 12px collapse) keeping both values', () => {
+    const tasks = [
+      task({ start_ts: 10, labels: { env: 'a' } }),
+      task({ start_ts: 18, labels: { env: 'b' } }),
+    ]
+    const pins = deriveMarkers(tasks, 'env', 0, 1)
+    expect(pins).toEqual([{ left: 10, ts: 10, values: ['a', 'b'] }])
+  })
+
+  it('keeps two pins 13px apart separate (past the default 12px collapse)', () => {
+    const tasks = [
+      task({ start_ts: 10, labels: { env: 'a' } }),
+      task({ start_ts: 23, labels: { env: 'b' } }),
+    ]
+    const pins = deriveMarkers(tasks, 'env', 0, 1)
+    expect(pins).toEqual([
+      { left: 10, ts: 10, values: ['a'] },
+      { left: 23, ts: 23, values: ['b'] },
+    ])
+  })
+
+  it('ignores tasks that lack the marker label', () => {
+    const tasks = [
+      task({ start_ts: 10, labels: { env: 'a' } }),
+      task({ start_ts: 5, labels: { other: 'x' } }),
+      task({ start_ts: 1, labels: null }),
+    ]
+    const pins = deriveMarkers(tasks, 'env', 0, 1)
+    expect(pins).toEqual([{ left: 10, ts: 10, values: ['a'] }])
+  })
+
+  it('returns an empty array for an empty markerKey', () => {
+    const tasks = [task({ start_ts: 10, labels: { env: 'a' } })]
+    expect(deriveMarkers(tasks, '', 0, 1)).toEqual([])
   })
 })
