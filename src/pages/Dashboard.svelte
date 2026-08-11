@@ -6,11 +6,15 @@
   // guarantee covers this page only; the header polls workers on its own timer.
   import { onMount } from 'svelte'
   import { api, type Dashboard, type Partition, type SinkStatus } from '../lib/api'
+  import { identity } from '../lib/config'
   import { fmtTime, fmtUptime } from '../lib/format'
   import { COLOR } from '../lib/events'
+  import { normalizeRecentTasks, taskFromRecent, type TaskView } from '../lib/live'
+  import { DEFAULT_MAX_AGE_MINUTES } from '../lib/timeline'
   import { pausableInterval } from '../lib/visibility'
   import { dueJobs, type PollJob } from '../lib/schedule'
   import WebappTile from '../components/WebappTile.svelte'
+  import TimelineStats from '../components/live/TimelineStats.svelte'
   import PartitionsTable from '../components/dashboard/PartitionsTable.svelte'
   import SinksTable from '../components/dashboard/SinksTable.svelte'
 
@@ -25,6 +29,9 @@
   let data = $state<Dashboard | null>(null)
   let partitions = $state<Partition[] | null>(null)
   let sinks = $state<SinkStatus[] | null>(null)
+  let recentTasks = $state<TaskView[] | null>(null)
+
+  const maxAgeMinutes = $derived($identity?.timeline?.max_age_minutes ?? DEFAULT_MAX_AGE_MINUTES)
 
   async function loadDashboard() {
     data = await api.dashboard()
@@ -38,10 +45,19 @@
     sinks = await api.sinks()
   }
 
+  async function loadRecentTasks() {
+    // Same vetting as the Live page: a degraded payload keeps the last good
+    // sample on screen (the throw routes into runJob's stale handling).
+    const rt = normalizeRecentTasks(await api.recentTasks(maxAgeMinutes))
+    if (rt.unavailable) throw new Error('recent-tasks unavailable')
+    recentTasks = rt.tasks.map(taskFromRecent)
+  }
+
   const LOADERS = {
     dashboard: loadDashboard,
     partitions: loadPartitions,
     sinks: loadSinks,
+    tasks: loadRecentTasks,
   } satisfies Record<string, () => Promise<void>>
 
   // Keying the jobs off LOADERS makes a job name with no loader a compile error
@@ -57,6 +73,10 @@
     { name: 'sinks', everyTicks: 4, offsetTicks: 4 },
     { name: 'dashboard', everyTicks: 10, offsetTicks: 11 },
     { name: 'partitions', everyTicks: 10, offsetTicks: 13 },
+    // recent-tasks is the heaviest query this page makes — half the cadence
+    // of the others. Ticks ≡ 7 (mod 20): odd, so never on a sinks tick, and
+    // ≠ 1/3 (mod 10), so never on a dashboard or partitions tick.
+    { name: 'tasks', everyTicks: 20, offsetTicks: 27 },
   ]
 
   const PERIOD_SEC: Record<JobName, number> = Object.fromEntries(
@@ -67,6 +87,7 @@
     dashboard: value,
     partitions: value,
     sinks: value,
+    tasks: value,
   })
 
   let errors = $state<Record<JobName, string | null>>(emptyPerJob<string | null>(null))
@@ -189,6 +210,16 @@
     <div class="tile-wrap"><WebappTile tile={data.webapp_tile} /></div>
   {/if}
 
+  <!-- Duration + numeric-label distributions over the recent-tasks window —
+       the same strip the Live timeline shows, fed by this page's own poll. -->
+  {#if recentTasks !== null}
+    <h2>
+      Task Stats <span class="note">(last {maxAgeMinutes} min)</span>
+      {@render staleMark(staleSince.tasks)}
+    </h2>
+    <TimelineStats tasks={recentTasks} />
+  {/if}
+
   <h2>Assigned Partitions</h2>
   <div class="partitions">
     {#if data.partitions.length === 0}
@@ -258,6 +289,12 @@
      heading it hangs off. */
   .stale {
     font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--muted);
+  }
+  /* Window note on the Task Stats heading, same idiom as the timeline's. */
+  .note {
+    font-size: 0.875rem;
     font-weight: 400;
     color: var(--muted);
   }

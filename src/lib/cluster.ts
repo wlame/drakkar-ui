@@ -20,6 +20,8 @@ export interface SharedTimelineControls {
   zoom: number
   highlightInput: string
   filterInput: string
+  // Which numeric task label the stats strips aggregate ('' = auto-pick).
+  statsLabel: string
   followSeq: number
   overridesSeq: number
   // Role overrides are stored per worker; in cluster view one gear applies

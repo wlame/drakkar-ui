@@ -36,6 +36,7 @@ function task(id: string, startOffset: number, extra: Partial<TaskView> = {}): T
     stdin_size: null,
     env: null,
     source_offsets: null,
+    spawn_ms: null,
     ...extra,
   }
 }

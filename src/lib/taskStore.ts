@@ -66,6 +66,7 @@ export function applyTaskEvent(tasks: Record<string, TaskView>, e: WsEvent): voi
         source_offsets: Array.isArray(meta.source_offsets)
           ? (meta.source_offsets as number[])
           : null,
+        spawn_ms: null,
       }
       return
     }
@@ -75,6 +76,9 @@ export function applyTaskEvent(tasks: Record<string, TaskView>, e: WsEvent): voi
       const done = e.event === 'task_completed' ? 'completed' : 'failed'
       const ex = tasks[e.task_id]
       const start = ex?.start_ts ?? e.ts - (e.duration ?? 0)
+      // task_completed metadata carries spawn_ms on v1.11+ backends.
+      const meta = safeJsonParse<Record<string, unknown>>(e.metadata ?? undefined, {})
+      const spawnMs = typeof meta.spawn_ms === 'number' ? meta.spawn_ms : null
       tasks[e.task_id] = {
         task_id: e.task_id,
         partition: e.partition ?? ex?.partition ?? null,
@@ -96,6 +100,7 @@ export function applyTaskEvent(tasks: Record<string, TaskView>, e: WsEvent): voi
         stdin_size: ex?.stdin_size ?? e.stdin_size ?? null,
         env: ex?.env ?? null,
         source_offsets: ex?.source_offsets ?? null,
+        spawn_ms: spawnMs,
       }
       return
     }
@@ -129,6 +134,7 @@ export function mergeRecentTasks(
       v.env = v.env ?? old.env
       v.source_offsets = old.source_offsets
       v.exit_code = v.exit_code ?? old.exit_code
+      v.spawn_ms = old.spawn_ms
     }
     map[t.task_id] = v
   }

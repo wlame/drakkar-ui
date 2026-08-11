@@ -145,7 +145,12 @@
           {#if openStallId === row.id}
             <tr class="stall-detail">
               <td colspan="4">
-                {#each stall.stacks as stack (stack.location)}
+                <!-- Deliberately unkeyed: two captured stacks can share a
+                     location (same blocking site, different call paths), and
+                     keying on it crashed the expand with each_key_duplicate.
+                     The list is replaced wholesale on reload, so identity
+                     tracking buys nothing here. -->
+                {#each stall.stacks as stack}
                   <p class="mono small">
                     {stack.location} — sampled {stack.count}×
                   </p>

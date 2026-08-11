@@ -21,6 +21,7 @@
   import { pausableInterval } from '../../lib/visibility'
   import { createLiveSocket, WS_STATUS_LABELS, type LiveSocket, type WsStatus } from '../../lib/ws'
   import Timeline from './Timeline.svelte'
+  import TimelineStats from './TimelineStats.svelte'
 
   let {
     peer,
@@ -94,6 +95,7 @@
   showToolbar={false}
   taskUrlBase={base}
 />
+<TimelineStats tasks={tasksList} {shared} attached />
 
 <style>
   .peer-head {

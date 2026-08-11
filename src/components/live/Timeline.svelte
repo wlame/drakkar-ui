@@ -901,6 +901,9 @@
       <span class="hl">Duration:</span><span class="hv"
         >{hovered.duration != null ? `${hovered.duration.toFixed(3)}s` : 'running'}</span
       >
+      {#if hovered.spawn_ms != null}
+        <span class="hl">Spawn:</span><span class="hv">{hovered.spawn_ms}ms</span>
+      {/if}
       <span class="hl">Start:</span><span class="hv">{fmtTimeMs(hovered.start_ts)}</span>
       <span class="hl">End:</span><span class="hv"
         >{hovered.end_ts ? fmtTimeMs(hovered.end_ts) : 'running'}</span

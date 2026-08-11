@@ -35,7 +35,18 @@ const stallEvents = [
     output_topic: null,
     metadata: JSON.stringify({
       duration_ms: 2100,
-      stacks: [{ stack: '  File "handler.py", line 42\n', location: 'handler.py:42', count: 4 }],
+      // Two stacks sharing one location: the sampler reports the blocking
+      // SITE, and distinct call paths into it produce distinct stack texts
+      // with the same location. Keying the expanded list on location crashed
+      // the click with each_key_duplicate — pinned by the expand test below.
+      stacks: [
+        { stack: '  File "handler.py", line 42\n', location: 'handler.py:42', count: 4 },
+        {
+          stack: '  File "sinks.py", line 9\n  File "handler.py", line 42\n',
+          location: 'handler.py:42',
+          count: 2,
+        },
+      ],
       dropped_stacks: 0,
       unit_count: 33,
     }),
@@ -117,7 +128,10 @@ describe('RuntimeTab', () => {
     expect(row).not.toBeNull()
     row.click()
     flushSync()
+    // Both stacks render — including the second one sharing the first's
+    // location, which used to crash the whole expand.
     expect(target.textContent).toContain('sampled 4×')
+    expect(target.textContent).toContain('sampled 2×')
 
     await unmount(component)
     target.remove()

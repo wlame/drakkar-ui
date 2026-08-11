@@ -35,6 +35,7 @@ function task(labels: Record<string, string> | null): TaskView {
     stdin_size: null,
     env: null,
     source_offsets: null,
+    spawn_ms: null,
   }
 }
 

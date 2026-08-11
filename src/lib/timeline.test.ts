@@ -41,6 +41,7 @@ function task(overrides: Partial<TaskView> = {}): TaskView {
     stdin_size: null,
     env: null,
     source_offsets: null,
+    spawn_ms: null,
     ...overrides,
   }
 }

@@ -34,6 +34,10 @@ export interface TaskView {
   stdin_size: number | null
   env: Record<string, string> | null
   source_offsets: number[] | null
+  // Parent-side share of the duration: how long starting the subprocess took
+  // (task_completed metadata `spawn_ms`, v1.11 backends). WS-only — resyncs
+  // preserve the WS-delivered value.
+  spawn_ms: number | null
 }
 
 // baseTaskId strips a `:r<ts>` retry suffix so links and lookups use the canonical id.
@@ -103,6 +107,7 @@ export function taskFromRecent(r: RecentTask): TaskView {
     stdin_size: null,
     env: r.env,
     source_offsets: null,
+    spawn_ms: null,
   }
 }
 

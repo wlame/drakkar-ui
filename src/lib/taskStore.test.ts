@@ -43,6 +43,39 @@ describe('applyTaskEvent', () => {
     expect(t.stdout_lines).toBe(2)
   })
 
+  it('parses spawn_ms from task_completed metadata and keeps it across resyncs', () => {
+    const tasks: Record<string, TaskView> = {}
+    applyTaskEvent(tasks, started())
+    applyTaskEvent(tasks, completed({ metadata: JSON.stringify({ spawn_ms: 12.5 }) }))
+    expect(tasks['t1'].spawn_ms).toBe(12.5)
+    const merged = mergeRecentTasks(tasks, [
+      {
+        task_id: 't1',
+        partition: 0,
+        start_ts: 100,
+        end_ts: 105,
+        duration: 5,
+        status: 'completed',
+        args: null,
+        pid: null,
+        slot: 0,
+        labels: null,
+        env: null,
+        origin: 'kafka',
+        client_name: null,
+        request_id: null,
+      },
+    ])
+    expect(merged['t1'].spawn_ms).toBe(12.5)
+  })
+
+  it('leaves spawn_ms null when the completion carries no metadata', () => {
+    const tasks: Record<string, TaskView> = {}
+    applyTaskEvent(tasks, started())
+    applyTaskEvent(tasks, completed())
+    expect(tasks['t1'].spawn_ms).toBeNull()
+  })
+
   it('derives the start from ts - duration when the start event was missed', () => {
     const tasks: Record<string, TaskView> = {}
     applyTaskEvent(tasks, completed({ ts: 110, duration: 4 }))

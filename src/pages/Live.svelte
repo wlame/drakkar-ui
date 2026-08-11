@@ -30,6 +30,7 @@
     type AnnotationView,
   } from '../lib/live'
   import Timeline from '../components/live/Timeline.svelte'
+  import TimelineStats from '../components/live/TimelineStats.svelte'
   import PeerTimeline from '../components/live/PeerTimeline.svelte'
   import ArrangeTab from '../components/live/ArrangeTab.svelte'
   import ResultsTab from '../components/live/ResultsTab.svelte'
@@ -120,6 +121,7 @@
     zoom: 2,
     highlightInput: '',
     filterInput: '',
+    statsLabel: '',
     followSeq: 0,
     overridesSeq: 0,
     applyRole(role: TimelineRole, value: string | null) {
@@ -521,6 +523,7 @@
       timeline={timelineConfig}
       workerId={$identity?.worker_id}
     />
+    <TimelineStats tasks={tasksList} attached />
   {:else}
     <!-- This worker first, with the one toolbar; peers stack under it and
          follow the toolbar through sharedControls. -->
@@ -538,6 +541,7 @@
       shared={sharedControls}
       showHeader={false}
     />
+    <TimelineStats tasks={tasksList} shared={sharedControls} attached />
     {#if clusterLoadFailed}
       <p class="truncated-note">Could not load the worker list — peer timelines are unavailable.</p>
     {:else if clusterPeers.length === 0}
