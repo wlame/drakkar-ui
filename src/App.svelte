@@ -26,15 +26,11 @@
     ...$uiPages.map((p) => ({ label: p.title, path: `/p/${p.slug}` })),
   ])
 
-  // The brand shows the cluster name with a capital FIRST letter only. Cluster
-  // names are commonly hyphenated ("kafka-prod-01"), and CSS
-  // `text-transform: capitalize` would render that as "Kafka-Prod-01". The raw
-  // configured value stays in the title attribute.
-  const brand = $derived.by(() => {
-    const cluster = $identity?.cluster
-    if (!cluster) return 'Drakkar'
-    return cluster.charAt(0).toUpperCase() + cluster.slice(1)
-  })
+  // The brand is always "Drakkar", linking out to the documentation site.
+  // The cluster name lives in its own centered badge instead (below) — it is
+  // an identifier, not a product name, so it renders in mono and verbatim
+  // (no capitalization games with hyphenated names like "kafka-prod-01").
+  const DOCS_URL = 'https://wlame.github.io/drakkar/'
 
   // A removed path never renders: the redirect replaces it before a page is shown.
   // The markup below also checks redirectTo directly, so NotFound never flashes
@@ -100,13 +96,16 @@
 <header>
   <div class="bar" class:wide>
     <div class="left">
+      <!-- External navigation, deliberately not use:link: the docs live on
+           another host, and a new tab keeps the operator's live view open. -->
       <a
         class="brand"
-        href="/"
-        use:link
-        title={$identity?.cluster ? `${$identity.cluster} — Drakkar` : 'Drakkar'}
+        href={DOCS_URL}
+        target="_blank"
+        rel="noopener"
+        title="Drakkar documentation"
       >
-        {brand}
+        Drakkar
       </a>
       <nav>
         {#each allNavItems as item}
@@ -116,6 +115,11 @@
         {/each}
       </nav>
     </div>
+    {#if $identity?.cluster}
+      <!-- Absolutely centered in the bar, so it stays centered regardless of
+           how wide the nav and the tools grow. -->
+      <span class="cluster-badge" title="Cluster">{$identity.cluster}</span>
+    {/if}
     <span class="spacer"></span>
     <VersionBadge />
     <SinkLinks />
@@ -143,12 +147,41 @@
     background: #2a2a2a;
   }
   .bar {
+    position: relative; /* anchors the centered cluster badge */
     display: flex;
     align-items: center;
     gap: 1.5rem;
     max-width: 80rem;
     margin: 0 auto;
     padding: 0.75rem 1rem;
+  }
+  /* Cluster identity, dead-center in the header. Mono because it is an
+     identifier (same voice as the worker switcher), teal because that is the
+     app's accent family — a faint tinted pill reads clearly on the dark bar
+     without competing with the nav. */
+  .cluster-badge {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: var(--mono);
+    font-size: 0.875rem;
+    letter-spacing: 0.02em;
+    color: #5eead4;
+    background: rgba(94, 234, 212, 0.08);
+    border: 1px solid rgba(94, 234, 212, 0.25);
+    border-radius: 999px;
+    padding: 0.125rem 0.75rem;
+    max-width: 18rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* On narrow windows the centered pill would collide with the nav — the
+     worker switcher still groups peers by cluster there. */
+  @media (max-width: 56rem) {
+    .cluster-badge {
+      display: none;
+    }
   }
   .bar.wide {
     max-width: none;
@@ -163,11 +196,9 @@
     font-weight: 700;
     color: #fff;
     text-decoration: none;
-    /* A cluster name can be long; the nav must not be pushed off screen. */
-    max-width: 16rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  }
+  .brand:hover {
+    color: #5eead4;
   }
   nav {
     display: flex;
