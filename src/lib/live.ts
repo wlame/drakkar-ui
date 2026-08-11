@@ -38,6 +38,10 @@ export interface TaskView {
   // (task_completed metadata `spawn_ms`, v1.11 backends). WS-only — resyncs
   // preserve the WS-delivered value.
   spawn_ms: number | null
+  // Time the task waited for a free pool slot before any work began
+  // (task_started metadata `queue_wait_ms`, v1.11 backends). WS-only, like
+  // spawn_ms. Long waits = the pool (or the CPUs behind it) is the bottleneck.
+  queue_wait_ms: number | null
 }
 
 // baseTaskId strips a `:r<ts>` retry suffix so links and lookups use the canonical id.
@@ -108,6 +112,7 @@ export function taskFromRecent(r: RecentTask): TaskView {
     env: r.env,
     source_offsets: null,
     spawn_ms: null,
+    queue_wait_ms: null,
   }
 }
 

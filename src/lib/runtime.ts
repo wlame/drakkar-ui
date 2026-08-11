@@ -71,3 +71,62 @@ export function stallFromMetadata(metadata: string | null | undefined): RuntimeS
     unit_count: typeof raw.unit_count === 'number' ? raw.unit_count : -1,
   }
 }
+
+// One row of the "Top blocking sites" table: every stall's captured stacks,
+// re-grouped by the code location that blocked the loop. This is the
+// "analyze later" view over recorded stalls — a site that keeps showing up
+// across stalls is the fix target, even when each individual stall looks
+// different.
+export interface StallSiteAggregate {
+  location: string
+  // Stall events in which this site was captured at least once.
+  stalls: number
+  // Total sampler hits at this site, across all stalls (the sampler counts
+  // how often it saw each site while the loop was blocked — a proxy for how
+  // much of the blocked time this site owns).
+  samples: number
+  // Sum of the full durations of the stalls this site appeared in. An upper
+  // bound on the site's cost: co-captured sites share one stall's duration.
+  totalMs: number
+  lastTs: number
+  // One representative stack for the site (from its most recent stall).
+  exampleStack: string
+}
+
+/** Group recorded runtime_stall events by blocking site, busiest first. */
+export function aggregateStallSites(
+  events: { ts: number; metadata: string | null }[],
+): StallSiteAggregate[] {
+  const byLocation = new Map<string, StallSiteAggregate>()
+  for (const event of events) {
+    const stall = stallFromMetadata(event.metadata)
+    // One stall can capture a location more than once (distinct call paths
+    // into the same site); count the stall and its duration once per site.
+    const seenThisStall = new Set<string>()
+    for (const stack of stall.stacks) {
+      let aggregate = byLocation.get(stack.location)
+      if (!aggregate) {
+        aggregate = {
+          location: stack.location,
+          stalls: 0,
+          samples: 0,
+          totalMs: 0,
+          lastTs: 0,
+          exampleStack: '',
+        }
+        byLocation.set(stack.location, aggregate)
+      }
+      if (!seenThisStall.has(stack.location)) {
+        seenThisStall.add(stack.location)
+        aggregate.stalls += 1
+        aggregate.totalMs += stall.duration_ms
+      }
+      aggregate.samples += stack.count
+      if (event.ts >= aggregate.lastTs) {
+        aggregate.lastTs = event.ts
+        aggregate.exampleStack = stack.stack
+      }
+    }
+  }
+  return [...byLocation.values()].sort((a, b) => b.samples - a.samples)
+}

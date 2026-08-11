@@ -9,6 +9,7 @@
   import { fmtTime } from '../../lib/format'
   import {
     STATE_COLORS,
+    aggregateStallSites,
     fmtLagMs,
     sparklinePoints,
     stallFromMetadata,
@@ -20,7 +21,9 @@
 
   const SPARK_W = 640
   const SPARK_H = 60
-  const STALL_LIMIT = 20
+  // 100 rather than a screenful: the aggregation below is only as good as
+  // the history it sees, and stall rows are small.
+  const STALL_LIMIT = 100
 
   let snapshot = $state<RuntimeHealthSnapshot | null>(null)
   let availability = $state<'loading' | 'available' | 'absent' | 'error'>('loading')
@@ -67,6 +70,7 @@
     }
   }
 
+  const stallSites = $derived(aggregateStallSites(stallEvents))
   const stateColor = $derived(snapshot ? STATE_COLORS[snapshot.state] : 'var(--line)')
   const points = $derived(snapshot ? sparklinePoints(snapshot.window, SPARK_W, SPARK_H) : '')
   const peakMs = $derived(snapshot ? windowPeakMs(snapshot.window) : 0)
@@ -123,6 +127,29 @@
   {#if stallEvents.length === 0}
     <p class="muted">No stalls recorded — nothing has blocked the runtime.</p>
   {:else}
+    <!-- Aggregate first, list second: across many stalls the site that KEEPS
+         appearing is the fix target, and no one finds it by expanding rows
+         one at a time. -->
+    <p class="muted small">
+      Top blocking sites across the last {stallEvents.length} recorded stalls. Total time is an
+      upper bound — sites captured in the same stall share its duration.
+    </p>
+    <table class="sites">
+      <thead>
+        <tr><th>Blocking site</th><th>Samples</th><th>Stalls</th><th>Total stall time</th><th>Last seen</th></tr>
+      </thead>
+      <tbody>
+        {#each stallSites.slice(0, 10) as site (site.location)}
+          <tr>
+            <td class="mono">{site.location}</td>
+            <td class="mono">{site.samples}</td>
+            <td class="mono">{site.stalls}</td>
+            <td class="mono">{fmtLagMs(site.totalMs)}</td>
+            <td class="mono">{fmtTime(site.lastTs)}</td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
     <table>
       <thead>
         <tr><th>When</th><th>Duration</th><th>Blocking sites</th><th>Units</th></tr>
@@ -276,6 +303,9 @@
   th {
     color: var(--muted);
     font-weight: 500;
+  }
+  .sites {
+    margin-bottom: 1rem;
   }
   .stall-row {
     cursor: pointer;

@@ -200,3 +200,13 @@ describe('laneCountFromTasks', () => {
     expect(laneCountFromTasks([], 4)).toBe(4)
   })
 })
+
+describe('queue_wait_ms', () => {
+  it('parses queue_wait_ms from task_started metadata and survives completion', () => {
+    const tasks: Record<string, TaskView> = {}
+    applyTaskEvent(tasks, started({ metadata: JSON.stringify({ queue_wait_ms: 42.5 }) }))
+    expect(tasks['t1'].queue_wait_ms).toBe(42.5)
+    applyTaskEvent(tasks, completed())
+    expect(tasks['t1'].queue_wait_ms).toBe(42.5)
+  })
+})

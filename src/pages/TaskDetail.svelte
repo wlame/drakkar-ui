@@ -66,6 +66,9 @@
     finished: EventRow | undefined
     completed: EventRow | undefined
     failed: EventRow | undefined
+    stdin: string | null
+    stdinTruncated: boolean
+    stdinBytes: number | null
     sourceOffsets: number[]
     env: Record<string, string>
     labels: Record<string, string>
@@ -127,6 +130,20 @@
       cli = parts.map((p) => JSON.stringify(p)).join(' ')
     }
 
+    // stdin content: on task_started metadata when ui.recorder.store_stdin is
+    // on; failed tasks carry it on the task_failed metadata regardless.
+    const failedMeta = safeJsonParse<Record<string, unknown>>(failed?.metadata, {})
+    const stdin =
+      typeof meta.stdin === 'string'
+        ? meta.stdin
+        : typeof failedMeta.stdin === 'string'
+          ? failedMeta.stdin
+          : null
+    const stdinTruncated = meta.stdin_truncated === true || failedMeta.stdin_truncated === true
+    // Size-only marker written when content storing is off (stdin_bytes in
+    // started metadata) — lets the page explain what is missing and why.
+    const stdinBytes = typeof meta.stdin_bytes === 'number' ? meta.stdin_bytes : null
+
     // HTTP request/response bodies (only meaningful for origin === 'http').
     let requestBody: HttpBody | null = null
     let responseBody: unknown = undefined
@@ -163,6 +180,9 @@
       finished,
       completed,
       failed,
+      stdin,
+      stdinTruncated,
+      stdinBytes,
       sourceOffsets,
       env,
       labels,
@@ -285,9 +305,29 @@
     <CodeBlock text={pretty(vm.responseBody)} language="json" maxHeight="22rem" />
   {/if}
 
+  {#if vm.stdin != null}
+    <h2>Stdin {#if vm.stdinTruncated}<span class="cap-note">(truncated at ui.recorder.stdin_max_bytes)</span>{/if}</h2>
+    <CodeBlock text={vm.stdin} maxHeight="22rem" />
+  {:else if vm.stdinBytes}
+    <h2>Stdin</h2>
+    <!-- Absent data vs never-recorded data are different findings — name the
+         retention setting that excluded the content. -->
+    <p class="muted">
+      {fmtBytes(vm.stdinBytes)} consumed, content not stored — enable
+      <code>ui.recorder.store_stdin</code> to keep it (failed tasks always store it, capped).
+    </p>
+  {/if}
+
   {#if vm.completed?.stdout}
     <h2>Stdout</h2>
     <CodeBlock text={vm.completed.stdout} maxHeight="22rem" />
+  {:else if vm.completed && vm.completed.stdout_size}
+    <h2>Stdout</h2>
+    <p class="muted">
+      {fmtBytes(vm.completed.stdout_size)} produced, content not stored — the task finished under
+      <code>ui.recorder.output_min_duration_ms</code>, or <code>ui.recorder.store_output</code> is
+      off.
+    </p>
   {/if}
 
   {#if vm.completed?.stderr}
@@ -324,6 +364,12 @@
 {/if}
 
 <style>
+  .cap-note {
+    font-size: 0.85rem;
+    font-weight: 400;
+    color: var(--muted);
+  }
+
   .head {
     display: flex;
     align-items: baseline;

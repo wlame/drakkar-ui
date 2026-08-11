@@ -1,5 +1,11 @@
-import { describe, expect, test } from 'vitest'
-import { fmtLagMs, sparklinePoints, stallFromMetadata, windowPeakMs } from './runtime'
+import { describe, expect, it, test } from 'vitest'
+import {
+  aggregateStallSites,
+  fmtLagMs,
+  sparklinePoints,
+  stallFromMetadata,
+  windowPeakMs,
+} from './runtime'
 import type { RuntimeLagBucket } from './types'
 
 const bucket = (t: number, max: number, avg = max): RuntimeLagBucket => ({
@@ -65,5 +71,56 @@ describe('stallFromMetadata', () => {
       expect(stall.duration_ms).toBe(0)
       expect(stall.unit_count).toBe(-1)
     }
+  })
+})
+
+describe('aggregateStallSites', () => {
+  const stall = (
+    ts: number,
+    durationMs: number,
+    stacks: { location: string; count: number; stack?: string }[],
+  ) => ({
+    ts,
+    metadata: JSON.stringify({
+      duration_ms: durationMs,
+      stacks: stacks.map((s) => ({
+        stack: s.stack ?? 'trace',
+        location: s.location,
+        count: s.count,
+      })),
+      dropped_stacks: 0,
+      unit_count: 1,
+    }),
+  })
+
+  it('groups sites across stalls, busiest first', () => {
+    const sites = aggregateStallSites([
+      stall(100, 2000, [{ location: 'a.py:1', count: 3 }]),
+      stall(200, 1000, [
+        { location: 'a.py:1', count: 5 },
+        { location: 'b.py:9', count: 1 },
+      ]),
+    ])
+    expect(sites.map((s) => s.location)).toEqual(['a.py:1', 'b.py:9'])
+    expect(sites[0]).toMatchObject({ stalls: 2, samples: 8, totalMs: 3000, lastTs: 200 })
+    expect(sites[1]).toMatchObject({ stalls: 1, samples: 1, totalMs: 1000 })
+  })
+
+  it('counts a stall once per site even when the site is captured twice', () => {
+    const sites = aggregateStallSites([
+      stall(100, 2000, [
+        { location: 'a.py:1', count: 3 },
+        { location: 'a.py:1', count: 2 },
+      ]),
+    ])
+    expect(sites[0]).toMatchObject({ stalls: 1, samples: 5, totalMs: 2000 })
+  })
+
+  it('keeps the most recent stack as the example', () => {
+    const sites = aggregateStallSites([
+      stall(100, 500, [{ location: 'a.py:1', count: 1, stack: 'old' }]),
+      stall(200, 500, [{ location: 'a.py:1', count: 1, stack: 'new' }]),
+    ])
+    expect(sites[0].exampleStack).toBe('new')
   })
 })

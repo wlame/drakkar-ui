@@ -25,14 +25,34 @@
   let sort = $state(NO_SORT)
   const COLUMNS: { key: string; label: string; numeric: boolean }[] = [
     { key: 'ts', label: 'Time', numeric: false },
+    { key: 'gap', label: 'Gap', numeric: true },
     { key: 'worker_name', label: 'Worker', numeric: false },
     { key: 'event', label: 'Event', numeric: false },
     { key: 'task_id', label: 'Task ID', numeric: false },
     { key: 'duration', label: 'Duration', numeric: true },
     { key: 'details', label: 'Details', numeric: false },
   ]
+  // Gap to the previous event in TIME order (not display order) — the
+  // per-stage waterfall for one message: a big gap between two events names
+  // the pipeline stage where the seconds went (slow arrange, heavy hooks,
+  // sink delivery, executor queueing).
+  const gaps = $derived.by(() => {
+    const map = new Map<number, number>()
+    if (!results) return map
+    const byTime = [...results].sort((a, b) => a.ts - b.ts)
+    for (let i = 1; i < byTime.length; i++) {
+      map.set(byTime[i].id, (byTime[i].ts - byTime[i - 1].ts) * 1000)
+    }
+    return map
+  })
+
+  function fmtGap(ms: number): string {
+    return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`
+  }
+
   const ACCESSORS: Record<string, SortAccessor<TraceEvent>> = {
     ts: (e) => e.ts,
+    gap: (e) => gaps.get(e.id) ?? -1,
     worker_name: (e) => e.worker_name,
     event: (e) => e.event,
     task_id: (e) => e.task_id,
@@ -170,8 +190,12 @@
       <tbody>
         {#each sortRows(results, sort, ACCESSORS) as e (e.id)}
           {@const ann = annotationOf(e)}
+          {@const gap = gaps.get(e.id)}
           <tr>
             <td class="muted nowrap" title={fmtTimeMs(e.ts)}>{fmtTimeMs(e.ts)}</td>
+            <td class="num mono" style:color={gap != null && gap > 1000 ? '#dc2626' : undefined}>
+              {gap != null ? `+${fmtGap(gap)}` : ''}
+            </td>
             <td class="mono">{e.worker_name}</td>
             <td><span style:color={eventColor(e.event)}>{e.event}</span></td>
             <td class="mono">

@@ -67,6 +67,7 @@ export function applyTaskEvent(tasks: Record<string, TaskView>, e: WsEvent): voi
           ? (meta.source_offsets as number[])
           : null,
         spawn_ms: null,
+        queue_wait_ms: typeof meta.queue_wait_ms === 'number' ? meta.queue_wait_ms : null,
       }
       return
     }
@@ -101,6 +102,7 @@ export function applyTaskEvent(tasks: Record<string, TaskView>, e: WsEvent): voi
         env: ex?.env ?? null,
         source_offsets: ex?.source_offsets ?? null,
         spawn_ms: spawnMs,
+        queue_wait_ms: ex?.queue_wait_ms ?? null,
       }
       return
     }
@@ -135,6 +137,7 @@ export function mergeRecentTasks(
       v.source_offsets = old.source_offsets
       v.exit_code = v.exit_code ?? old.exit_code
       v.spawn_ms = old.spawn_ms
+      v.queue_wait_ms = old.queue_wait_ms
     }
     map[t.task_id] = v
   }
