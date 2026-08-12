@@ -163,6 +163,29 @@ export function annotationFromEvent(e: WsEvent): AnnotationView | null {
   }
 }
 
+// One reading from the backend's net_io WS heartbeat: host-wide network
+// throughput in MiB/s (the whole network namespace — worker, subprocesses,
+// and any neighbours sharing it; per-process accounting needs root/eBPF).
+export interface NetRates {
+  rx_mib_s: number
+  tx_mib_s: number
+}
+
+// netFromEvent extracts the RX/TX rates from a 'net_io' WS frame, or returns
+// null when the frame is not one / its metadata is unusable. Frames arrive
+// every state-sync tick (default 10s) from backends that support them;
+// absence is normal on older backends and on hosts without /proc/net/dev.
+export function netFromEvent(e: WsEvent): NetRates | null {
+  if (e.event !== 'net_io' || !e.metadata) return null
+  try {
+    const m = JSON.parse(e.metadata) as Record<string, unknown>
+    if (typeof m.rx_mib_s !== 'number' || typeof m.tx_mib_s !== 'number') return null
+    return { rx_mib_s: m.rx_mib_s, tx_mib_s: m.tx_mib_s }
+  } catch {
+    return null
+  }
+}
+
 // annotationsForArrange selects the annotations belonging to one arrange batch.
 //
 // Window-scoped rows match on window_id, which is why the arranged event

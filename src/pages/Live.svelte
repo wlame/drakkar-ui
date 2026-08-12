@@ -24,10 +24,12 @@
     normalizeRecentTasks,
     arrangeFromEvent,
     annotationFromEvent,
+    netFromEvent,
     type NormalizedRecentTasks,
     type TaskView,
     type ArrangeView,
     type AnnotationView,
+    type NetRates,
   } from '../lib/live'
   import Timeline from '../components/live/Timeline.svelte'
   import TimelineStats from '../components/live/TimelineStats.svelte'
@@ -48,6 +50,7 @@
     'task_failed',
     'arranged',
     'annotation',
+    'net_io',
   ]
 
   // --- bootstrap config (best-effort; defaults keep the page working) ---
@@ -67,6 +70,10 @@
   // is worth saying out loud: a frozen live page looks like an idle worker.
   let dataUnavailable = $state(false)
   let pool = $state({ active: 0, max: 0, waiting: 0 })
+  // Latest host network throughput reading from the net_io WS heartbeat.
+  // Null until the first frame — older backends and hosts without
+  // /proc/net/dev never send one, and the readout simply stays hidden.
+  let net = $state<NetRates | null>(null)
   // Bumped on runtime_health / runtime_stall WS frames; the Runtime tab
   // refetches its snapshot when this changes.
   let runtimeSeq = $state(0)
@@ -98,6 +105,13 @@
   })
 
   const tasksList = $derived(Object.values(allTasks))
+
+  // A rate readout that stops updating is worse than none: without frames it
+  // would freeze at the last value and read as current. The WS status is the
+  // only signal that frames stopped, so drop the reading when the stream does.
+  $effect(() => {
+    if (status !== 'connected') net = null
+  })
 
   // --- cluster view (Executors tab) -------------------------------------------
   //
@@ -234,6 +248,11 @@
         // open tab that fresher data exists (~1 frame per 10s sample, or
         // per transition/stall — never high-rate).
         runtimeSeq += 1
+        break
+      }
+      case 'net_io': {
+        const rates = netFromEvent(e)
+        if (rates) net = rates
         break
       }
       // task_complete / message_complete / window_complete drive the poll-backed
@@ -479,6 +498,12 @@
   <span class="badge status-{status}">WS: {WS_STATUS_LABELS[status]}</span>
   <button class="freeze" class:on={frozen} onclick={() => setFrozen(!frozen)}>{frozen ? 'Frozen' : 'Live'}</button>
   <span class="spacer"></span>
+  {#if net}
+    <span
+      class="net"
+      title="Host network throughput across all interfaces (worker + subprocesses + anything sharing the network namespace)"
+    >Net: RX {net.rx_mib_s.toFixed(1)} · TX {net.tx_mib_s.toFixed(1)} MiB/s</span>
+  {/if}
   <span class="pool">Pool: {pool.active} / {pool.max} slots, <span class="waiting">{pool.waiting}</span> waiting</span>
 </div>
 <p class="tab-hint">{TAB_HINTS[activeTab]}</p>
@@ -622,6 +647,12 @@
   }
   .pool .waiting {
     color: #b45309;
+  }
+  .net {
+    font-size: 0.875rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums; /* rates tick every frame — no jitter */
+    margin-right: 1rem;
   }
   .tabs {
     display: flex;

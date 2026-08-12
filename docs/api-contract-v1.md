@@ -803,6 +803,43 @@ the raw-databases list above it is unaffected.
   the request; the response is still `200`, just without that source
   counted in `source_files`.
 
+## v1.9 additions (2026-08-11)
+
+Two additive event TYPES around host resources, no new endpoint, no
+events-table change. A backend that predates this section simply never
+emits them.
+
+- **`resource_sample` event** (persisted — an ordinary events-table row),
+  one per state-sync tick: `metadata` JSON with `rss_bytes:int`,
+  `threads:int`, `open_fds:int`, `cpu_self_pct:number`,
+  `cpu_children_pct:number`, `rx_bytes_total:int`, `tx_bytes_total:int`,
+  `interval_s:number` — **every field optional**; a field is omitted when
+  its platform source is unavailable, and the first sample after start
+  carries no `cpu_*_pct` / `interval_s`. `cpu_children_pct` counts *reaped*
+  subprocesses (CPU lands when a task's process exits), so the series is
+  bursty by nature. Clients must ignore unknown metadata keys.
+- **`net_io` WS frame** (broadcast only, never persisted — the pinned
+  20-column row shape is untouched), described below; the UI readout stays
+  hidden on backends that never send it.
+
+- **`net_io` WS frame**, one per state-sync tick (default 10s), in the
+  standard event wire shape: `{ts, dt, event:"net_io", metadata:<JSON str>}`.
+  Metadata: `{rx_mib_s:number, tx_mib_s:number, rx_bytes_total:int,
+  tx_bytes_total:int, interval_s:number}`. Rates are MiB/s averaged over
+  `interval_s`; totals are the raw kernel counters the rates were diffed
+  from.
+- **Semantics**: counters come from `/proc/net/dev`, summed across all
+  non-loopback interfaces — **host-wide per network namespace** (the worker,
+  its subprocesses, and anything else sharing the namespace; per-process
+  network accounting does not exist without root/eBPF). On platforms
+  without `/proc/net/dev` (macOS) the backend sends no frames at all.
+- **Client behavior**: subscribers must opt in via `?events=` as with any
+  type; the UI adds `net_io` to the Live page and per-peer cluster-view
+  subscriptions and shows `RX x.x · TX x.x MiB/s`. A reading is dropped
+  whenever the socket leaves `connected` — a stale rate must not read as
+  current. An interval in which the kernel counters went backwards
+  (interface bounce) produces no frame rather than a nonsense rate.
+
 ## Appendix: divergence resolutions from the 2026-06 audit
 
 Canonical choices where the two reference backends disagreed; each backend

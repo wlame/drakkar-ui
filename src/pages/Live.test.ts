@@ -12,16 +12,21 @@ import type { Identity, RecentTask, TimelineConfig, WorkerPeer } from '../lib/ty
 
 // Stubbed rather than opening a real socket: happy-dom's WebSocket would try
 // to connect, and these tests drive the page entirely through its HTTP resync.
-// The rest of the module (WS_STATUS_LABELS) stays real.
+// The captured options let a test push WS frames / status changes into the
+// page by hand. The rest of the module (WS_STATUS_LABELS) stays real.
+let socketOpts: import('../lib/ws').LiveSocketOptions | null = null
 vi.mock('../lib/ws', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/ws')>()
   return {
     ...actual,
-    createLiveSocket: vi.fn(() => ({
-      close: vi.fn(),
-      setFrozen: vi.fn(),
-      setSuspended: vi.fn(),
-    })),
+    createLiveSocket: vi.fn((opts: import('../lib/ws').LiveSocketOptions) => {
+      socketOpts = opts
+      return {
+        close: vi.fn(),
+        setFrozen: vi.fn(),
+        setSuspended: vi.fn(),
+      }
+    }),
   }
 })
 
@@ -94,6 +99,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   recentPayload = { tasks: [recentTask('t-1', 2), recentTask('t-2', 1)], lane_count: 4 }
   workersPayload = []
+  socketOpts = null
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
   identity.set(null)
@@ -317,6 +323,61 @@ describe('Live cluster view', () => {
     await settled()
 
     expect(target.textContent).toContain('No other workers found in this cluster.')
+
+    teardown()
+  })
+})
+
+describe('Live net readout', () => {
+  function pushNetFrame(rx: number, tx: number) {
+    socketOpts!.onEvent({
+      event: 'net_io',
+      ts: NOW,
+      metadata: JSON.stringify({ rx_mib_s: rx, tx_mib_s: tx, interval_s: 10 }),
+    })
+    flushSync()
+  }
+
+  it('shows RX/TX rates from net_io frames', async () => {
+    const { target, teardown } = mountLive()
+    await settled()
+    expect(target.textContent).not.toContain('Net:')
+
+    socketOpts!.onStatus('connected')
+    flushSync()
+    pushNetFrame(12.34, 0.56)
+
+    expect(target.textContent).toContain('Net: RX 12.3 · TX 0.6 MiB/s')
+
+    teardown()
+  })
+
+  it('drops the readout when the stream disconnects', async () => {
+    const { target, teardown } = mountLive()
+    await settled()
+    socketOpts!.onStatus('connected')
+    flushSync()
+    pushNetFrame(1.0, 2.0)
+    expect(target.textContent).toContain('Net: RX 1.0')
+
+    // A frozen rate would read as current — it must vanish with the stream.
+    socketOpts!.onStatus('disconnected')
+    flushSync()
+    expect(target.textContent).not.toContain('Net:')
+
+    teardown()
+  })
+
+  it('ignores malformed net_io metadata', async () => {
+    const { target, teardown } = mountLive()
+    await settled()
+    socketOpts!.onStatus('connected')
+    flushSync()
+
+    socketOpts!.onEvent({ event: 'net_io', ts: NOW, metadata: 'not json' })
+    flushSync()
+
+    expect(target.textContent).not.toContain('Net:')
 
     teardown()
   })

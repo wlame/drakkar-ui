@@ -14,7 +14,7 @@
   //     clock — `paused` reaches the Timeline — it just doesn't stop data.
   import { onMount } from 'svelte'
   import { peerBaseUrl, type SharedTimelineControls } from '../../lib/cluster'
-  import { type TaskView } from '../../lib/live'
+  import { netFromEvent, type NetRates, type TaskView } from '../../lib/live'
   import { applyTaskEvent, laneCountFromTasks, pruneFinishedBefore } from '../../lib/taskStore'
   import { DEFAULT_MAX_AGE_MINUTES } from '../../lib/timeline'
   import type { TimelineConfig, WorkerPeer } from '../../lib/types'
@@ -44,12 +44,21 @@
     fallbackLaneCount?: number
   } = $props()
 
-  const PEER_EVENT_TYPES = ['task_started', 'task_completed', 'task_failed']
+  const PEER_EVENT_TYPES = ['task_started', 'task_completed', 'task_failed', 'net_io']
   const PRUNE_INTERVAL_MS = 5000
 
   let status = $state<WsStatus>('connecting')
   let allTasks = $state<Record<string, TaskView>>({})
+  // This peer's host network throughput — each peer runs on its own host, so
+  // in cluster view the per-strip readout shows which machine's NIC is busy.
+  let net = $state<NetRates | null>(null)
   let socket: LiveSocket | null = null
+
+  // Same reasoning as the Live page: a frozen rate reads as current, so the
+  // readout goes away when the frames do.
+  $effect(() => {
+    if (status !== 'connected') net = null
+  })
 
   const tasksList = $derived(Object.values(allTasks))
   const laneCount = $derived(laneCountFromTasks(tasksList, fallbackLaneCount))
@@ -66,7 +75,14 @@
     socket = createLiveSocket({
       baseUrl: base,
       eventTypes: PEER_EVENT_TYPES,
-      onEvent: (e) => applyTaskEvent(allTasks, e),
+      onEvent: (e) => {
+        if (e.event === 'net_io') {
+          const rates = netFromEvent(e)
+          if (rates) net = rates
+          return
+        }
+        applyTaskEvent(allTasks, e)
+      },
       onStatus: (s) => (status = s),
       // No onGap/onOpen resync: unreachable cross-origin (see header note).
       // A drop or reconnect just leaves a visible gap in the strip.
@@ -82,6 +98,12 @@
 <div class="peer-head">
   <h3 class="peer-name">{peer.worker_name || '?'}</h3>
   <span class="badge status-{status}">WS: {WS_STATUS_LABELS[status]}</span>
+  {#if net}
+    <span
+      class="net"
+      title="This worker's host network throughput, all interfaces"
+    >RX {net.rx_mib_s.toFixed(1)} · TX {net.tx_mib_s.toFixed(1)} MiB/s</span>
+  {/if}
 </div>
 <Timeline
   tasks={tasksList}
@@ -110,6 +132,11 @@
     font-family: var(--mono);
     color: #1a1a1a;
     margin: 0;
+  }
+  .net {
+    font-size: 0.8125rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
   }
   /* Same badge idiom as the page header's WS pill. */
   .badge {
