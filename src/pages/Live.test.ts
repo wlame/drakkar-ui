@@ -397,7 +397,12 @@ describe('Live net readout', () => {
     socketOpts!.onEvent({
       event: 'net_io',
       ts: NOW,
-      metadata: JSON.stringify({ rx_mib_s: 1.5, tx_mib_s: 0.5, nfs_read_mib_s: 850.25, nfs_write_mib_s: 0.75 }),
+      metadata: JSON.stringify({
+        rx_mib_s: 1.5,
+        tx_mib_s: 0.5,
+        nfs_read_mib_s: 850.25,
+        nfs_write_mib_s: 0.75,
+      }),
     })
     flushSync()
 
@@ -418,7 +423,12 @@ describe('Live net readout', () => {
     socketOpts!.onEvent({
       event: 'net_io',
       ts: NOW,
-      metadata: JSON.stringify({ rx_mib_s: 1.0, tx_mib_s: 0.5, nfs_read_mib_s: 10, nfs_write_mib_s: 1 }),
+      metadata: JSON.stringify({
+        rx_mib_s: 1.0,
+        tx_mib_s: 0.5,
+        nfs_read_mib_s: 10,
+        nfs_write_mib_s: 1,
+      }),
     })
     flushSync()
     expect(target.textContent).toContain('NFS: R 10.0')

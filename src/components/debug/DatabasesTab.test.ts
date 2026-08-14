@@ -270,7 +270,12 @@ describe('DatabasesTab v1.12 rows', () => {
   })
 
   it('still hides settled empty recorder files', async () => {
-    const emptyDb: DbInfo = { ...oneDb, filename: 'workerA-empty.db', event_count: 0, stats_pending: false }
+    const emptyDb: DbInfo = {
+      ...oneDb,
+      filename: 'workerA-empty.db',
+      event_count: 0,
+      stats_pending: false,
+    }
     vi.stubGlobal('fetch', stubFetch(200, { archives: [] }, [oneDb, emptyDb]))
     const { target, cleanup } = renderMounted()
     await settled()

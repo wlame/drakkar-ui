@@ -375,14 +375,23 @@ describe('netFromEvent', () => {
   })
 
   it('carries the NFS pair when both fields are numbers (contract v1.11)', () => {
-    const e = frame(JSON.stringify({ rx_mib_s: 1, tx_mib_s: 2, nfs_read_mib_s: 850.5, nfs_write_mib_s: 0.25 }))
-    expect(netFromEvent(e)).toEqual({ rx_mib_s: 1, tx_mib_s: 2, nfs_read_mib_s: 850.5, nfs_write_mib_s: 0.25 })
+    const e = frame(
+      JSON.stringify({ rx_mib_s: 1, tx_mib_s: 2, nfs_read_mib_s: 850.5, nfs_write_mib_s: 0.25 }),
+    )
+    expect(netFromEvent(e)).toEqual({
+      rx_mib_s: 1,
+      tx_mib_s: 2,
+      nfs_read_mib_s: 850.5,
+      nfs_write_mib_s: 0.25,
+    })
   })
 
   it('drops a half-formed NFS pair but keeps the RX/TX rates', () => {
     const e = frame(JSON.stringify({ rx_mib_s: 1, tx_mib_s: 2, nfs_read_mib_s: 850.5 }))
     expect(netFromEvent(e)).toEqual({ rx_mib_s: 1, tx_mib_s: 2 })
-    const bad = frame(JSON.stringify({ rx_mib_s: 1, tx_mib_s: 2, nfs_read_mib_s: '850', nfs_write_mib_s: 1 }))
+    const bad = frame(
+      JSON.stringify({ rx_mib_s: 1, tx_mib_s: 2, nfs_read_mib_s: '850', nfs_write_mib_s: 1 }),
+    )
     expect(netFromEvent(bad)).toEqual({ rx_mib_s: 1, tx_mib_s: 2 })
   })
 })
