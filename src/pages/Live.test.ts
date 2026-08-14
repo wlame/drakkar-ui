@@ -387,6 +387,54 @@ describe('Live net readout', () => {
 
     teardown()
   })
+
+  it('shows the NFS readout when the frame carries the NFS pair', async () => {
+    const { target, teardown } = mountLive()
+    await settled()
+    socketOpts!.onStatus('connected')
+    flushSync()
+
+    socketOpts!.onEvent({
+      event: 'net_io',
+      ts: NOW,
+      metadata: JSON.stringify({ rx_mib_s: 1.5, tx_mib_s: 0.5, nfs_read_mib_s: 850.25, nfs_write_mib_s: 0.75 }),
+    })
+    flushSync()
+
+    expect(target.textContent).toContain('NFS: R 850.3 · W 0.8 MiB/s')
+    expect(target.textContent).toContain('Net: RX 1.5 · TX 0.5 MiB/s')
+
+    teardown()
+  })
+
+  it('hides only the NFS readout when a later frame omits the pair', async () => {
+    // The NFS mount can vanish (remount interval, unmount) while the
+    // interface counters keep streaming — the readouts are independent.
+    const { target, teardown } = mountLive()
+    await settled()
+    socketOpts!.onStatus('connected')
+    flushSync()
+
+    socketOpts!.onEvent({
+      event: 'net_io',
+      ts: NOW,
+      metadata: JSON.stringify({ rx_mib_s: 1.0, tx_mib_s: 0.5, nfs_read_mib_s: 10, nfs_write_mib_s: 1 }),
+    })
+    flushSync()
+    expect(target.textContent).toContain('NFS: R 10.0')
+
+    socketOpts!.onEvent({
+      event: 'net_io',
+      ts: NOW,
+      metadata: JSON.stringify({ rx_mib_s: 2.0, tx_mib_s: 0.5 }),
+    })
+    flushSync()
+
+    expect(target.textContent).not.toContain('NFS:')
+    expect(target.textContent).toContain('Net: RX 2.0')
+
+    teardown()
+  })
 })
 
 describe('Live offload readout', () => {

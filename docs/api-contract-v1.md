@@ -867,6 +867,35 @@ endpoint, no events-table change.
   window-scoped rows, mirroring window-scoped annotations' trace-matching
   contract. Clients must ignore unknown metadata keys.
 
+## v1.11 additions (2026-08-14)
+
+Four additive optional keys on the existing `net_io` WS frame's metadata,
+no new frame, no events-table change:
+`nfs_read_mib_s:number`, `nfs_write_mib_s:number`,
+`nfs_read_bytes_total:int`, `nfs_write_bytes_total:int`.
+
+- **Why**: the frame's `rx/tx` counters are per **network namespace**
+  (`/proc/net/dev`). A containerized worker reading files over a
+  kernel-NFS mount generates traffic through the **host's** interfaces —
+  invisible to the container's counters, so the RX readout sits near
+  zero while the host moves a GiB/s. The NFS pair comes from
+  `/proc/self/mountstats` instead, which follows the *mount* namespace
+  and therefore does see bind-mounted NFS volumes from inside a
+  container.
+- **Semantics**: sum of the `bytes:` line's server-read / server-write
+  columns across every visible `nfs*` mount — bytes actually transferred
+  to/from NFS servers, page-cache hits excluded. Per-mount counters:
+  other host processes using the same mount contribute. Read = data from
+  the server (RX-like), write = data to the server (TX-like).
+- **Presence rules**: all four keys appear together, only on ticks where
+  an NFS mount was visible on both ends of the interval and its counters
+  did not go backwards (remount). Backends without mountstats (macOS,
+  the Go worker for now) or without NFS mounts simply omit them.
+- **Client behavior**: the UI shows an `NFS: R x.x · W x.x MiB/s`
+  readout next to the Net readout on the Live header and peer strips,
+  hidden whenever the current frame lacks the pair; a half-formed pair
+  is ignored. Clients must ignore unknown metadata keys, as ever.
+
 ## Appendix: divergence resolutions from the 2026-06 audit
 
 Canonical choices where the two reference backends disagreed; each backend

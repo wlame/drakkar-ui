@@ -532,9 +532,15 @@
   <button class="freeze" class:on={frozen} onclick={() => setFrozen(!frozen)}>{frozen ? 'Frozen' : 'Live'}</button>
   <span class="spacer"></span>
   {#if net}
+    {#if net.nfs_read_mib_s != null && net.nfs_write_mib_s != null}
+      <span
+        class="net"
+        title="NFS bytes transferred to/from the servers behind this worker's NFS mounts (from mountstats). Visible even from inside a container, where the Net counters cannot see kernel-NFS traffic. Per-mount counters — other host processes using the same mount contribute."
+      >NFS: R {net.nfs_read_mib_s.toFixed(1)} · W {net.nfs_write_mib_s.toFixed(1)} MiB/s</span>
+    {/if}
     <span
       class="net"
-      title="Host network throughput across all interfaces (worker + subprocesses + anything sharing the network namespace)"
+      title="Network throughput across the worker's network namespace interfaces (worker + subprocesses + anything sharing the namespace). In a container this does NOT include kernel-NFS traffic — that leaves through the host's interfaces; see the NFS readout."
     >Net: RX {net.rx_mib_s.toFixed(1)} · TX {net.tx_mib_s.toFixed(1)} MiB/s</span>
   {/if}
   {#if offload}

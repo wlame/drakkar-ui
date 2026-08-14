@@ -99,9 +99,15 @@
   <h3 class="peer-name">{peer.worker_name || '?'}</h3>
   <span class="badge status-{status}">WS: {WS_STATUS_LABELS[status]}</span>
   {#if net}
+    {#if net.nfs_read_mib_s != null && net.nfs_write_mib_s != null}
+      <span
+        class="net"
+        title="This worker's NFS server transfer (mountstats) — visible even where the interface counters cannot see kernel-NFS traffic"
+      >NFS R {net.nfs_read_mib_s.toFixed(1)} · W {net.nfs_write_mib_s.toFixed(1)}</span>
+    {/if}
     <span
       class="net"
-      title="This worker's host network throughput, all interfaces"
+      title="This worker's network-namespace throughput, all interfaces (kernel-NFS traffic not included in a container — see the NFS readout)"
     >RX {net.rx_mib_s.toFixed(1)} · TX {net.tx_mib_s.toFixed(1)} MiB/s</span>
   {/if}
 </div>

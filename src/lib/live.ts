@@ -166,9 +166,17 @@ export function annotationFromEvent(e: WsEvent): AnnotationView | null {
 // One reading from the backend's net_io WS heartbeat: host-wide network
 // throughput in MiB/s (the whole network namespace — worker, subprocesses,
 // and any neighbours sharing it; per-process accounting needs root/eBPF).
+//
+// The optional NFS pair (contract v1.11) exists because the namespace's
+// interface counters CANNOT see kernel-NFS traffic from inside a container
+// — the host's NFS client moves those bytes through the host's interfaces.
+// Backends sample /proc/self/mountstats for it; absent keys mean no NFS
+// mount is visible (or an older backend), and the readout stays hidden.
 export interface NetRates {
   rx_mib_s: number
   tx_mib_s: number
+  nfs_read_mib_s?: number
+  nfs_write_mib_s?: number
 }
 
 // netFromEvent extracts the RX/TX rates from a 'net_io' WS frame, or returns
@@ -180,7 +188,14 @@ export function netFromEvent(e: WsEvent): NetRates | null {
   try {
     const m = JSON.parse(e.metadata) as Record<string, unknown>
     if (typeof m.rx_mib_s !== 'number' || typeof m.tx_mib_s !== 'number') return null
-    return { rx_mib_s: m.rx_mib_s, tx_mib_s: m.tx_mib_s }
+    const rates: NetRates = { rx_mib_s: m.rx_mib_s, tx_mib_s: m.tx_mib_s }
+    // NFS keys are carried only when BOTH are well-formed numbers — a frame
+    // with one usable half would render a misleading readout.
+    if (typeof m.nfs_read_mib_s === 'number' && typeof m.nfs_write_mib_s === 'number') {
+      rates.nfs_read_mib_s = m.nfs_read_mib_s
+      rates.nfs_write_mib_s = m.nfs_write_mib_s
+    }
+    return rates
   } catch {
     return null
   }
