@@ -6,6 +6,7 @@
   // fast tasks). The on_*_complete result feeds poll every 5s like the reference.
   import { onMount } from 'svelte'
   import { api } from '../lib/api'
+  import type { LiveOverview } from '../lib/types'
   import type { ArrangeTaskState, TaskResult, MessageResult, WindowResult, WsEvent, WorkerPeer } from '../lib/api'
   import { hash, setHash } from '../lib/router'
   import { hydrateFromOverview, runtimeConfig, identity } from '../lib/config'
@@ -70,6 +71,12 @@
   // is worth saying out loud: a frozen live page looks like an idle worker.
   let dataUnavailable = $state(false)
   let pool = $state({ active: 0, max: 0, waiting: 0 })
+  // Offload pool state from live/overview (contract v1.10). Null until the
+  // first overview lands — backends without an offload pool (Go workers)
+  // omit the key and the readout simply stays hidden. Refreshed on each
+  // 5s resync tick; dropped back to null when a refresh fails, because a
+  // stale count would read as current.
+  let offload = $state<{ running: number; queued: number; max_threads: number } | null>(null)
   // Latest host network throughput reading from the net_io WS heartbeat.
   // Null until the first frame — older backends and hosts without
   // /proc/net/dev never send one, and the readout simply stays hidden.
@@ -322,6 +329,31 @@
     truncated = rt.truncated
   }
 
+  // Re-read the overview strip fields (pool + offload) on the resync
+  // cadence. Only the cheap header readouts are applied here — the boot
+  // path in onMount owns the one-time config hydration.
+  async function refreshOverviewStrip() {
+    try {
+      applyOverviewStrip(await api.liveOverview())
+    } catch {
+      offload = null
+    }
+  }
+
+  function applyOverviewStrip(o: LiveOverview) {
+    if (o.pool_max != null) pool.max = o.pool_max
+    if (o.pool_active != null) pool.active = o.pool_active
+    if (o.pool_waiting != null) pool.waiting = o.pool_waiting
+    // Tolerant parse: key-presence is the flag, fields default to 0.
+    offload = o.offload
+      ? {
+          running: o.offload.running ?? 0,
+          queued: o.offload.queued ?? 0,
+          max_threads: o.offload.max_threads ?? 0,
+        }
+      : null
+  }
+
   async function resync() {
     if (frozen) return
     try {
@@ -343,6 +375,9 @@
     // only the tasks still in flight rather than every task ever arranged.
     queueArrangeLookup(arranges.flatMap((a) => a.task_ids))
     void reloadFeeds()
+    // Last on purpose: the recent-tasks fetch above stays the tick's first
+    // request (existing degraded-resync semantics and tests key off that).
+    void refreshOverviewStrip()
   }
 
   async function reloadFeeds() {
@@ -430,9 +465,7 @@
     api
       .liveOverview()
       .then((o) => {
-        if (o.pool_max != null) pool.max = o.pool_max
-        if (o.pool_active != null) pool.active = o.pool_active
-        if (o.pool_waiting != null) pool.waiting = o.pool_waiting
+        applyOverviewStrip(o)
         if (o.partition_count != null) partitionCount = o.partition_count
         if (o.max_ui_rows != null) maxHistory = o.max_ui_rows
         if (o.hook_flags) {
@@ -503,6 +536,12 @@
       class="net"
       title="Host network throughput across all interfaces (worker + subprocesses + anything sharing the network namespace)"
     >Net: RX {net.rx_mib_s.toFixed(1)} · TX {net.tx_mib_s.toFixed(1)} MiB/s</span>
+  {/if}
+  {#if offload}
+    <span
+      class="offload"
+      title="Handler offload() thread pool: computations running / queued for a free thread, out of offload.max_threads. Sustained queueing means the pool is undersized."
+    >Offload: {offload.running} / {offload.max_threads} busy, <span class="waiting">{offload.queued}</span> queued</span>
   {/if}
   <span class="pool">Pool: {pool.active} / {pool.max} slots, <span class="waiting">{pool.waiting}</span> waiting</span>
 </div>
@@ -646,6 +685,17 @@
     color: var(--muted);
   }
   .pool .waiting {
+    color: #b45309;
+  }
+  /* Offload readout mirrors the pool strip; the queued count shares the
+     amber "waiting" emphasis since both mean the same thing: work exists
+     that no free slot/thread can take yet. */
+  .offload {
+    font-size: 0.875rem;
+    color: var(--muted);
+    margin-right: 1rem;
+  }
+  .offload .waiting {
     color: #b45309;
   }
   .net {

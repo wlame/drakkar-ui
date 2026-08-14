@@ -418,6 +418,14 @@ export interface LiveOverview {
   kafka_ui_base?: string
   kafka_ui_cluster?: string
   kafka_source_topic?: string
+  // Key-presence is the feature flag (contract v1.10): only backends with
+  // an offload thread pool behind handler.offload() send this; the Go
+  // worker omits it and the readout stays hidden.
+  offload?: {
+    running?: number
+    queued?: number
+    max_threads?: number
+  }
 }
 
 // --- Debug: metrics / periodic / trace ---

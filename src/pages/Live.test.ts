@@ -74,21 +74,26 @@ function okJson(data: unknown) {
 let recentPayload: unknown
 // What GET /api/v1/workers answers with (cluster-view tests set it).
 let workersPayload: WorkerPeer[] = []
+// What GET /api/v1/live/overview answers with. Reassigned by the offload
+// readout tests — key-presence of `offload` is the contract's feature flag.
+let overviewPayload: Record<string, unknown>
+
+function defaultOverview(): Record<string, unknown> {
+  return {
+    pool_max: 4,
+    pool_active: 0,
+    pool_waiting: 0,
+    partition_count: 1,
+    max_ui_rows: 5000,
+    hook_flags: { task_complete: false, message_complete: false, window_complete: false },
+  }
+}
 
 const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
   const url = String(input)
   if (url.includes('/recent-tasks')) return okJson(recentPayload)
   if (url.includes('/workers')) return okJson(workersPayload)
-  if (url.includes('/live/overview')) {
-    return okJson({
-      pool_max: 4,
-      pool_active: 0,
-      pool_waiting: 0,
-      partition_count: 1,
-      max_ui_rows: 5000,
-      hook_flags: { task_complete: false, message_complete: false, window_complete: false },
-    })
-  }
+  if (url.includes('/live/overview')) return okJson(overviewPayload)
   return okJson([])
 })
 
@@ -99,6 +104,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   recentPayload = { tasks: [recentTask('t-1', 2), recentTask('t-2', 1)], lane_count: 4 }
   workersPayload = []
+  overviewPayload = defaultOverview()
   socketOpts = null
   fetchMock.mockClear()
   vi.stubGlobal('fetch', fetchMock)
@@ -378,6 +384,46 @@ describe('Live net readout', () => {
     flushSync()
 
     expect(target.textContent).not.toContain('Net:')
+
+    teardown()
+  })
+})
+
+describe('Live offload readout', () => {
+  it('stays hidden when the overview has no offload key (Go backends)', async () => {
+    const { target, teardown } = mountLive()
+    await settled()
+
+    expect(target.textContent).not.toContain('Offload:')
+
+    teardown()
+  })
+
+  it('shows running/queued/threads when the overview carries offload', async () => {
+    overviewPayload = { ...defaultOverview(), offload: { running: 1, queued: 3, max_threads: 2 } }
+    const { target, teardown } = mountLive()
+    await settled()
+
+    expect(target.textContent).toContain('Offload: 1 / 2 busy, 3 queued')
+
+    teardown()
+  })
+
+  it('updates on the resync tick and hides again when the key disappears', async () => {
+    const { target, teardown } = mountLive()
+    await settled()
+    expect(target.textContent).not.toContain('Offload:')
+
+    // The next 5s resync re-reads the overview strip.
+    overviewPayload = { ...defaultOverview(), offload: { running: 0, queued: 0, max_threads: 4 } }
+    await nextResync()
+    expect(target.textContent).toContain('Offload: 0 / 4 busy, 0 queued')
+
+    // Key gone again (say, after a fail-over to a backend without a pool):
+    // a stale readout must not survive it.
+    overviewPayload = defaultOverview()
+    await nextResync()
+    expect(target.textContent).not.toContain('Offload:')
 
     teardown()
   })

@@ -840,6 +840,33 @@ emits them.
   current. An interval in which the kernel counters went backwards
   (interface bounce) produces no frame rather than a nonsense rate.
 
+## v1.10 additions (2026-08-14)
+
+One additive optional field and one additive event type, both introduced
+by the Python backend's handler `offload()` API (CPU-bound hook work
+moved to a thread pool so the event loop stays responsive). No new
+endpoint, no events-table change.
+
+- **`offload` object on `GET /api/v1/live/overview`** — optional;
+  key-presence is the feature flag. Shape:
+  `{running:int, queued:int, max_threads:int}` — computations currently
+  executing on the offload pool, calls waiting for a free pool thread,
+  and the configured pool size. A backend without an offload pool (the
+  Go worker — goroutine preemption makes one unnecessary; see its
+  runtime-health doc for the pattern) omits the key entirely and the UI
+  readout stays hidden.
+- **`offload` event** (persisted — an ordinary events-table row), one per
+  `handler.offload()` call, recorded at completion. Columns: `partition`
+  (nullable — `NULL` when offload ran outside a framework-invoked hook),
+  `offset` / `task_id` following the annotation anchoring rules
+  (message-anchored / task-anchored / neither for window-wide hooks),
+  `duration` (execution seconds, queue wait excluded). `metadata` JSON:
+  `{hook:str, function:str, queued:number, status:"ok"|"error"|"cancelled",
+  window_id:int|null, offsets:int[]}` plus optional `error:str` (truncated
+  to 500 chars) when `status="error"`. `offsets` is non-empty only for
+  window-scoped rows, mirroring window-scoped annotations' trace-matching
+  contract. Clients must ignore unknown metadata keys.
+
 ## Appendix: divergence resolutions from the 2026-06 audit
 
 Canonical choices where the two reference backends disagreed; each backend

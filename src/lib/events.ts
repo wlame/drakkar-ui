@@ -32,6 +32,10 @@ export const EVENT_COLORS: Record<string, string> = {
   produced: COLOR.magenta,
   committed: COLOR.gray,
   annotation: COLOR.http,
+  // Contract v1.10: one row per handler.offload() call (CPU-bound hook
+  // work moved to the backend's thread pool). Teal like `arranged` — it
+  // is arrange-adjacent work — but distinguishable via its own label.
+  offload: COLOR.teal,
 }
 
 export function eventColor(event: string): string {
@@ -54,6 +58,7 @@ export const EVENT_TYPES = [
   'produced',
   'committed',
   'annotation',
+  'offload',
 ] as const
 
 // An annotation event's metadata envelope (contract v1.3). Handler-emitted
