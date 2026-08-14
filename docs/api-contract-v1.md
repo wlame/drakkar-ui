@@ -896,6 +896,30 @@ no new frame, no events-table change:
   hidden whenever the current frame lacks the pair; a half-formed pair
   is ignored. Clients must ignore unknown metadata keys, as ever.
 
+## v1.12 additions (2026-08-14)
+
+Four additive optional fields on `GET /api/v1/debug/databases` rows, plus
+a behavioral note. No new endpoint.
+
+- **Fields**: `kind: "recorder"|"merged"|"cache"|"unknown"`,
+  `live_for: string` (worker currently writing the file, `''` when none —
+  resolved from the `*-live.db` / `*-cache.db` symlinks; a cache DB
+  counts as in-use when its worker's recorder is live in the same
+  directory), `stats_pending: bool`, `cache_entry_count: int|null`
+  (kind=`cache` only). Cache databases now appear as rows, displayed
+  under their stable symlink name (`<worker>-cache.db`) while `path`
+  points at the scanned `.actual` file.
+- **Behavior**: backends may serve statistics from a shared
+  `<db_dir>/.dbstats.db` cache keyed by `(path, mtime_ns, size_bytes)`
+  (schema `db_stats_v1`, identical across backends — a mixed fleet
+  shares the file). The file *list* is always a live directory scan, so
+  externally deleted files disappear on the next request; only derived
+  statistics are cached. `stats_pending: true` marks rows whose
+  statistics were not computed yet (cold cache, per-request inline scan
+  budget exhausted — `ui.recorder.dbstats_inline_scan_limit`); a
+  background warmer fills them in, so clients should simply re-poll.
+  Clients must ignore unknown keys, as ever.
+
 ## Appendix: divergence resolutions from the 2026-06 audit
 
 Canonical choices where the two reference backends disagreed; each backend

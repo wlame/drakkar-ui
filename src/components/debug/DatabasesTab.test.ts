@@ -180,3 +180,103 @@ describe('DatabasesTab archives section', () => {
     cleanup()
   })
 })
+
+describe('DatabasesTab v1.12 rows', () => {
+  const liveDb: DbInfo = {
+    ...oneDb,
+    filename: 'workerA-2026-08-14__10_00_00.db',
+    path: '/var/db/workerA-2026-08-14__10_00_00.db',
+    live_for: 'workerA',
+    kind: 'recorder',
+    stats_pending: false,
+    cache_entry_count: null,
+  }
+  const cacheDb: DbInfo = {
+    filename: 'workerA-cache.db',
+    path: '/var/db/workerA-cache.db.actual',
+    worker_name: 'workerA',
+    cluster_name: 'clusterA',
+    event_count: 0,
+    event_counts: {},
+    first_event_ts: null,
+    last_event_ts: null,
+    has_events: false,
+    has_config: false,
+    has_state: false,
+    size_bytes: 4096,
+    kind: 'cache',
+    live_for: 'workerA',
+    stats_pending: false,
+    cache_entry_count: 42,
+  }
+  const pendingDb: DbInfo = {
+    ...oneDb,
+    filename: 'workerA-2026-08-01__00_00_00.db',
+    path: '/var/db/workerA-2026-08-01__00_00_00.db',
+    event_count: 0,
+    event_counts: {},
+    first_event_ts: null,
+    last_event_ts: null,
+    kind: 'unknown',
+    live_for: '',
+    stats_pending: true,
+    cache_entry_count: null,
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('highlights the in-use row with a chip naming the worker', async () => {
+    vi.stubGlobal('fetch', stubFetch(200, { archives: [] }, [oneDb, liveDb]))
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    const inUse = target.querySelectorAll('tr.in-use')
+    expect(inUse.length).toBe(1)
+    expect(inUse[0].textContent).toContain(liveDb.filename)
+    expect(inUse[0].textContent).toContain('in use · workerA')
+    cleanup()
+  })
+
+  it('shows a cache DB as a typed row: entries count, no merge checkbox, no download', async () => {
+    vi.stubGlobal('fetch', stubFetch(200, { archives: [] }, [oneDb, cacheDb]))
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    const row = [...target.querySelectorAll('tbody tr')].find((tr) =>
+      tr.textContent?.includes('workerA-cache.db'),
+    )
+    expect(row).toBeTruthy()
+    expect(row!.textContent).toContain('42 entries')
+    expect(row!.textContent).toContain('cache')
+    expect(row!.querySelector('input[type=checkbox]')).toBeNull()
+    expect(row!.querySelector('a[title=Download]')).toBeNull()
+    cleanup()
+  })
+
+  it('shows pending rows with a scanning marker instead of hiding them as empty', async () => {
+    vi.stubGlobal('fetch', stubFetch(200, { archives: [] }, [oneDb, pendingDb]))
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    const row = [...target.querySelectorAll('tbody tr')].find((tr) =>
+      tr.textContent?.includes(pendingDb.filename),
+    )
+    expect(row).toBeTruthy()
+    expect(row!.textContent).toContain('scanning…')
+    cleanup()
+  })
+
+  it('still hides settled empty recorder files', async () => {
+    const emptyDb: DbInfo = { ...oneDb, filename: 'workerA-empty.db', event_count: 0, stats_pending: false }
+    vi.stubGlobal('fetch', stubFetch(200, { archives: [] }, [oneDb, emptyDb]))
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(target.textContent).not.toContain('workerA-empty.db')
+    expect(target.textContent).toContain('1 empty hidden')
+    cleanup()
+  })
+})

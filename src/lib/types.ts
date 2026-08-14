@@ -478,6 +478,15 @@ export interface DbInfo {
   has_config: boolean
   has_state: boolean
   size_bytes: number
+  // v1.12 additions, optional → older backends stay compatible.
+  // kind: recorder event log / drakkar-merge output / handler cache /
+  // foreign schema. live_for: worker currently writing this file ('' if
+  // none) — the in-use highlight. stats_pending: file listed but its
+  // statistics not computed yet (cold cache); re-poll fills it in.
+  kind?: 'recorder' | 'merged' | 'cache' | 'unknown' | string
+  live_for?: string
+  stats_pending?: boolean
+  cache_entry_count?: number | null
 }
 
 export interface MergeResult {
