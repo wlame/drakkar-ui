@@ -133,8 +133,8 @@ src/
     events.ts, format.ts, kafka.ts, live.ts   presentation helpers
   pages/                  one component per route (Dashboard … Live, Debug)
   components/             chrome (WorkerSwitcher, SinkLinks, VersionBadge …)
-    live/                 Timeline, ArrangeTab, ResultsTab
-    debug/                Metrics/Periodic/Trace/Probe/Cache/Databases tabs
+    live/                 Timeline, ArrangeTab, ResultsTab, ConsumePauseControl
+    debug/                Metrics/Periodic/Trace/Probe/DLQ/Cache/Databases tabs
 docs/api-contract-v1.md   THE backend contract (normative)
 docs/openapi-v1.yaml      its OpenAPI 3.1 twin — vendored into both backends
 pydrakkar/                gitignored read-only Python backend copy (UX reference)

@@ -965,6 +965,38 @@ pattern: routes stay registered, policy refuses).
   API is enabled), backends log a startup warning naming the exposed
   aliases — and keep serving; the operator owns the trade-off.
 
+## v1.14 additions (2026-08-19)
+
+Timed consume pause — a Live-page debug control that stops message intake
+for a bounded period. Three endpoints, plus config
+`ui.consume_pause.{enabled, durations_seconds}` (default: disabled,
+presets `[15, 60, 300, 900]`).
+
+- **`GET /debug/consume-pause`** — always `200 ConsumePauseState =
+  {enabled, durations_seconds:[int], active, resume_at_ms:int|null,
+  requested_seconds:int|null}`. `enabled: false` is the signal the UI
+  hides its control on.
+- **`POST /debug/consume-pause`** `{duration_seconds: 1..3600}` — pauses
+  fetching on the assigned partitions and arms an auto-resume timer;
+  answers the new state. Posting during an active pause replaces the
+  deadline. `403 {"error":...}` when `ui.consume_pause.enabled=false`
+  (**opt-in** — the flag defaults to false, unlike probe/merge, because
+  pausing affects the pipeline's work); `503 {"detail":...}` while the
+  consumer is not running; `422` outside [1, 3600].
+- **`POST /debug/consume-resume`** — ends the pause now; idempotent
+  (`200` with the inactive state either way). `403` when disabled.
+- **Semantics** (normative): the pause must never leave the consumer
+  group or trigger a rebalance — backends pause partitions (the
+  backpressure primitive) while the poll loop and heartbeats continue.
+  No offsets move. Partitions assigned during a pause arrive paused. The
+  pause composes with backpressure: it blocks backpressure's resume
+  while active, and a debug resume leaves backpressure-held partitions
+  paused until queues drain. Stall-paused partitions
+  (`dlq.on_send_failure=stall`) are never touched in either direction.
+  The auto-resume deadline is authoritative server-side
+  (`resume_at_ms`); clients render countdowns from it and re-poll to
+  reconcile.
+
 ## Appendix: divergence resolutions from the 2026-06 audit
 
 Canonical choices where the two reference backends disagreed; each backend

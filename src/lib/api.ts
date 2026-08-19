@@ -26,6 +26,9 @@ import type {
   RuntimeHealthSnapshot,
   RuntimeUnitCensus,
   SinkStatus,
+  ConsumePauseState,
+  KafkaReadMessage,
+  KafkaReadTopic,
   TaskDetailResponse,
   TaskResult,
   MessageResult,
@@ -203,6 +206,54 @@ export const api = {
   },
   debugArchiveDownloadUrl: (name: string) =>
     downloadUrl(`/debug/archives/${encodeURIComponent(name)}`),
+
+  // Debug: consume pause (contract v1.14). Timed pause of the pipeline
+  // consumer — never leaves the consumer group, auto-resumes at the
+  // deadline. The state endpoint always answers; the mutating calls 403
+  // unless the deployment opted in (ui.consume_pause.enabled).
+  consumePauseState: () => get<ConsumePauseState>('/debug/consume-pause'),
+  consumePause: (durationSeconds: number) =>
+    post<ConsumePauseState>('/debug/consume-pause', { duration_seconds: durationSeconds }),
+  consumeResume: () => post<ConsumePauseState>('/debug/consume-resume', {}),
+
+  // Debug: kafka read (contract v1.13). Ad-hoc reads of the configured
+  // topics by alias (source / dlq / sink instance name) — no consumer-group
+  // side effects on the backend.
+  kafkaTopics: () => get<{ topics: KafkaReadTopic[] }>('/debug/kafka/topics'),
+  kafkaMessage: (alias: string, partition: number, offset: number) =>
+    get<KafkaReadMessage>(
+      `/debug/kafka/${encodeURIComponent(alias)}/message${qs({ partition, offset })}`,
+    ),
+  // The stream endpoint answers NDJSON: one message object per line, with a
+  // mid-stream broker failure reported as a final {"error": ...} line (the
+  // 200 is committed by then). The whole body is read at once — the server
+  // caps a request at 10000 messages, so buffering is bounded.
+  kafkaMessages: async (
+    alias: string,
+    q: { from_ts: number; to_ts?: number; limit?: number; partition?: number },
+  ): Promise<{ messages: KafkaReadMessage[]; streamError: string | null }> => {
+    const path = `/debug/kafka/${encodeURIComponent(alias)}/messages${qs({
+      from_ts: q.from_ts,
+      to_ts: q.to_ts,
+      limit: q.limit,
+      partition: q.partition,
+    })}`
+    const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders() })
+    if (!res.ok) return fail('GET', path, res)
+    const text = await res.text()
+    const messages: KafkaReadMessage[] = []
+    let streamError: string | null = null
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue
+      const obj = JSON.parse(line) as KafkaReadMessage | { error: string }
+      if ('error' in obj) {
+        streamError = obj.error
+      } else {
+        messages.push(obj)
+      }
+    }
+    return { messages, streamError }
+  },
 
   // Debug: cache browser
   cacheStats: () => get<CacheStats>('/debug/cache/stats'),

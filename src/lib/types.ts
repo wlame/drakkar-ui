@@ -521,6 +521,52 @@ export interface ArchivesResponse {
   archives: ArchiveEntry[]
 }
 
+// --- Debug: consume pause (contract v1.14) ---
+
+export interface ConsumePauseState {
+  // false = the deployment did not opt in (ui.consume_pause.enabled) —
+  // the Live page hides the control on this, no failure-probe needed.
+  enabled: boolean
+  // Preset durations for the one-click pause buttons.
+  durations_seconds: number[]
+  active: boolean
+  // Server-authoritative resume deadline (epoch ms); null while inactive.
+  resume_at_ms: number | null
+  requested_seconds: number | null
+}
+
+// --- Debug: kafka read (contract v1.13) ---
+
+// Kafka record bytes ride JSON as text: utf-8 when the bytes decode,
+// base64 otherwise, with the encoding flagged alongside.
+export type KafkaByteEncoding = 'utf-8' | 'base64'
+
+export interface KafkaReadTopic {
+  alias: string
+  kind: 'source' | 'dlq' | 'sink'
+}
+
+export interface KafkaReadHeader {
+  key: string
+  value: string | null
+  value_encoding: KafkaByteEncoding | null
+}
+
+export interface KafkaReadMessage {
+  // Echoes the configured read alias — the raw topic name is deliberately
+  // absent from the wire (the alias table is the backend's reach boundary).
+  alias: string
+  partition: number
+  offset: number
+  timestamp_ms: number | null
+  key: string | null
+  key_encoding: KafkaByteEncoding | null
+  payload: string
+  payload_encoding: KafkaByteEncoding
+  payload_size_bytes: number
+  headers: KafkaReadHeader[]
+}
+
 // --- Debug: cache ---
 
 export type CacheScope = 'local' | 'cluster' | 'global'

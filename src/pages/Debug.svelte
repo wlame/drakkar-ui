@@ -8,27 +8,36 @@
   // backends without the endpoint gracefully keep the plain heading.
   import { onMount } from 'svelte'
   import { api } from '../lib/api'
+  import { ensureKafkaReadProbe, kafkaReadAvailable, kafkaReadTopics } from '../lib/kafkaRead'
   import { hash, setHash } from '../lib/router'
   import MetricsTab from '../components/debug/MetricsTab.svelte'
   import PeriodicTab from '../components/debug/PeriodicTab.svelte'
   import TraceTab from '../components/debug/TraceTab.svelte'
   import ProbeTab from '../components/debug/ProbeTab.svelte'
+  import DlqTab from '../components/debug/DlqTab.svelte'
   import CacheTab from '../components/debug/CacheTab.svelte'
   import DatabasesTab from '../components/debug/DatabasesTab.svelte'
   import ConfigsTab from '../components/debug/ConfigsTab.svelte'
 
   let { params: _params = {} }: { params?: Record<string, string> } = $props()
 
-  type Tab = 'metrics' | 'periodic' | 'trace' | 'probe' | 'cache' | 'databases' | 'configs'
+  type Tab = 'metrics' | 'periodic' | 'trace' | 'probe' | 'dlq' | 'cache' | 'databases' | 'configs'
 
   let cacheEnabled = $state(false)
   let configSummary = $state('')
+
+  // The DLQ tab needs the kafka-read API (contract v1.13) AND a listed dlq
+  // alias — same capability-probe idiom as the cache tab below.
+  const dlqEnabled = $derived(
+    $kafkaReadAvailable === true && $kafkaReadTopics.some((t) => t.kind === 'dlq'),
+  )
 
   const TAB_LABELS: Record<Tab, string> = {
     metrics: 'Metrics',
     periodic: 'Periodic Tasks',
     trace: 'Message Trace',
     probe: 'Message Probe',
+    dlq: 'DLQ',
     cache: 'Cache',
     databases: 'Databases',
     configs: 'Configs',
@@ -38,6 +47,7 @@
     'periodic',
     'trace',
     'probe',
+    ...(dlqEnabled ? (['dlq'] as Tab[]) : []),
     ...(cacheEnabled ? (['cache'] as Tab[]) : []),
     'databases',
     'configs',
@@ -49,14 +59,26 @@
     return m ? { partition: Number(m[1]), offset: Number(m[2]) } : null
   })
 
+  // #probe/<alias>/<p>/<o> deep-link → Probe tab prefilled from the real
+  // Kafka record at those coordinates (the target of the Kafka icons'
+  // "Probe this message" action and the DLQ tab's probe button).
+  const probeMatch = $derived.by(() => {
+    const m = $hash.match(/^#probe\/([^/]+)\/(\d+)\/(\d+)$/)
+    return m
+      ? { alias: decodeURIComponent(m[1]), partition: Number(m[2]), offset: Number(m[3]) }
+      : null
+  })
+
   const activeTab = $derived.by<Tab>(() => {
     if (traceMatch) return 'trace'
+    if (probeMatch) return 'probe'
     const name = $hash.replace(/^#/, '') as Tab
     return availableTabs.includes(name) ? name : 'metrics'
   })
 
   onMount(async () => {
     // Independent capability probes; each failure only disables its own feature.
+    ensureKafkaReadProbe()
     api
       .identity()
       .then((id) => {
@@ -93,7 +115,9 @@
 {:else if activeTab === 'trace'}
   <TraceTab prefill={traceMatch} />
 {:else if activeTab === 'probe'}
-  <ProbeTab />
+  <ProbeTab prefill={probeMatch} />
+{:else if activeTab === 'dlq'}
+  <DlqTab />
 {:else if activeTab === 'cache'}
   <CacheTab />
 {:else if activeTab === 'databases'}

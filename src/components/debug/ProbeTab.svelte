@@ -47,6 +47,13 @@
     stderr: (t) => t.stderr.length,
   }
 
+  // #probe/<alias>/<p>/<o> deep-link payload (Debug.svelte parses the hash).
+  // When set, the form prefills itself from the real Kafka record at those
+  // coordinates via the kafka-read API.
+  let {
+    prefill = null,
+  }: { prefill?: { alias: string; partition: number; offset: number } | null } = $props()
+
   // form state
   let value = $state('')
   let key = $state('')
@@ -54,6 +61,45 @@
   let offset = $state(0)
   let topic = $state($runtimeConfig.kafkaSourceTopic)
   let useCache = $state(false)
+
+  // Prefill-from-Kafka state. `loadedPrefill` remembers which coordinates
+  // were already fetched so the effect never refetches on unrelated state
+  // changes (typing in the form must not reload the record over the user).
+  let prefillNote = $state<string | null>(null)
+  let prefillError = $state<string | null>(null)
+  let loadedPrefill = ''
+
+  $effect(() => {
+    if (!prefill) return
+    const sig = `${prefill.alias}/${prefill.partition}/${prefill.offset}`
+    if (sig === loadedPrefill) return
+    loadedPrefill = sig
+    void loadPrefill(prefill.alias, prefill.partition, prefill.offset)
+  })
+
+  async function loadPrefill(alias: string, p: number, o: number) {
+    prefillNote = null
+    prefillError = null
+    try {
+      const msg = await api.kafkaMessage(alias, p, o)
+      value = msg.payload
+      key = msg.key ?? ''
+      partition = msg.partition
+      offset = msg.offset
+      collapsed = false
+      report = null
+      const caveats: string[] = []
+      // The probe form carries text; a binary payload/key arrives base64-
+      // encoded and would be probed AS base64 — say so instead of guessing.
+      if (msg.payload_encoding === 'base64') caveats.push('payload was binary — shown base64-encoded')
+      if (msg.key_encoding === 'base64') caveats.push('key was binary — shown base64-encoded')
+      prefillNote =
+        `Prefilled from ${alias} P${msg.partition}:${msg.offset}` +
+        (caveats.length ? ` (${caveats.join('; ')})` : '')
+    } catch (e) {
+      prefillError = `Could not prefill from ${alias} P${p}:${o} — ${e instanceof Error ? e.message : String(e)}`
+    }
+  }
 
   let busy = $state(false)
   let formError = $state<string | null>(null)
@@ -143,6 +189,9 @@
   })
 </script>
 
+{#if prefillNote}<p class="prefill-note">{prefillNote}</p>{/if}
+{#if prefillError}<p class="error">{prefillError}</p>{/if}
+
 {#if collapsed && report}
   <div class="chip">
     <span class="mono">P{report.input.partition}:{report.input.offset} {report.input.topic || $runtimeConfig.kafkaSourceTopic} {report.input.key ?? ''}{report.input.use_cache ? ' (cache)' : ''}</span>
@@ -186,7 +235,7 @@
       <p class="error">deserialize failed: {report.deserialize_error.message}</p>
     {:else}
       <div class="kv">
-        <span>partition:offset</span><span class="mono">{report.input.partition}:{report.input.offset}<KafkaIcon partition={report.input.partition} offset={report.input.offset} topic={report.input.topic} /></span>
+        <span>partition:offset</span><span class="mono">{report.input.partition}:{report.input.offset}<KafkaIcon partition={report.input.partition} offset={report.input.offset} topic={report.input.topic} probeAlias={null} /></span>
         <span>topic</span><span class="mono">{report.input.topic || $runtimeConfig.kafkaSourceTopic}</span>
         <span>key</span><span class="mono">{report.input.key ?? '-'}</span>
         <span>message label</span><span class="mono">{report.message_label ?? '-'}</span>
@@ -268,7 +317,7 @@
           <tbody>
             {#each recs as p, i (`${stype}:${i}`)}
               <tr class="clickable" onclick={() => toggleSink(`${stype}:${i}`)}>
-                <td class="mono">{p.destination}{#if stype === 'kafka'}<KafkaIcon partition={report.input.partition} offset={report.input.offset} topic={String(p.extras.topic ?? p.destination)} />{/if}</td>
+                <td class="mono">{p.destination}{#if stype === 'kafka'}<KafkaIcon partition={report.input.partition} offset={report.input.offset} topic={String(p.extras.topic ?? p.destination)} probeAlias={null} />{/if}</td>
                 <td class="muted">{p.origin_stage}</td>
                 <td class="muted preview">{pretty(p.payload).slice(0, 80)}</td>
               </tr>
@@ -350,6 +399,15 @@
 {/if}
 
 <style>
+  .prefill-note {
+    margin: 0 0 0.6rem;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid rgba(13, 148, 136, 0.35);
+    border-radius: 6px;
+    background: rgba(13, 148, 136, 0.07);
+    color: var(--text);
+    font-size: 0.78rem;
+  }
   .form {
     display: grid;
     grid-template-columns: repeat(2, 1fr);

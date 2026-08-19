@@ -33,6 +33,7 @@
     type NetRates,
   } from '../lib/live'
   import Timeline from '../components/live/Timeline.svelte'
+  import ConsumePauseControl from '../components/live/ConsumePauseControl.svelte'
   import TimelineStats from '../components/live/TimelineStats.svelte'
   import PeerTimeline from '../components/live/PeerTimeline.svelte'
   import ArrangeTab from '../components/live/ArrangeTab.svelte'
@@ -551,6 +552,12 @@
   {/if}
   <span class="pool">Pool: {pool.active} / {pool.max} slots, <span class="waiting">{pool.waiting}</span> waiting</span>
 </div>
+
+<!-- Timed consume pause (opt-in via ui.consume_pause.enabled; renders
+     nothing otherwise). Above the tabs: an active pause affects everything
+     this page shows, so its banner must be visible from every tab. -->
+<ConsumePauseControl />
+
 <p class="tab-hint">{TAB_HINTS[activeTab]}</p>
 
 <!-- Above the tabs, not inside one: every tab on this page is fed by the same
