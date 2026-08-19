@@ -920,6 +920,51 @@ a behavioral note. No new endpoint.
   background warmer fills them in, so clients should simply re-poll.
   Clients must ignore unknown keys, as ever.
 
+## v1.13 additions (2026-08-19)
+
+Three new endpoints under `GET /api/v1/debug/kafka/*`: ad-hoc reads of the
+worker's configured Kafka topics. Also `ui.kafka_read_enabled` (default
+true) — when false all three serve `403 {"error":...}` (probe/merge
+pattern: routes stay registered, policy refuses).
+
+- **Alias addressing.** Clients never name a raw Kafka topic. The path's
+  `{alias}` is one of: `source` (the pipeline input topic), `dlq` (the
+  dead-letter topic), or a Kafka sink's operator-chosen instance name. A
+  sink named `source`/`dlq` is not readable (reserved aliases win; backends
+  log a warning). Raw topic names and broker addresses never appear in
+  requests or responses. `GET /debug/kafka/topics` lists
+  `{topics:[{alias, kind:"source"|"dlq"|"sink"}]}`.
+- **No consumer-group side effects** (normative): backends must read with
+  assign/seek-style consumers that join no consumer group and commit no
+  offsets. Reads are invisible to the pipeline's group and every other
+  group.
+- **`GET /debug/kafka/{alias}/message?partition=&offset=`** — exactly one
+  record, `200 KafkaReadMessage`. `404 {"detail":...}` for unknown
+  alias/partition, offset outside current watermarks, or a
+  compacted/deleted slot (detail names the next surviving offset); `502`
+  when brokers do not answer within the backend's deadline.
+- **`GET /debug/kafka/{alias}/messages?from_ts=&to_ts=&limit=&partition=`**
+  — `200 application/x-ndjson`, one `KafkaReadMessage` JSON object per
+  line. Window: first offsets at/after `from_ts` (epoch ms, broker-side
+  offsets-for-times) up to `to_ts` (inclusive-start, records past `to_ts`
+  end that partition), `limit` messages (server cap 10000), or the
+  end-of-topic snapshot taken at request start — whichever comes first.
+  Ordering is monotonic per partition, best effort across partitions.
+  Mid-stream broker failure ⇒ final `{"error":"..."}` line, stream ends.
+  `422` when `to_ts < from_ts`.
+- **`KafkaReadMessage`**: `{alias, partition, offset, timestamp_ms:int|null,
+  key:str|null, key_encoding, payload:str, payload_encoding:"utf-8"|"base64",
+  payload_size_bytes, headers:[{key, value:str|null, value_encoding}]}`.
+  Byte fields are utf-8 text when the bytes decode, else base64, with the
+  encoding flagged. `timestamp_ms` is null when the broker reports no
+  timestamp. The record's topic is echoed as `alias`, never as the raw
+  name.
+- **Security posture** (normative): the endpoints sit behind the standard
+  optional `auth_token` gate. When any readable alias resolves to a
+  non-PLAINTEXT Kafka security config while `auth_token` is empty (and the
+  API is enabled), backends log a startup warning naming the exposed
+  aliases — and keep serving; the operator owns the trade-off.
+
 ## Appendix: divergence resolutions from the 2026-06 audit
 
 Canonical choices where the two reference backends disagreed; each backend
