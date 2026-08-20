@@ -997,6 +997,121 @@ presets `[15, 60, 300, 900]`).
   (`resume_at_ms`); clients render countdowns from it and re-poll to
   reconcile.
 
+## v1.15 additions (2026-08-19)
+
+Host-pressure sampling and runtime lag episodes: which resource the host is
+fighting for, and what the runtime was doing while it lagged. Additive
+throughout — new optional metadata keys on an existing event, two new event
+types, two optional fields on `RuntimeHealthSnapshot`, two nullable
+`worker_state` columns, no new endpoint. Backends that predate this section
+simply omit everything; clients must ignore unknown keys, as ever.
+
+### `resource_sample` — new optional metadata keys
+
+Same cadence and optionality rules as v1.9 (one sample per state-sync tick;
+a key is omitted when its platform source is unavailable — never zeroed):
+
+- `load1:number`, `load5:number` — `/proc/loadavg`, host-wide.
+- `psi_cpu_some_avg10:number`, `psi_io_some_avg10:number`,
+  `psi_io_full_avg10:number`, `psi_mem_some_avg10:number`,
+  `psi_mem_full_avg10:number` — kernel pressure-stall averages
+  (`/proc/pressure/*`, 10-second windows, percent). `some` = at least one
+  task stalled on the resource; `full` = all non-idle tasks stalled at
+  once. Absent on kernels without PSI or in containers that mask it.
+- `cpu_throttled_periods:int`, `cpu_throttled_ms:number` — cgroup CPU
+  throttling **deltas over the sample interval** (v2 `cpu.stat`, v1
+  fallback). Zero deltas are reported as `0`, distinct from "no cgroup
+  limit" which omits the keys.
+- `nfs_mounts:[{mount:str, ops:int, rtt_ms:number, retrans:int}]` — one
+  entry per visible NFS mount with activity in the interval, from
+  `/proc/self/mountstats` per-op counters. `ops` = operations completed in
+  the interval, `rtt_ms` = average server round-trip per operation over the
+  interval (the shared-storage-contention discriminator: throughput can
+  look normal while RTT multiplies), `retrans` = retransmissions in the
+  interval. A mount with zero ops and zero retrans is skipped; the whole
+  key is omitted when no NFS mount is visible. Same mount-namespace
+  semantics and caveats as the v1.11 `net_io` NFS keys.
+- Backend-specific keys (documented so a mixed fleet knows what it sees;
+  currently emitted by the Go backend only): `goroutines:int`,
+  `sched_latency_p99_ms:number`, `gc_pause_p99_ms:number` — Go
+  `runtime/metrics` percentiles computed over the sample interval.
+  Scheduler-latency p99 is the Go-side CPU-starvation signal.
+
+### `runtime_lag_episode` event (persisted)
+
+One row per **lag episode**: the span from the runtime-health monitor
+leaving `healthy` to its return (or to the `runtime_health.
+episode_max_seconds` cap, default 300 — a longer incident produces several
+back-to-back rows). Episodes exist because a single long blocking call is
+already captured by `runtime_stall`, while *diffuse* degradation — many
+small delays, CPU starvation — previously produced a `stalled` badge with
+no recorded evidence. `duration` column = episode wall seconds. `metadata`
+JSON:
+
+- `duration_ms:number`, `peak_lag_ms:number`, `lag_sum_ms:number` —
+  wall length, worst single lag, and accumulated lag over the episode.
+- `cpu_ms:number` (optional) — CPU time consumed **by the runtime's own
+  scheduler thread** during the episode (Python: the event-loop thread via
+  `/proc/self/task/<tid>/stat`; Go: process `getrusage`, the closest
+  analogue). Omitted when unreadable.
+- `cpu_ratio:number` (optional) — `cpu_ms / duration_ms`.
+- `verdict:"blocked"|"cpu_bound"|"starved"|"inconclusive"` — the monitor's
+  classification: `blocked` = the loop sat in one dominant call site with
+  little CPU (the stacks name it); `cpu_bound` = the loop itself consumed
+  the wall time (the stacks show the hot site); `starved` = the process
+  wanted CPU and did not get it — host-level contention, look at the
+  host-pressure keys; `inconclusive` = none of the patterns dominated.
+- `stall_count:int` — hard `runtime_stall` events that fired inside this
+  episode (their rows still exist independently and carry the full
+  stacks).
+- `sample_count:int`, `stacks:[{stack:str, location:str, count:int}]`,
+  `dropped_stacks:int` — repeated scheduler-thread stack samples taken
+  through the whole episode (not only while the heartbeat was stale),
+  deduplicated by innermost frame, capped by
+  `runtime_health.max_stall_stacks`. On the Go backend, `stacks` entries
+  are goroutine-dump groups (`count` = goroutines in the group) and may be
+  empty.
+- `unit_count:int` — live tasks/goroutines at episode close.
+- Optional evidence, best-effort at close: `cpu_throttled_ms:number`
+  (throttling delta across the episode), `psi_cpu_some_avg10:number`,
+  `load1:number`.
+
+### `runtime_probe` event (persisted, opt-in)
+
+A flight-recorder profiler for tuning production: disabled unless
+`runtime_health.probe_interval_seconds > 0` (default `0`). Every interval
+the monitor's sampler thread records one probe **regardless of state**:
+
+- `lag_ms:number` — current lag at capture.
+- `unit_count:int` — last-known live-unit count.
+- `stacks:[{stack:str, location:str, count:int}]` — Python: the event-loop
+  thread's stack, a single entry with `count: 1`; Go: the top goroutine
+  groups by count, one representative stack each.
+
+Capture cost is one thread-stack read (Python) or one goroutine dump (Go)
+per interval; the key is off by default because it writes rows forever.
+
+### `RuntimeHealthSnapshot` — two optional fields
+
+Served by monitor memory, so they answer **during** an incident even when
+the persisted-event read path is degraded — clients should render stall
+evidence from the snapshot when event queries return nothing:
+
+- `current_episode: RuntimeCurrentEpisode | null` — the open episode, with
+  a running verdict; `null` between episodes. Absent field = pre-v1.15
+  backend.
+- `recent_episodes: [RuntimeEpisodeSummary]` — closed episodes, newest
+  last, bounded server-side (50).
+
+### `worker_state` — two new nullable columns
+
+`health_state TEXT` (`healthy`/`degraded`/`stalled`, `NULL` when the
+monitor is off) and `loop_lag_ms REAL` (point-in-time lag at the sync
+tick), refreshed every state-sync tick like the pool columns. Merged
+fleet databases can now answer "which worker was degraded when" without
+replaying events. Readers must tolerate their absence in databases
+written by older backends.
+
 ## Appendix: divergence resolutions from the 2026-06 audit
 
 Canonical choices where the two reference backends disagreed; each backend

@@ -341,6 +341,27 @@ export interface RuntimeStallSummary {
   top_location: string | null
 }
 
+/** One closed lag episode, without stacks — those ride runtime_lag_episode. */
+export interface RuntimeEpisodeSummary {
+  t: number
+  duration_ms: number
+  verdict: RuntimeVerdict
+  peak_lag_ms: number
+  top_location: string | null
+}
+
+/** The episode open right now, with a running verdict (contract v1.15). */
+export interface RuntimeCurrentEpisode {
+  started_t: number
+  wall_ms: number
+  peak_lag_ms: number
+  cpu_ms: number | null
+  sample_count: number
+  verdict: RuntimeVerdict
+}
+
+export type RuntimeVerdict = 'blocked' | 'cpu_bound' | 'starved' | 'inconclusive'
+
 export interface RuntimeHealthSnapshot {
   enabled: boolean
   state: 'healthy' | 'degraded' | 'stalled'
@@ -350,6 +371,10 @@ export interface RuntimeHealthSnapshot {
   heartbeat_age_ms: number
   window: RuntimeLagBucket[]
   recent_stalls: RuntimeStallSummary[]
+  /** v1.15, optional: absent on older backends; null between episodes. */
+  current_episode?: RuntimeCurrentEpisode | null
+  /** v1.15, optional: closed episodes, newest last, bounded server-side. */
+  recent_episodes?: RuntimeEpisodeSummary[]
 }
 
 /** Units sharing one (name, suspension point) pair. */
@@ -372,6 +397,34 @@ export interface RuntimeStallPayload {
   stacks: { stack: string; location: string; count: number }[]
   dropped_stacks: number
   unit_count: number
+}
+
+/** Payload of a runtime_lag_episode event's metadata JSON (contract v1.15). */
+export interface RuntimeLagEpisodePayload {
+  duration_ms: number
+  peak_lag_ms: number
+  lag_sum_ms: number
+  verdict: RuntimeVerdict
+  stall_count: number
+  sample_count: number
+  stacks: { stack: string; location: string; count: number }[]
+  dropped_stacks: number
+  unit_count: number
+  /** Optional: scheduler-thread CPU during the episode; absent when unreadable. */
+  cpu_ms?: number
+  cpu_ratio?: number
+  /** Optional host-pressure evidence, merged flat by the backend. */
+  cpu_throttled_ms?: number
+  psi_cpu_some_avg10?: number
+  load1?: number
+}
+
+/** One NFS mount's per-interval health inside a resource_sample (v1.15). */
+export interface NFSMountHealth {
+  mount: string
+  ops: number
+  rtt_ms: number
+  retrans: number
 }
 
 // Composed single-task detail returned by GET /api/v1/task/{id} (contract §New

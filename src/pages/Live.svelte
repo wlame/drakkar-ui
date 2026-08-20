@@ -32,6 +32,7 @@
     type AnnotationView,
     type NetRates,
   } from '../lib/live'
+  import { hostPressureFromEvent, type HostPressure } from '../lib/hostpressure'
   import Timeline from '../components/live/Timeline.svelte'
   import ConsumePauseControl from '../components/live/ConsumePauseControl.svelte'
   import TimelineStats from '../components/live/TimelineStats.svelte'
@@ -53,6 +54,13 @@
     'arranged',
     'annotation',
     'net_io',
+    // Runtime-health push refresh (the WS handler bumps runtimeSeq) and the
+    // Host section's live pressure readings. All low-rate: one sample per
+    // 10s tick, transitions/stalls/episodes only when something is wrong.
+    'runtime_health',
+    'runtime_stall',
+    'runtime_lag_episode',
+    'resource_sample',
   ]
 
   // --- bootstrap config (best-effort; defaults keep the page working) ---
@@ -82,9 +90,12 @@
   // Null until the first frame — older backends and hosts without
   // /proc/net/dev never send one, and the readout simply stays hidden.
   let net = $state<NetRates | null>(null)
-  // Bumped on runtime_health / runtime_stall WS frames; the Runtime tab
-  // refetches its snapshot when this changes.
+  // Bumped on runtime_health / runtime_stall / runtime_lag_episode WS
+  // frames; the Runtime tab refetches its snapshot when this changes.
   let runtimeSeq = $state(0)
+  // Latest host-pressure reading (resource_sample WS frames, v1.15); the
+  // Runtime tab's Host section renders it. Null until the first sample.
+  let hostPressure = $state<HostPressure | null>(null)
   let allTasks = $state<Record<string, TaskView>>({})
   let arranges = $state<ArrangeView[]>([])
   let annotations = $state<AnnotationView[]>([])
@@ -251,11 +262,19 @@
         break
       }
       case 'runtime_health':
-      case 'runtime_stall': {
+      case 'runtime_stall':
+      case 'runtime_lag_episode': {
         // The Runtime tab owns its own fetches; this bump just tells an
         // open tab that fresher data exists (~1 frame per 10s sample, or
-        // per transition/stall — never high-rate).
+        // per transition/stall/episode — never high-rate).
         runtimeSeq += 1
+        break
+      }
+      case 'resource_sample': {
+        // Latest host-pressure reading for the Runtime tab's Host section
+        // (contract v1.15). Null when the sample carries no pressure keys.
+        const parsed = hostPressureFromEvent({ ts: e.ts, metadata: e.metadata ?? null })
+        if (parsed) hostPressure = parsed
         break
       }
       case 'net_io': {
@@ -550,7 +569,10 @@
       title="Handler offload() thread pool: computations running / queued for a free thread, out of offload.max_threads. Sustained queueing means the pool is undersized."
     >Offload: {offload.running} / {offload.max_threads} busy, <span class="waiting">{offload.queued}</span> queued</span>
   {/if}
-  <span class="pool">Pool: {pool.active} / {pool.max} slots, <span class="waiting">{pool.waiting}</span> waiting</span>
+  <!-- pool.max has exactly one source (the overview fetch); until it lands,
+       0 is "unknown", and rendering it as a real zero misread as a broken
+       pool during incidents. -->
+  <span class="pool">Pool: {pool.active} / {pool.max > 0 ? pool.max : '—'} slots, <span class="waiting">{pool.waiting}</span> waiting</span>
 </div>
 
 <!-- Timed consume pause (opt-in via ui.consume_pause.enabled; renders
@@ -642,7 +664,7 @@
 {:else if activeTab === 'window-results'}
   <ResultsTab kind="window" rows={windowResults} />
 {:else if activeTab === 'runtime'}
-  <RuntimeTab refreshSeq={runtimeSeq} />
+  <RuntimeTab refreshSeq={runtimeSeq} {hostPressure} />
 {/if}
 
 <style>

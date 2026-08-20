@@ -1,6 +1,12 @@
 // Helpers behind the Live page's Runtime tab. Kept out of the Svelte
 // component so vitest covers them without component-test infrastructure.
-import type { RuntimeLagBucket, RuntimeStallPayload } from './types'
+import type {
+  RuntimeHealthSnapshot,
+  RuntimeLagBucket,
+  RuntimeLagEpisodePayload,
+  RuntimeStallPayload,
+  RuntimeVerdict,
+} from './types'
 import { safeJsonParse } from './format'
 
 export type RuntimeState = 'healthy' | 'degraded' | 'stalled'
@@ -129,4 +135,185 @@ export function aggregateStallSites(
     }
   }
   return [...byLocation.values()].sort((a, b) => b.samples - a.samples)
+}
+
+// --- Lag episodes and verdicts (contract v1.15) ------------------------------
+
+/**
+ * Plain-language rendering of each episode verdict — the chip label and the
+ * one-liner under it. Written for the operator mid-incident: what happened,
+ * and where to look next.
+ */
+export const VERDICT_LABELS: Record<RuntimeVerdict, { label: string; hint: string }> = {
+  blocked: {
+    label: 'blocked',
+    hint: 'The runtime sat in one call site with little CPU — the top stack names the blocking call.',
+  },
+  cpu_bound: {
+    label: 'cpu bound',
+    hint: 'The runtime itself consumed the wall time — the top stack shows the hot site; move that work off the loop.',
+  },
+  starved: {
+    label: 'starved',
+    hint: 'The process wanted CPU and did not get it — host-level contention (throttling, oversubscription), not your code.',
+  },
+  inconclusive: {
+    label: 'inconclusive',
+    hint: 'No single pattern dominated — check the raw CPU, stack, and host-pressure numbers.',
+  },
+}
+
+const VERDICTS = new Set<RuntimeVerdict>(['blocked', 'cpu_bound', 'starved', 'inconclusive'])
+
+function verdictOf(value: unknown): RuntimeVerdict {
+  return VERDICTS.has(value as RuntimeVerdict) ? (value as RuntimeVerdict) : 'inconclusive'
+}
+
+/**
+ * Parse one runtime_lag_episode event's metadata JSON. Tolerant like
+ * stallFromMetadata: one bad row degrades, never breaks the list.
+ */
+export function episodeFromMetadata(metadata: string | null | undefined): RuntimeLagEpisodePayload {
+  const raw = safeJsonParse<Partial<RuntimeLagEpisodePayload>>(metadata ?? undefined, {})
+  return {
+    duration_ms: typeof raw.duration_ms === 'number' ? raw.duration_ms : 0,
+    peak_lag_ms: typeof raw.peak_lag_ms === 'number' ? raw.peak_lag_ms : 0,
+    lag_sum_ms: typeof raw.lag_sum_ms === 'number' ? raw.lag_sum_ms : 0,
+    verdict: verdictOf(raw.verdict),
+    stall_count: typeof raw.stall_count === 'number' ? raw.stall_count : 0,
+    sample_count: typeof raw.sample_count === 'number' ? raw.sample_count : 0,
+    stacks: Array.isArray(raw.stacks) ? raw.stacks : [],
+    dropped_stacks: typeof raw.dropped_stacks === 'number' ? raw.dropped_stacks : 0,
+    unit_count: typeof raw.unit_count === 'number' ? raw.unit_count : -1,
+    ...(typeof raw.cpu_ms === 'number' ? { cpu_ms: raw.cpu_ms } : {}),
+    ...(typeof raw.cpu_ratio === 'number' ? { cpu_ratio: raw.cpu_ratio } : {}),
+    ...(typeof raw.cpu_throttled_ms === 'number' ? { cpu_throttled_ms: raw.cpu_throttled_ms } : {}),
+    ...(typeof raw.psi_cpu_some_avg10 === 'number'
+      ? { psi_cpu_some_avg10: raw.psi_cpu_some_avg10 }
+      : {}),
+    ...(typeof raw.load1 === 'number' ? { load1: raw.load1 } : {}),
+  }
+}
+
+/**
+ * One row of the merged Stalls list: a hard stall or a closed episode, from
+ * either the persisted events or the snapshot's in-memory summaries.
+ */
+export interface StallListItem {
+  id: string
+  kind: 'stall' | 'episode'
+  t: number
+  durationMs: number
+  /** Episodes only; null for stalls. */
+  verdict: RuntimeVerdict | null
+  stackCount: number
+  /** Full stacks — only persisted rows carry them; snapshot entries render without expand. */
+  stacks: { stack: string; location: string; count: number }[]
+  droppedStacks: number
+  unitCount: number | null
+  peakLagMs: number | null
+  stallCount: number | null
+  cpuRatio: number | null
+  /** True when the entry exists only in monitor memory (the persisted row
+   * never landed — exactly what happens while the recorder is degraded). */
+  fromSnapshotOnly: boolean
+}
+
+// Snapshot timestamps and event timestamps describe the same moment but pass
+// through different float paths; treat anything within this window as the
+// same stall/episode when deduplicating.
+const DEDUPE_WINDOW_S = 2
+
+/**
+ * Merge the three stall-evidence sources into one newest-first list:
+ * persisted runtime_stall + runtime_lag_episode rows (rich: full stacks)
+ * and the snapshot's recent_stalls / recent_episodes (survive a degraded
+ * recorder — the exact incident mode that used to render "No stalls
+ * recorded" under a stalled badge).
+ */
+export function mergeStallSources(
+  stallEvents: { id: number; ts: number; metadata: string | null }[],
+  episodeEvents: { id: number; ts: number; metadata: string | null }[],
+  snapshot: RuntimeHealthSnapshot | null,
+): StallListItem[] {
+  const items: StallListItem[] = []
+
+  for (const row of stallEvents) {
+    const stall = stallFromMetadata(row.metadata)
+    items.push({
+      id: `stall-event-${row.id}`,
+      kind: 'stall',
+      t: row.ts,
+      durationMs: stall.duration_ms,
+      verdict: null,
+      stackCount: stall.stacks.length,
+      stacks: stall.stacks,
+      droppedStacks: stall.dropped_stacks,
+      unitCount: stall.unit_count >= 0 ? stall.unit_count : null,
+      peakLagMs: null,
+      stallCount: null,
+      cpuRatio: null,
+      fromSnapshotOnly: false,
+    })
+  }
+  for (const row of episodeEvents) {
+    const episode = episodeFromMetadata(row.metadata)
+    items.push({
+      id: `episode-event-${row.id}`,
+      kind: 'episode',
+      t: row.ts,
+      durationMs: episode.duration_ms,
+      verdict: episode.verdict,
+      stackCount: episode.stacks.length,
+      stacks: episode.stacks,
+      droppedStacks: episode.dropped_stacks,
+      unitCount: episode.unit_count >= 0 ? episode.unit_count : null,
+      peakLagMs: episode.peak_lag_ms,
+      stallCount: episode.stall_count,
+      cpuRatio: episode.cpu_ratio ?? null,
+      fromSnapshotOnly: false,
+    })
+  }
+
+  const covered = (kind: StallListItem['kind'], t: number) =>
+    items.some((item) => item.kind === kind && Math.abs(item.t - t) <= DEDUPE_WINDOW_S)
+
+  for (const stall of snapshot?.recent_stalls ?? []) {
+    if (covered('stall', stall.t)) continue
+    items.push({
+      id: `stall-snap-${stall.t}`,
+      kind: 'stall',
+      t: stall.t,
+      durationMs: stall.duration_ms,
+      verdict: null,
+      stackCount: stall.stack_count,
+      stacks: [],
+      droppedStacks: 0,
+      unitCount: null,
+      peakLagMs: null,
+      stallCount: null,
+      cpuRatio: null,
+      fromSnapshotOnly: true,
+    })
+  }
+  for (const episode of snapshot?.recent_episodes ?? []) {
+    if (covered('episode', episode.t)) continue
+    items.push({
+      id: `episode-snap-${episode.t}`,
+      kind: 'episode',
+      t: episode.t,
+      durationMs: episode.duration_ms,
+      verdict: episode.verdict,
+      stackCount: 0,
+      stacks: [],
+      droppedStacks: 0,
+      unitCount: null,
+      peakLagMs: episode.peak_lag_ms,
+      stallCount: null,
+      cpuRatio: null,
+      fromSnapshotOnly: true,
+    })
+  }
+
+  return items.sort((a, b) => b.t - a.t)
 }

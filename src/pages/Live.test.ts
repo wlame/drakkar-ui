@@ -486,3 +486,73 @@ describe('Live offload readout', () => {
     teardown()
   })
 })
+
+describe('Live pool readout', () => {
+  it('renders the pool maximum from the overview', async () => {
+    const { target, teardown } = mountLive()
+    await settled()
+
+    expect(target.textContent).toContain('Pool: 0 / 4 slots')
+
+    teardown()
+  })
+
+  it('renders an em dash while the pool maximum is unknown', async () => {
+    // The overview is pool_max's ONLY source. When it never lands (wedged
+    // loop during an incident), a literal 0 read as a broken pool —
+    // "Pool: 10 / 0 slots" — in production screenshots.
+    overviewPayload = { ...defaultOverview(), pool_max: 0 }
+    const { target, teardown } = mountLive()
+    await settled()
+
+    expect(target.textContent).toContain('Pool: 0 / — slots')
+
+    teardown()
+  })
+})
+
+describe('Live host pressure routing', () => {
+  it('parses resource_sample frames and hands them to the Runtime tab', async () => {
+    // The shared fetch mock answers /runtime/health with [] (its generic
+    // fallback); the Runtime tab needs a real snapshot to render at all.
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/runtime/health')) {
+        return okJson({
+          enabled: true,
+          state: 'healthy',
+          unit_label: 'tasks',
+          current_lag_ms: 1,
+          heartbeat_age_ms: 1,
+          window: [],
+          recent_stalls: [],
+        })
+      }
+      if (url.includes('/recent-tasks')) return okJson(recentPayload)
+      if (url.includes('/live/overview')) return okJson(overviewPayload)
+      return okJson([])
+    })
+    const { target, teardown } = mountLive()
+    await settled()
+    socketOpts!.onStatus('connected')
+    flushSync()
+
+    socketOpts!.onEvent({
+      event: 'resource_sample',
+      ts: NOW,
+      metadata: JSON.stringify({ load1: 9.9, load5: 5.5, psi_cpu_some_avg10: 12.0 }),
+    })
+    flushSync()
+
+    // Open the Runtime tab; its Host section must show the pushed reading
+    // without waiting for any fetch.
+    selectTab(target, 'Runtime')
+    await settled()
+    await settled()
+
+    expect(target.textContent).toContain('9.9 / 5.5')
+    expect(target.textContent).toContain('12.0%')
+
+    teardown()
+  })
+})

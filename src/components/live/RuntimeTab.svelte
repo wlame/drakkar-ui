@@ -1,23 +1,33 @@
 <script lang="ts">
   // Runtime tab: how healthy the worker's runtime is (event-loop lag on
-  // Python backends), what blocked it (stall stacks), and what it carries
-  // (unit census, fetched on demand). Data comes from the runtime/health
-  // snapshot + runtime_stall recorder events; the parent bumps refreshSeq
-  // when a runtime_* WS frame arrives so an open tab stays current.
+  // Python backends), what blocked or starved it (stalls + lag episodes
+  // with verdicts), which resource the host is fighting for (host
+  // pressure), and what the runtime carries (unit census, on demand).
+  //
+  // Stall evidence deliberately merges THREE sources: persisted
+  // runtime_stall / runtime_lag_episode rows, the snapshot's in-memory
+  // recent_stalls / recent_episodes, and the snapshot's current_episode.
+  // The persisted path dies exactly during the incidents this tab exists
+  // for (degraded recorder, wedged loop); monitor memory does not.
   import { api } from '../../lib/api'
   import type { EventRow, RuntimeHealthSnapshot, RuntimeUnitCensus } from '../../lib/types'
   import { fmtTime } from '../../lib/format'
   import {
     STATE_COLORS,
+    VERDICT_LABELS,
     aggregateStallSites,
     fmtLagMs,
+    mergeStallSources,
     sparklinePoints,
-    stallFromMetadata,
     windowPeakMs,
   } from '../../lib/runtime'
+  import { hostPressureFromEvent, throttlePct, type HostPressure } from '../../lib/hostpressure'
   import CodeBlock from '../CodeBlock.svelte'
 
-  let { refreshSeq = 0 }: { refreshSeq?: number } = $props()
+  let {
+    refreshSeq = 0,
+    hostPressure = null,
+  }: { refreshSeq?: number; hostPressure?: HostPressure | null } = $props()
 
   const SPARK_W = 640
   const SPARK_H = 60
@@ -28,7 +38,9 @@
   let snapshot = $state<RuntimeHealthSnapshot | null>(null)
   let availability = $state<'loading' | 'available' | 'absent' | 'error'>('loading')
   let stallEvents = $state<EventRow[]>([])
-  let openStallId = $state<number | null>(null)
+  let episodeEvents = $state<EventRow[]>([])
+  let fetchedPressure = $state<HostPressure | null>(null)
+  let openItemId = $state<string | null>(null)
   let census = $state<RuntimeUnitCensus | null>(null)
   let censusState = $state<'idle' | 'loading' | 'stalled' | 'error'>('idle')
 
@@ -47,10 +59,25 @@
       return
     }
     try {
-      stallEvents = await api.events({ event_types: 'runtime_stall', limit: STALL_LIMIT })
+      const rows = await api.events({
+        event_types: 'runtime_stall,runtime_lag_episode',
+        limit: STALL_LIMIT,
+      })
+      stallEvents = rows.filter((row) => row.event === 'runtime_stall')
+      episodeEvents = rows.filter((row) => row.event === 'runtime_lag_episode')
     } catch {
       // Stall history is additive detail — a failed events query must not
-      // blank the snapshot above.
+      // blank the snapshot above; the snapshot's own summaries still render.
+    }
+    if (!hostPressure) {
+      // No WS sample yet (tab opened before the first 10s tick): seed the
+      // Host section from the newest persisted sample.
+      try {
+        const samples = await api.events({ event_types: 'resource_sample', limit: 1 })
+        if (samples.length > 0) fetchedPressure = hostPressureFromEvent(samples[0])
+      } catch {
+        // Same rule: additive detail only.
+      }
     }
   }
 
@@ -70,7 +97,13 @@
     }
   }
 
+  const pressure = $derived(hostPressure ?? fetchedPressure)
+  const throttle = $derived(
+    pressure ? throttlePct(pressure.throttledMs, pressure.intervalS) : null,
+  )
   const stallSites = $derived(aggregateStallSites(stallEvents))
+  const stallItems = $derived(mergeStallSources(stallEvents, episodeEvents, snapshot))
+  const currentEpisode = $derived(snapshot?.current_episode ?? null)
   const stateColor = $derived(snapshot ? STATE_COLORS[snapshot.state] : 'var(--line)')
   const points = $derived(snapshot ? sparklinePoints(snapshot.window, SPARK_W, SPARK_H) : '')
   const peakMs = $derived(snapshot ? windowPeakMs(snapshot.window) : 0)
@@ -80,8 +113,7 @@
   <p class="muted">Loading runtime health…</p>
 {:else if availability === 'absent'}
   <p class="muted">
-    No runtime monitor on this worker — <code>runtime_health.enabled</code> is off, or this
-    backend does not implement the monitor (Go workers currently serve only the unit census).
+    No runtime monitor on this worker — <code>runtime_health.enabled</code> is off.
   </p>
 {:else if availability === 'error'}
   <p class="muted">Failed to load runtime health.</p>
@@ -123,67 +155,182 @@
     {/if}
   </div>
 
-  <h4>Stalls</h4>
-  {#if stallEvents.length === 0}
-    <p class="muted">No stalls recorded — nothing has blocked the runtime.</p>
-  {:else}
-    <!-- Aggregate first, list second: across many stalls the site that KEEPS
-         appearing is the fix target, and no one finds it by expanding rows
-         one at a time. -->
+  {#if pressure}
+    <h4>Host</h4>
     <p class="muted small">
-      Top blocking sites across the last {stallEvents.length} recorded stalls. Total time is an
-      upper bound — sites captured in the same stall share its duration.
+      Which resource is the host fighting for — sampled every state-sync tick, host-wide where
+      the source is (load, pressure), per cgroup or mount where it can be.
     </p>
-    <table class="sites">
-      <thead>
-        <tr><th>Blocking site</th><th>Samples</th><th>Stalls</th><th>Total stall time</th><th>Last seen</th></tr>
-      </thead>
-      <tbody>
-        {#each stallSites.slice(0, 10) as site (site.location)}
-          <tr>
-            <td class="mono">{site.location}</td>
-            <td class="mono">{site.samples}</td>
-            <td class="mono">{site.stalls}</td>
-            <td class="mono">{fmtLagMs(site.totalMs)}</td>
-            <td class="mono">{fmtTime(site.lastTs)}</td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
+    <div class="cards">
+      {#if pressure.load1 !== null}
+        <div class="card">
+          <span class="label">Load 1m / 5m</span>
+          <span class="mono">{pressure.load1}{pressure.load5 !== null ? ` / ${pressure.load5}` : ''}</span>
+        </div>
+      {/if}
+      {#if pressure.psiCpuSome !== null}
+        <div class="card">
+          <span class="label">PSI cpu</span>
+          <span class="mono">{pressure.psiCpuSome.toFixed(1)}%</span>
+        </div>
+      {/if}
+      {#if pressure.psiIoSome !== null}
+        <div class="card">
+          <span class="label">PSI io some / full</span>
+          <span class="mono"
+            >{pressure.psiIoSome.toFixed(1)}%{pressure.psiIoFull !== null
+              ? ` / ${pressure.psiIoFull.toFixed(1)}%`
+              : ''}</span
+          >
+        </div>
+      {/if}
+      {#if pressure.psiMemSome !== null}
+        <div class="card">
+          <span class="label">PSI mem</span>
+          <span class="mono">{pressure.psiMemSome.toFixed(1)}%</span>
+        </div>
+      {/if}
+      {#if throttle !== null}
+        <div class="card">
+          <span class="label">CPU throttled</span>
+          <span class="mono">{throttle}%</span>
+        </div>
+      {/if}
+      {#if pressure.schedLatencyP99Ms !== null}
+        <div class="card">
+          <span class="label">Sched p99</span>
+          <span class="mono">{fmtLagMs(pressure.schedLatencyP99Ms)}</span>
+        </div>
+      {/if}
+      {#if pressure.goroutines !== null}
+        <div class="card">
+          <span class="label">Goroutines</span>
+          <span class="mono">{pressure.goroutines}</span>
+        </div>
+      {/if}
+    </div>
+    {#if pressure.nfsMounts.length > 0}
+      <table class="sites">
+        <thead>
+          <tr><th>NFS mount</th><th>Avg RTT / op</th><th>Retransmits</th><th>Ops</th></tr>
+        </thead>
+        <tbody>
+          {#each pressure.nfsMounts as mount (mount.mount)}
+            <tr>
+              <td class="mono">{mount.mount}</td>
+              <td class="mono" class:alert={mount.rtt_ms >= 100}>{fmtLagMs(mount.rtt_ms)}</td>
+              <td class="mono" class:alert={mount.retrans > 0}>{mount.retrans}</td>
+              <td class="mono">{mount.ops}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+      <p class="muted small">
+        Per interval, from the kernel's NFS client counters. RTT is the server round-trip per
+        operation — it multiplies under storage contention while byte throughput can look normal;
+        retransmits mean the server is not answering.
+      </p>
+    {/if}
+  {/if}
+
+  <h4>Stalls & episodes</h4>
+  {#if currentEpisode}
+    <div class="episode-live">
+      <span class="chip" data-verdict={currentEpisode.verdict}
+        >{VERDICT_LABELS[currentEpisode.verdict].label}</span
+      >
+      <span>
+        <strong>Episode in progress</strong> — {fmtLagMs(currentEpisode.wall_ms)} so far, peak lag
+        {fmtLagMs(currentEpisode.peak_lag_ms)}, {currentEpisode.sample_count} stack samples{currentEpisode.cpu_ms !==
+        null
+          ? `, ${fmtLagMs(currentEpisode.cpu_ms)} runtime CPU`
+          : ''}.
+      </span>
+      <span class="muted small">{VERDICT_LABELS[currentEpisode.verdict].hint}</span>
+    </div>
+  {/if}
+  {#if stallItems.length === 0 && !currentEpisode}
+    <p class="muted">No stalls or lag episodes recorded — nothing has degraded the runtime.</p>
+  {:else}
+    {#if stallSites.length > 0}
+      <!-- Aggregate first, list second: across many stalls the site that KEEPS
+           appearing is the fix target, and no one finds it by expanding rows
+           one at a time. -->
+      <p class="muted small">
+        Top blocking sites across the last {stallEvents.length} recorded stalls. Total time is an
+        upper bound — sites captured in the same stall share its duration.
+      </p>
+      <table class="sites">
+        <thead>
+          <tr><th>Blocking site</th><th>Samples</th><th>Stalls</th><th>Total stall time</th><th>Last seen</th></tr>
+        </thead>
+        <tbody>
+          {#each stallSites.slice(0, 10) as site (site.location)}
+            <tr>
+              <td class="mono">{site.location}</td>
+              <td class="mono">{site.samples}</td>
+              <td class="mono">{site.stalls}</td>
+              <td class="mono">{fmtLagMs(site.totalMs)}</td>
+              <td class="mono">{fmtTime(site.lastTs)}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
     <table>
       <thead>
-        <tr><th>When</th><th>Duration</th><th>Blocking sites</th><th>Units</th></tr>
+        <tr><th>When</th><th>Kind</th><th>Duration</th><th>Verdict</th><th>Stacks</th><th>Units</th></tr>
       </thead>
       <tbody>
-        {#each stallEvents as row (row.id)}
-          {@const stall = stallFromMetadata(row.metadata)}
+        {#each stallItems as item (item.id)}
           <tr
             class="stall-row"
-            class:open={openStallId === row.id}
-            onclick={() => (openStallId = openStallId === row.id ? null : row.id)}
+            class:open={openItemId === item.id}
+            onclick={() => (openItemId = openItemId === item.id ? null : item.id)}
           >
-            <td class="mono">{fmtTime(row.ts)}</td>
-            <td class="mono">{fmtLagMs(stall.duration_ms)}</td>
+            <td class="mono">{fmtTime(item.t)}</td>
             <td>
-              {stall.stacks.length}{stall.dropped_stacks ? ` (+${stall.dropped_stacks} dropped)` : ''}
+              {item.kind}{item.kind === 'episode' && item.stallCount
+                ? ` (${item.stallCount} stalls)`
+                : ''}{item.fromSnapshotOnly ? ' *' : ''}
             </td>
-            <td class="mono">{stall.unit_count >= 0 ? stall.unit_count : '—'}</td>
+            <td class="mono">{fmtLagMs(item.durationMs)}</td>
+            <td>
+              {#if item.verdict}
+                <span class="chip" data-verdict={item.verdict} title={VERDICT_LABELS[item.verdict].hint}
+                  >{VERDICT_LABELS[item.verdict].label}</span
+                >
+              {:else}
+                <span class="muted">—</span>
+              {/if}
+            </td>
+            <td>
+              {item.stackCount}{item.droppedStacks ? ` (+${item.droppedStacks} dropped)` : ''}
+            </td>
+            <td class="mono">{item.unitCount ?? '—'}</td>
           </tr>
-          {#if openStallId === row.id}
+          {#if openItemId === item.id}
             <tr class="stall-detail">
-              <td colspan="4">
+              <td colspan="6">
+                {#if item.verdict}
+                  <p class="small">{VERDICT_LABELS[item.verdict].hint}</p>
+                {/if}
                 <!-- Deliberately unkeyed: two captured stacks can share a
                      location (same blocking site, different call paths), and
                      keying on it crashed the expand with each_key_duplicate.
                      The list is replaced wholesale on reload, so identity
                      tracking buys nothing here. -->
-                {#each stall.stacks as stack}
+                {#each item.stacks as stack}
                   <p class="mono small">
                     {stack.location} — sampled {stack.count}×
                   </p>
                   <CodeBlock text={stack.stack} language="plaintext" />
                 {:else}
-                  <p class="muted">No stacks captured for this stall.</p>
+                  <p class="muted">
+                    {item.fromSnapshotOnly
+                      ? 'Known from monitor memory only — the persisted event (with stacks) has not landed, which usually means the recorder was degraded at the time.'
+                      : 'No stacks captured.'}
+                  </p>
                 {/each}
               </td>
             </tr>
@@ -191,6 +338,11 @@
         {/each}
       </tbody>
     </table>
+    {#if stallItems.some((item) => item.fromSnapshotOnly)}
+      <p class="muted small">
+        * from monitor memory — the persisted event has not landed (degraded recorder).
+      </p>
+    {/if}
   {/if}
 
   <h4>
@@ -261,6 +413,41 @@
     border-radius: 999px;
     padding: 0.05rem 0.6rem;
     font-size: 0.85rem;
+  }
+  .chip {
+    display: inline-block;
+    color: #111;
+    font-weight: 600;
+    border-radius: 999px;
+    padding: 0.05rem 0.6rem;
+    font-size: 0.8rem;
+    background: var(--line);
+  }
+  .chip[data-verdict='blocked'] {
+    background: #f87171;
+  }
+  .chip[data-verdict='cpu_bound'] {
+    background: #fbbf24;
+  }
+  .chip[data-verdict='starved'] {
+    background: #c084fc;
+  }
+  .chip[data-verdict='inconclusive'] {
+    background: #94a3b8;
+  }
+  .episode-live {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.6rem 0.9rem;
+    margin-bottom: 0.75rem;
+    background: var(--panel-2);
+    border: 1px solid #f87171;
+    border-radius: 8px;
+  }
+  .alert {
+    color: #f87171;
+    font-weight: 600;
   }
   .spark-wrap {
     margin-bottom: 1rem;

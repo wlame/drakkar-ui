@@ -36,6 +36,15 @@ export const EVENT_COLORS: Record<string, string> = {
   // work moved to the backend's thread pool). Teal like `arranged` — it
   // is arrange-adjacent work — but distinguishable via its own label.
   offload: COLOR.teal,
+  // Runtime-health family (contract v1.15): state/lag samples, hard
+  // stalls, lag episodes with verdicts, opt-in probes — red-adjacent, they
+  // exist to explain bad moments. resource_sample is the neutral host
+  // telemetry next to them.
+  runtime_health: COLOR.amber,
+  runtime_stall: COLOR.red,
+  runtime_lag_episode: COLOR.red,
+  runtime_probe: COLOR.gray,
+  resource_sample: COLOR.blue,
 }
 
 export function eventColor(event: string): string {
@@ -59,6 +68,11 @@ export const EVENT_TYPES = [
   'committed',
   'annotation',
   'offload',
+  'resource_sample',
+  'runtime_health',
+  'runtime_stall',
+  'runtime_lag_episode',
+  'runtime_probe',
 ] as const
 
 // An annotation event's metadata envelope (contract v1.3). Handler-emitted
