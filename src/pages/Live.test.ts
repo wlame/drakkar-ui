@@ -511,6 +511,31 @@ describe('Live pool readout', () => {
   })
 })
 
+describe('Live throughput routing', () => {
+  it('feeds throughput frames into the timeline track', async () => {
+    const { target, teardown } = mountLive()
+    await settled()
+    socketOpts!.onStatus('connected')
+    flushSync()
+    expect(target.querySelector('.tp-now')).toBeNull()
+
+    const win = { throughput: 41_250_000, task_rate: 9, tasks: 9 }
+    socketOpts!.onEvent({
+      event: 'throughput',
+      ts: NOW,
+      metadata: JSON.stringify({
+        windows: { '1': win, '5': win, '30': win, '60': win, '300': win },
+      }),
+    })
+    flushSync()
+
+    expect(target.querySelector('.tl-throughput polyline')).not.toBeNull()
+    expect(target.querySelector('.tp-now')?.textContent).toContain('41.3M/s')
+
+    teardown()
+  })
+})
+
 describe('Live host pressure routing', () => {
   it('parses resource_sample frames and hands them to the Runtime tab', async () => {
     // The shared fetch mock answers /runtime/health with [] (its generic

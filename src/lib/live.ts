@@ -42,6 +42,12 @@ export interface TaskView {
   // (task_started metadata `queue_wait_ms`, v1.11 backends). WS-only, like
   // spawn_ms. Long waits = the pool (or the CPUs behind it) is the bottleneck.
   queue_wait_ms: number | null
+  // Throughput cost/speed (v1.16): present only for counted completions.
+  // Comes from both paths (task_completed metadata and /recent-tasks rows).
+  // Optional so pre-v1.16 fixtures and factories stay valid; absent and
+  // null both mean "not counted".
+  cost?: number | null
+  speed?: number | null
 }
 
 // baseTaskId strips a `:r<ts>` retry suffix so links and lookups use the canonical id.
@@ -113,6 +119,8 @@ export function taskFromRecent(r: RecentTask): TaskView {
     source_offsets: null,
     spawn_ms: null,
     queue_wait_ms: null,
+    cost: r.cost ?? null,
+    speed: r.speed ?? null,
   }
 }
 

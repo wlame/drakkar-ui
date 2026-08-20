@@ -37,6 +37,14 @@
   import { untrack, flushSync, tick } from 'svelte'
   import { link } from '../../lib/router'
   import { baseTaskId, type TaskView } from '../../lib/live'
+  import {
+    THROUGHPUT_WINDOW_KEYS,
+    THROUGHPUT_WINDOW_LABELS,
+    fmtCost,
+    fmtSpeed,
+    sampleAt,
+    type ThroughputSample,
+  } from '../../lib/throughput'
   import { fmtTime, fmtTimeMs, fmtBytes } from '../../lib/format'
   import { pausableInterval, isHidden } from '../../lib/visibility'
   import type { TimelineColorRule, TimelineConfig } from '../../lib/types'
@@ -79,6 +87,7 @@
     showToolbar = true,
     shared = undefined,
     taskUrlBase = '',
+    throughput = null,
   }: {
     tasks?: TaskView[]
     laneCount?: number
@@ -101,6 +110,10 @@
     // and write to this object, so one toolbar drives every stacked timeline.
     // Undefined (single-worker view) keeps all of that local, as before.
     shared?: SharedTimelineControls
+    // Throughput samples from the per-second `throughput` WS frame (v1.16),
+    // newest last. Null/empty hides the track entirely (feature off, or a
+    // backend that predates it).
+    throughput?: ThroughputSample[] | null
     // Origin to prefix task links with. A peer timeline sets it to the peer's
     // debug-server origin, so clicking a bar opens the task page on the
     // worker that actually owns the task — the router's `link` action lets
@@ -136,6 +149,41 @@
   let viewport = $state<HTMLDivElement>()
   let hovered = $state<TaskView | null>(null)
   let hoveredMarker = $state<MarkerPin | null>(null)
+
+  // --- Throughput track (contract v1.16) -----------------------------------
+  // Which of the five windows the track draws; every frame carries all of
+  // them, so switching is instant and client-side.
+  let throughputWindow = $state('60')
+  let hoveredThroughput = $state<ThroughputSample | null>(null)
+  const TRACK_H = 40
+  const throughputSamples = $derived(throughput ?? [])
+  const showThroughput = $derived(throughputSamples.length > 0)
+  // Points for the selected window across the whole strip, sharing the
+  // bars' (ts - originTs) * pxPerSec mapping so the track pans, zooms, and
+  // rebases with them. Y scales to the visible peak (floored to avoid a
+  // zero divide) with a 2px margin.
+  const throughputPoints = $derived.by(() => {
+    if (!showThroughput) return ''
+    const visible = throughputSamples.filter((s) => s.ts >= originTs)
+    if (visible.length === 0) return ''
+    const peak = Math.max(1e-9, ...visible.map((s) => s.windows[throughputWindow].throughput))
+    return visible
+      .map((s) => {
+        const x = (s.ts - originTs) * pxPerSec
+        const y = TRACK_H - 2 - (s.windows[throughputWindow].throughput / peak) * (TRACK_H - 6)
+        return `${Math.round(x * 10) / 10},${Math.round(y * 10) / 10}`
+      })
+      .join(' ')
+  })
+  const throughputNow = $derived(
+    showThroughput ? throughputSamples[throughputSamples.length - 1].windows[throughputWindow] : null,
+  )
+
+  function onThroughputMove(event: MouseEvent) {
+    const track = event.currentTarget as HTMLElement
+    const x = event.clientX - track.getBoundingClientRect().left
+    hoveredThroughput = sampleAt(throughputSamples, originTs + x / pxPerSec)
+  }
   let hiddenState = $state(isHidden())
 
   // --- configured depth, colors and label roles -------------------------------
@@ -733,6 +781,19 @@
     <button class="tbtn plusminus" onclick={zoomOut} title="Zoom out">-</button>
     <button class="tbtn reset" onclick={zoomReset} title="Reset zoom">Reset</button>
   </div>
+  {#if showThroughput && throughputNow}
+    <div class="tp-controls" title="Throughput window: sliding average width for the track below the lanes">
+      <span class="tp-lbl">Throughput:</span>
+      {#each THROUGHPUT_WINDOW_KEYS as key (key)}
+        <button
+          class="tbtn tp-chip"
+          class:active={throughputWindow === key}
+          onclick={() => (throughputWindow = key)}>{THROUGHPUT_WINDOW_LABELS[key]}</button
+        >
+      {/each}
+      <span class="tp-now">{fmtCost(throughputNow.throughput)}/s · {throughputNow.task_rate.toFixed(1)} t/s</span>
+    </div>
+  {/if}
   <button class="tbtn now" onclick={jumpNow}>Now &rarr;</button>
   {#if highlightKey}
     <label class="role-input" title={`Emphasize tasks whose ${highlightKey} label exceeds n`}>
@@ -876,6 +937,24 @@
           </a>
         {/each}
       </div>
+      {#if showThroughput}
+        <!-- Same scrolling strip as the lanes, so the samples stick to the
+             moment they arrived and move with the timeline. -->
+        <div
+          class="tl-throughput"
+          role="img"
+          aria-label="Throughput track"
+          style:height={`${TRACK_H}px`}
+          onmousemove={onThroughputMove}
+          onmouseleave={() => (hoveredThroughput = null)}
+        >
+          <svg width="100%" height={TRACK_H} preserveAspectRatio="none">
+            {#if throughputPoints}
+              <polyline points={throughputPoints} fill="none" stroke="#0891b2" stroke-width="1.5" />
+            {/if}
+          </svg>
+        </div>
+      {/if}
     </div>
   </div>
 
@@ -901,6 +980,9 @@
       <span class="hl">Duration:</span><span class="hv"
         >{hovered.duration != null ? `${hovered.duration.toFixed(3)}s` : 'running'}</span
       >
+      {#if hovered.speed != null}
+        <span class="hl">Speed:</span><span class="hv">{fmtSpeed(hovered.speed)}</span>
+      {/if}
       {#if hovered.queue_wait_ms != null}
         <span class="hl">Wait:</span><span class="hv">{hovered.queue_wait_ms}ms</span>
       {/if}
@@ -932,6 +1014,13 @@
           <span class="chip env-chip">{k}={v}</span>
         {/each}
       {/if}
+    {:else if hoveredThroughput}
+      {@const w = hoveredThroughput.windows[throughputWindow]}
+      <span class="hl">Throughput ({THROUGHPUT_WINDOW_LABELS[throughputWindow]}):</span><span class="hv"
+        >{fmtCost(w.throughput)}/s</span
+      >
+      <span class="hl">Tasks:</span><span class="hv">{w.task_rate.toFixed(2)}/s ({w.tasks} in window)</span>
+      <span class="hl">at</span><span class="hv">{fmtTimeMs(hoveredThroughput.ts)}</span>
     {:else if hoveredMarker}
       <span class="hl">marker:</span><span class="hv">{hoveredMarker.values.join(', ')}</span>
       <span class="hl">at</span><span class="hv">{fmtTimeMs(hoveredMarker.ts)}</span>
@@ -953,6 +1042,38 @@
     font-size: 0.875rem;
     font-weight: 400;
     color: #9ca3af;
+  }
+
+  .tl-throughput {
+    position: relative;
+    border-top: 1px solid #e5e7eb;
+    background: #fafafa;
+    cursor: crosshair;
+  }
+  .tl-throughput svg {
+    display: block;
+    width: 100%;
+  }
+  .tp-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-left: 0.75rem;
+  }
+  .tp-lbl {
+    font-size: 0.75rem;
+    color: #6b7280;
+  }
+  .tp-chip.active {
+    background: #0891b2;
+    color: #fff;
+    border-color: #0891b2;
+  }
+  .tp-now {
+    font-size: 0.75rem;
+    color: #0e7490;
+    font-family: var(--mono, monospace);
+    margin-left: 0.25rem;
   }
 
   .tl-toolbar {

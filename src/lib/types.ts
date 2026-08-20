@@ -220,6 +220,10 @@ export interface RecentTask {
   // failed-only tasks. Selected on the resync path (v1.7) so color rules
   // keyed on it work for resync-loaded rows, not only WS-updated ones.
   stdout_size?: number | null
+  /** v1.16, optional: present only for throughput-counted completions. */
+  cost?: number | null
+  /** v1.16, optional: cost / duration, cost-units per second. */
+  speed?: number | null
 }
 
 export interface RecentTasksResponse {

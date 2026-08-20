@@ -33,6 +33,11 @@
     type NetRates,
   } from '../lib/live'
   import { hostPressureFromEvent, type HostPressure } from '../lib/hostpressure'
+  import {
+    pushThroughputSample,
+    throughputFromEvent,
+    type ThroughputSample,
+  } from '../lib/throughput'
   import Timeline from '../components/live/Timeline.svelte'
   import ConsumePauseControl from '../components/live/ConsumePauseControl.svelte'
   import TimelineStats from '../components/live/TimelineStats.svelte'
@@ -61,6 +66,8 @@
     'runtime_stall',
     'runtime_lag_episode',
     'resource_sample',
+    // Per-second throughput windows (v1.16) for the timeline track.
+    'throughput',
   ]
 
   // --- bootstrap config (best-effort; defaults keep the page working) ---
@@ -96,6 +103,9 @@
   // Latest host-pressure reading (resource_sample WS frames, v1.15); the
   // Runtime tab's Host section renders it. Null until the first sample.
   let hostPressure = $state<HostPressure | null>(null)
+  // Throughput samples (v1.16) for the timeline track, newest last,
+  // trimmed to the timeline's max age. Empty = feature off / old backend.
+  let throughputSamples = $state<ThroughputSample[]>([])
   let allTasks = $state<Record<string, TaskView>>({})
   let arranges = $state<ArrangeView[]>([])
   let annotations = $state<AnnotationView[]>([])
@@ -268,6 +278,11 @@
         // open tab that fresher data exists (~1 frame per 10s sample, or
         // per transition/stall/episode — never high-rate).
         runtimeSeq += 1
+        break
+      }
+      case 'throughput': {
+        const sample = throughputFromEvent({ ts: e.ts, metadata: e.metadata ?? null })
+        if (sample) throughputSamples = pushThroughputSample(throughputSamples, sample, maxAgeMinutes * 60)
         break
       }
       case 'resource_sample': {
@@ -621,6 +636,7 @@
       minDurationMs={$runtimeConfig.wsMinDurationMs}
       timeline={timelineConfig}
       workerId={$identity?.worker_id}
+      throughput={throughputSamples}
     />
     <TimelineStats tasks={tasksList} attached />
   {:else}

@@ -68,6 +68,8 @@ export function applyTaskEvent(tasks: Record<string, TaskView>, e: WsEvent): voi
           : null,
         spawn_ms: null,
         queue_wait_ms: typeof meta.queue_wait_ms === 'number' ? meta.queue_wait_ms : null,
+        cost: null,
+        speed: null,
       }
       return
     }
@@ -80,6 +82,10 @@ export function applyTaskEvent(tasks: Record<string, TaskView>, e: WsEvent): voi
       // task_completed metadata carries spawn_ms on v1.11+ backends.
       const meta = safeJsonParse<Record<string, unknown>>(e.metadata ?? undefined, {})
       const spawnMs = typeof meta.spawn_ms === 'number' ? meta.spawn_ms : null
+      // task_completed metadata carries cost/speed for throughput-counted
+      // tasks on v1.16+ backends; absent for excluded tasks.
+      const cost = typeof meta.cost === 'number' ? meta.cost : null
+      const speed = typeof meta.speed === 'number' ? meta.speed : null
       tasks[e.task_id] = {
         task_id: e.task_id,
         partition: e.partition ?? ex?.partition ?? null,
@@ -103,6 +109,8 @@ export function applyTaskEvent(tasks: Record<string, TaskView>, e: WsEvent): voi
         source_offsets: ex?.source_offsets ?? null,
         spawn_ms: spawnMs,
         queue_wait_ms: ex?.queue_wait_ms ?? null,
+        cost,
+        speed,
       }
       return
     }
@@ -138,6 +146,9 @@ export function mergeRecentTasks(
       v.exit_code = v.exit_code ?? old.exit_code
       v.spawn_ms = old.spawn_ms
       v.queue_wait_ms = old.queue_wait_ms
+      // Both paths carry cost/speed (v1.16); keep whichever side has them.
+      v.cost = v.cost ?? old.cost
+      v.speed = v.speed ?? old.speed
     }
     map[t.task_id] = v
   }

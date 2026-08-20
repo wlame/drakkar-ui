@@ -1112,6 +1112,56 @@ fleet databases can now answer "which worker was degraded when" without
 replaying events. Readers must tolerate their absence in databases
 written by older backends.
 
+## v1.16 additions (2026-08-20)
+
+Task cost, speed, and throughput: an opt-in per-task number that
+correlates with the task's computational hardness, and the rates derived
+from it. Additive throughout — two optional metadata keys, two optional
+row fields, one new broadcast-only WS frame, one nullable `worker_state`
+column, no new endpoint.
+
+- **Concept.** The operator picks a numeric task label (any unit: bytes,
+  a computed hardness score, …) and names it in backend config:
+  `throughput.cost_label` (empty default = feature off), with
+  `throughput.min_cost` as the smallest value worth counting. A task's
+  **cost** is that label parsed as a float. **speed** = cost / duration
+  (cost-units per second, per task). **throughput** = sum of the cost of
+  tasks completed in the last N seconds / N, for the fixed window set
+  N ∈ {1, 5, 30, 60, 300}, alongside **task_rate** (count / N) and
+  **tasks** (count).
+- **Counting rules** (normative): a task is counted iff the feature is
+  configured AND the task completed successfully (failed work is not
+  throughput) AND it is not a precomputed fast-track task (no subprocess
+  ran; near-zero durations would fabricate absurd speeds) AND its label
+  parses as a finite number AND `cost >= min_cost` AND `duration > 0`.
+  Below-threshold and otherwise-excluded tasks carry NO cost/speed
+  anywhere — the keys are absent, never zeroed.
+- **`task_completed` metadata**: counted tasks gain optional
+  `cost: number` and `speed: number` keys. Clients must ignore unknown
+  keys, as ever.
+- **`GET /api/v1/recent-tasks` rows**: same optional `cost` / `speed`
+  fields (absent or null when not counted).
+- **`throughput` WS frame** (broadcast only, never persisted — the pinned
+  20-column row shape is untouched), one per second while the feature is
+  configured, in the standard event wire shape
+  `{ts, dt, event: "throughput", metadata: <JSON str>}`. Metadata:
+  `{"windows": {"1": {"throughput": number, "task_rate": number,
+  "tasks": int}, "5": {...}, "30": {...}, "60": {...}, "300": {...}}}` —
+  all five keys always present; quiet windows report zeros, so an idle or
+  stalled worker draws a real dip rather than a gap. Subscribers opt in
+  via `?events=` as with any type. No frames at all when the feature is
+  off — the UI hides its readouts entirely.
+- **`worker_state`**: new nullable TEXT column `throughput` holding the
+  same five-window object as JSON at each state-sync tick (NULL =
+  feature off). worker_state rows are an append-only time series, so
+  merged fleet databases get replayable throughput history without a new
+  event type. Readers must tolerate the column's absence in databases
+  written by older backends.
+- **Prometheus** (same names on both backends): `drakkar_task_speed`
+  (histogram, per counted task), `drakkar_throughput{window="1|5|30|60|300"}`
+  and `drakkar_task_rate{window=...}` (gauges, refreshed each second).
+  Nothing is registered when the feature is off.
+
 ## Appendix: divergence resolutions from the 2026-06 audit
 
 Canonical choices where the two reference backends disagreed; each backend

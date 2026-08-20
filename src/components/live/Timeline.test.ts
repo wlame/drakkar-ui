@@ -395,3 +395,69 @@ describe('Timeline', () => {
     expect(target.querySelector('a.bar[aria-label="big"]')).not.toBeNull()
   })
 })
+
+describe('throughput track', () => {
+  const win = (v: number) => ({ throughput: v, task_rate: 1.5, tasks: 9 })
+  const sample = (offset: number, value: number) => ({
+    ts: NOW - offset,
+    windows: {
+      '1': win(value),
+      '5': win(value),
+      '30': win(value),
+      '60': win(value),
+      '300': win(value),
+    },
+  })
+
+  it('hides the track and chips without samples', () => {
+    const { target } = render({ tasks: [task('t-1', 60)] })
+    expect(target.querySelector('.tl-throughput')).toBeNull()
+    expect(target.querySelector('.tp-controls')).toBeNull()
+  })
+
+  it('renders the track, window chips, and the current value', () => {
+    const { target } = render({
+      tasks: [task('t-1', 60)],
+      throughput: [sample(10, 30_000_000), sample(5, 41_250_000)],
+    })
+
+    expect(target.querySelector('.tl-throughput polyline')).not.toBeNull()
+    const chips = [...target.querySelectorAll('.tp-chip')].map((c) => c.textContent)
+    expect(chips).toEqual(['1s', '5s', '30s', '60s', '5m'])
+    expect(target.querySelector('.tp-now')?.textContent).toContain('41.3M/s')
+    expect(target.querySelector('.tp-now')?.textContent).toContain('1.5 t/s')
+  })
+
+  it('switches windows via the chips', () => {
+    const mixed = {
+      ts: NOW - 5,
+      windows: {
+        '1': win(1_000_000),
+        '5': win(1_000_000),
+        '30': win(1_000_000),
+        '60': win(60_000_000),
+        '300': win(1_000_000),
+      },
+    }
+    const { target } = render({ tasks: [task('t-1', 60)], throughput: [mixed] })
+    expect(target.querySelector('.tp-now')?.textContent).toContain('60.0M/s') // default 60s
+
+    const chip = [...target.querySelectorAll('.tp-chip')].find((c) => c.textContent === '5s')
+    ;(chip as HTMLButtonElement).click()
+    flushSync()
+
+    expect(target.querySelector('.tp-now')?.textContent).toContain('1.0M/s')
+  })
+
+  it('shows per-task speed in the bar hover detail', () => {
+    const { target } = render({
+      tasks: [task('t-speedy', 60, { speed: 4_194_304, cost: 8_388_608 })],
+    })
+    const bar = barFor(target, 't-speedy')
+    bar.dispatchEvent(new MouseEvent('mouseenter'))
+    flushSync()
+
+    expect(target.querySelector('.tl-hover')?.textContent).toContain('Speed:')
+    expect(target.querySelector('.tl-hover')?.textContent).toContain('4.2M/s')
+  })
+})
