@@ -29,6 +29,23 @@ describe('sameClusterPeers', () => {
   it('returns [] when no worker is marked current', () => {
     expect(sameClusterPeers([worker({}), worker({ worker_name: 'worker-b' })])).toEqual([])
   })
+
+  it('excludes offline peers so no WebSocket targets a dead worker', () => {
+    const peers = sameClusterPeers([
+      worker({ worker_name: 'worker-b', is_current: true }),
+      worker({ worker_name: 'worker-a', online: true }),
+      worker({ worker_name: 'worker-c', online: false, last_seen_ts: 123 }),
+    ])
+    expect(peers.map((w) => w.worker_name)).toEqual(['worker-a'])
+  })
+
+  it('keeps peers without the v1.18 online field (pre-v1.18 backend)', () => {
+    const peers = sameClusterPeers([
+      worker({ worker_name: 'worker-b', is_current: true }),
+      worker({ worker_name: 'worker-a' }),
+    ])
+    expect(peers.map((w) => w.worker_name)).toEqual(['worker-a'])
+  })
 })
 
 describe('peerBaseUrl', () => {

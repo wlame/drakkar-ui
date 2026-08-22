@@ -38,12 +38,17 @@ export interface SharedTimelineControls {
  *
  * Workers without a cluster report `cluster: ""`; those match each other,
  * which reads as "the unclustered group" — acceptable for a debug view.
+ *
+ * Offline peers (v1.18 `online: false` — a dead worker whose live-db symlink
+ * lingers) are excluded here, before any PeerTimeline mounts, so no WebSocket
+ * client ever starts (or retries) against a dead address. Absent `online`
+ * means a pre-v1.18 backend: treat as online and keep the peer.
  */
 export function sameClusterPeers(workers: WorkerPeer[]): WorkerPeer[] {
   const current = workers.find((w) => w.is_current)
   if (!current) return []
   return workers
-    .filter((w) => !w.is_current && w.cluster === current.cluster)
+    .filter((w) => !w.is_current && w.cluster === current.cluster && w.online !== false)
     .sort((a, b) => a.worker_name.localeCompare(b.worker_name))
 }
 

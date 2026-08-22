@@ -304,6 +304,26 @@ describe('Live cluster view', () => {
     teardown()
   })
 
+  it('does not stack a timeline for an offline peer (v1.18 online=false)', async () => {
+    identity.set(identityWith(timelineConfig(1)))
+    workersPayload = [
+      peer({ worker_name: 'w1', is_current: true }),
+      peer({ worker_name: 'w2', url: 'http://w2:8080/', online: true }),
+      peer({ worker_name: 'w3', url: 'http://w3:8080/', online: false, last_seen_ts: NOW - 120 }),
+    ]
+    const { target, teardown } = mountLive()
+    await settled()
+
+    clusterToggle(target).click()
+    await settled()
+
+    const names = [...target.querySelectorAll('.peer-name')].map((el) => el.textContent)
+    expect(names).toEqual(['w1', 'w2'])
+    expect(target.querySelectorAll('.tl-panel')).toHaveLength(2)
+
+    teardown()
+  })
+
   it('toggles with the "c" key and back off again', async () => {
     const { target, teardown } = mountLive()
     await settled()

@@ -167,6 +167,12 @@ export interface WorkerPeer {
   ip_address: string | null
   debug_port: number | null
   debug_url: string | null
+  // v1.18 liveness — both absent on older backends, which means "treat as
+  // online". last_seen_ts is the newest recorder heartbeat (epoch seconds,
+  // null = unknown); online means it is fresher than the backend's
+  // ui.workers_offline_after_seconds. The current worker is always online.
+  last_seen_ts?: number | null
+  online?: boolean
 }
 
 // --- Events (recorder rows) ---

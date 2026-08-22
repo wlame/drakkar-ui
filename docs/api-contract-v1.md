@@ -1196,6 +1196,30 @@ endpoint, no entry-shape change.
   group keys. Group-specific presentation (like the `app` tag above) may
   only ever be additive on top of the generic rendering.
 
+## v1.18 additions (2026-08-22)
+
+Worker liveness on the workers listing: two OPTIONAL fields per row of
+`GET /api/v1/workers` (shape pinned in `docs/openapi-v1.yaml`: `Worker`).
+Additive — no new endpoint, no change to the existing fields or the
+clustered-first sort order.
+
+- **`last_seen_ts: number | null`** — epoch seconds of the newest
+  heartbeat in that worker's recorder database; `null` when no heartbeat
+  is known.
+- **`online: boolean`** — `true` iff the heartbeat is fresher than the
+  serving backend's `ui.workers_offline_after_seconds` (default 30).
+- **Current worker** (normative): the row with `is_current: true` always
+  reports `online: true` — the backend answering the request is alive by
+  construction.
+- **Absence** (normative): pre-v1.18 backends omit BOTH fields entirely,
+  never `null`-ed or defaulted. Clients MUST degrade to the previous
+  behavior and treat every worker as online when the fields are absent.
+- **Operational meaning.** Peers are discovered via the shared db_dir,
+  and a crashed worker's `-live.db` symlink can linger long after its
+  process died. Such a worker keeps its row but now reports
+  `online: false`, so clients can gray it out and skip live (WebSocket)
+  connections to it instead of retrying a dead address.
+
 ## Appendix: divergence resolutions from the 2026-06 audit
 
 Canonical choices where the two reference backends disagreed; each backend

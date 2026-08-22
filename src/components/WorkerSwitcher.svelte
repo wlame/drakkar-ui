@@ -6,6 +6,7 @@
   // (different host), so they are plain anchors, not client-side routes.
   import { onMount } from 'svelte'
   import { api, type WorkerPeer } from '../lib/api'
+  import { fmtAgo } from '../lib/format'
   import { currentPath } from '../lib/router'
   import { pausableInterval } from '../lib/visibility'
 
@@ -41,6 +42,18 @@
   function peerHref(w: WorkerPeer): string {
     const base = w.url || `http://${w.ip_address}:${w.debug_port}/`
     return base.replace(/\/+$/, '') + suffix
+  }
+
+  // v1.18 liveness: only an explicit online=false is offline — absent fields
+  // mean a pre-v1.18 backend, which must render exactly as before.
+  function isOffline(w: WorkerPeer): boolean {
+    return w.online === false
+  }
+
+  function offlineTitle(w: WorkerPeer): string {
+    return w.last_seen_ts != null
+      ? `offline — last seen ${fmtAgo(w.last_seen_ts)}`
+      : 'offline — last seen unknown'
   }
 
   async function load() {
@@ -87,10 +100,19 @@
                 <span class="tag">current</span>
               </div>
             {:else}
-              <a class="item" href={peerHref(w)}>
+              <!-- Offline peers stay clickable — visually dead, but still plain links. -->
+              <a
+                class="item"
+                class:offline={isOffline(w)}
+                href={peerHref(w)}
+                title={isOffline(w) ? offlineTitle(w) : undefined}
+              >
                 <span class="mono">{w.worker_name || '?'}</span>
                 {#if !w.debug_url}
                   <span class="addr">{w.ip_address}:{w.debug_port}</span>
+                {/if}
+                {#if isOffline(w)}
+                  <span class="tag">offline</span>
                 {/if}
               </a>
             {/if}
@@ -164,6 +186,15 @@
   .addr {
     font-size: 0.7rem;
     color: #9ca3af;
+  }
+  /* Grayed like the other muted chrome (cluster heads, trigger), same values. */
+  a.item.offline {
+    color: #6b7280;
+    opacity: 0.5;
+  }
+  a.item.offline .tag,
+  a.item.offline .addr {
+    color: #6b7280;
   }
   .empty {
     padding: 0.5rem 0.75rem;
