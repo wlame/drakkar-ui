@@ -94,7 +94,15 @@
   {#each filteredGroups as group (group.key)}
     <section class="group">
       <div class="group-header">
-        <h3>{group.title}</h3>
+        <h3>
+          {group.title}
+          {#if group.key === 'app'}
+            <!-- Contract v1.17: the optional `app` group is the operator's own
+                 application config, not framework config — tag it so the two
+                 are distinguishable at a glance. -->
+            <span class="chip" title="Application config declared by this deployment, not Drakkar framework config">user-defined</span>
+          {/if}
+        </h3>
         <a href={docsUrl(group.doc_anchor)} target="_blank" rel="noopener" title="Open docs for this group">
           📚 docs
         </a>
@@ -260,6 +268,12 @@
   }
   .group-header h3 {
     margin: 0;
+  }
+  /* The user-defined chip sits inside the h3; keep the shared chip look
+     (same as the secret chip) instead of inheriting the heading weight. */
+  .group-header .chip {
+    font-weight: 400;
+    vertical-align: middle;
   }
   .group-header a {
     font-size: 0.82rem;

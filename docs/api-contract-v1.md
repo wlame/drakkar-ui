@@ -1162,6 +1162,40 @@ column, no new endpoint.
   and `drakkar_task_rate{window=...}` (gauges, refreshed each second).
   Nothing is registered when the feature is off.
 
+## v1.17 additions (2026-08-22)
+
+User-defined application config in the config reference: one OPTIONAL new
+group on `GET /api/v1/config-reference` (shapes pinned in
+`docs/openapi-v1.yaml`: `ConfigReferenceResponse` /
+`ConfigReferenceGroup` / `ConfigReferenceEntry`). Additive — no new
+endpoint, no entry-shape change.
+
+- **The `app` group.** When the worker's operator has declared
+  application config — the user-defined section under the shared
+  `drakkar.yaml`'s `app:` key, overridable through a **user-chosen** env
+  prefix — the response gains one extra group: `key: "app"`,
+  `title: "Application"`, `doc_anchor: "app-config"`. Entry shape and
+  semantics are identical to every other group (same
+  `ConfigReferenceEntry` fields, same secret masking, same `is_default`
+  computation).
+- **`env` prefix.** Entries in this group carry env names built from the
+  operator's chosen prefix (e.g. `MYAPP_SCORING__URL`), not the
+  framework's `DK_` prefix. Clients must not assume any prefix; `env` is
+  display/copy text, as everywhere else.
+- **`doc_anchor` target.** `app-config` names the standalone docs *page*
+  published at `/app-config/` on both backends' docs sites — unlike the
+  framework groups, whose anchors are fragments within the
+  `/config-reference/` page. Clients resolving `doc_anchor` into a link
+  must special-case this slug (the UI keeps a page-slug table).
+- **Absence** (normative): backends MUST omit the group entirely when no
+  app config is bound — never an empty `app` group. Group presence is the
+  feature signal, as with `webapp_tile`.
+- **Unknown groups** (normative, previously implicit): clients MUST
+  render groups they do not recognize generically from `key`, `title`,
+  `doc_anchor`, and `entries`, never keying behavior on a closed list of
+  group keys. Group-specific presentation (like the `app` tag above) may
+  only ever be additive on top of the generic rendering.
+
 ## Appendix: divergence resolutions from the 2026-06 audit
 
 Canonical choices where the two reference backends disagreed; each backend

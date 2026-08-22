@@ -73,8 +73,17 @@ export function fmtValue(value: unknown): string {
   return text
 }
 
-// docsUrl builds the published config-reference doc-site deep link for a
-// group's `doc_anchor`.
+const DOCS_BASE = 'https://wlame.github.io/drakkar'
+
+// Anchors that name a standalone docs page rather than a fragment within the
+// config-reference page. Contract v1.17: the `app` group's doc_anchor is the
+// `/app-config/` page slug.
+const PAGE_SLUG_ANCHORS = new Set(['app-config'])
+
+// docsUrl builds the published doc-site link for a group's `doc_anchor`:
+// normally a deep link into the config-reference page, or the standalone
+// page itself for the page-slug anchors above.
 export function docsUrl(anchor: string): string {
-  return `https://wlame.github.io/drakkar/config-reference/#${anchor}`
+  if (PAGE_SLUG_ANCHORS.has(anchor)) return `${DOCS_BASE}/${anchor}/`
+  return `${DOCS_BASE}/config-reference/#${anchor}`
 }

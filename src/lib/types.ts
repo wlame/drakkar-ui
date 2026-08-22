@@ -684,6 +684,11 @@ export interface ConfigReferenceEntry {
   secret: boolean
 }
 
+// A group of related config fields. Groups are open-ended and rendered
+// generically; contract v1.17 adds an optional `app` group (key 'app',
+// doc_anchor 'app-config' — a docs page slug, not a config-reference
+// fragment) carrying operator-declared application config. It is omitted
+// entirely when the worker declares no app config.
 export interface ConfigReferenceGroup {
   key: string
   title: string

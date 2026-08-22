@@ -218,4 +218,8 @@ describe('docsUrl', () => {
       'https://wlame.github.io/drakkar/config-reference/#sinks-mongo',
     )
   })
+
+  it('links the app group anchor to the standalone app-config page (v1.17)', () => {
+    expect(docsUrl('app-config')).toBe('https://wlame.github.io/drakkar/app-config/')
+  })
 })
