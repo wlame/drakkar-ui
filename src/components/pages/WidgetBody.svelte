@@ -1,7 +1,7 @@
 <script lang="ts">
   // Renders one declared-page widget's body: fetches its data (fetchWidgetRows
-  // / fetchStatValue) on mount and whenever refreshSeq bumps (WS-driven
-  // refresh is Task 6's job — this component just reacts to the prop), then
+  // / fetchStatValue) on mount and whenever refreshSeq bumps (the page shell
+  // owns the WS-driven refresh — this component just reacts to the prop), then
   // dispatches on `view` to a generic renderer. Reuses the same cell/kv/table
   // building blocks as the probe's User-defined tab (userDetails.ts,
   // SortableTh) rather than inventing widget-specific markup.

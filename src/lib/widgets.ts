@@ -87,7 +87,7 @@ export function scalarValue(rows: WidgetRow[], field: string): unknown {
   return value === undefined ? null : value
 }
 
-// WS event types a widget's source implies, for refresh subscriptions (Task 6).
+// WS event types a widget's source implies, for refresh subscriptions.
 export function refreshEventTypes(w: UIPageWidget): string[] {
   switch (w.source.kind) {
     case 'events':

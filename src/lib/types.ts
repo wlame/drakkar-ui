@@ -885,7 +885,7 @@ export interface ProbeUserDetails {
 // declare a view this UI doesn't yet know how to render, so it stays a bare
 // string rather than a closed union — the page shell renders it regardless of
 // whether the widget body understands `view`; unrecognized views are handled
-// at the render site (Task 5), not rejected here. `columns` reuses the same
+// at the render site (WidgetBody's view dispatch), not rejected here. `columns` reuses the same
 // column shape as probe-details tables (link templates, badge colors, format,
 // hint) so a table-view widget gets that enrichment for free.
 export interface UIPageWidget {
