@@ -159,13 +159,16 @@ describe('Timeline', () => {
     expect(barFor(target, 'big').getAttribute('style')).toContain('#34d399')
   })
 
-  it('renders the rule legend alongside the status entries', () => {
+  it('renders the rule legend as bare swatches that name themselves on hover', () => {
     const { target } = renderTracked()
     const legend = target.querySelector('.legend') as HTMLElement
-    expect(legend.textContent).toContain('completed')
-    expect(legend.textContent).toContain('empty output')
+    // Words only on hover: the strip itself carries no text.
+    expect(legend.textContent?.trim()).toBe('')
+    const titles = [...legend.querySelectorAll('i')].map((i) => i.getAttribute('title'))
+    expect(titles.slice(0, 3)).toEqual(['completed', 'running', 'failed'])
+    expect(titles).toContain('empty output')
     // An unnamed rule falls back to generated condition text.
-    expect(legend.textContent).toContain('file_size_bytes gt 10240')
+    expect(titles).toContain('file_size_bytes gt 10240')
   })
 
   it('draws the tag and caption labels inside the bars', () => {
@@ -404,45 +407,50 @@ describe('throughput track', () => {
       '1': win(value),
       '5': win(value),
       '30': win(value),
-      '60': win(value),
-      '300': win(value),
     },
   })
+  const openGear = (target: HTMLElement) => {
+    ;(target.querySelector('button.gear') as HTMLButtonElement).click()
+    flushSync()
+  }
 
-  it('hides the track and chips without samples', () => {
+  it('hides the track and the window switcher without samples', () => {
     const { target } = render({ tasks: [task('t-1', 60)] })
     expect(target.querySelector('.tl-throughput')).toBeNull()
+    openGear(target)
     expect(target.querySelector('.tp-controls')).toBeNull()
   })
 
-  it('renders the track, window chips, and the current value', () => {
+  it('keeps the window switcher out of the toolbar until the gear opens', () => {
     const { target } = render({
       tasks: [task('t-1', 60)],
       throughput: [sample(10, 30_000_000), sample(5, 41_250_000)],
     })
 
     expect(target.querySelector('.tl-throughput polyline')).not.toBeNull()
+    expect(target.querySelector('.tp-controls')).toBeNull()
+
+    openGear(target)
     const chips = [...target.querySelectorAll('.tp-chip')].map((c) => c.textContent)
-    expect(chips).toEqual(['1s', '5s', '30s', '60s', '5m'])
+    expect(chips).toEqual(['1s', '5s', '30s'])
     expect(target.querySelector('.tp-now')?.textContent).toContain('41.3M/s')
     expect(target.querySelector('.tp-now')?.textContent).toContain('1.5 t/s')
   })
 
-  it('switches windows via the chips', () => {
+  it('draws the 5 s window by default and switches via the chips', () => {
     const mixed = {
       ts: NOW - 5,
       windows: {
         '1': win(1_000_000),
-        '5': win(1_000_000),
+        '5': win(5_000_000),
         '30': win(1_000_000),
-        '60': win(60_000_000),
-        '300': win(1_000_000),
       },
     }
     const { target } = render({ tasks: [task('t-1', 60)], throughput: [mixed] })
-    expect(target.querySelector('.tp-now')?.textContent).toContain('60.0M/s') // default 60s
+    openGear(target)
+    expect(target.querySelector('.tp-now')?.textContent).toContain('5.0M/s') // default 5s
 
-    const chip = [...target.querySelectorAll('.tp-chip')].find((c) => c.textContent === '5s')
+    const chip = [...target.querySelectorAll('.tp-chip')].find((c) => c.textContent === '30s')
     ;(chip as HTMLButtonElement).click()
     flushSync()
 

@@ -25,12 +25,10 @@
     normalizeRecentTasks,
     arrangeFromEvent,
     annotationFromEvent,
-    netFromEvent,
     type NormalizedRecentTasks,
     type TaskView,
     type ArrangeView,
     type AnnotationView,
-    type NetRates,
   } from '../lib/live'
   import { hostPressureFromEvent, type HostPressure } from '../lib/hostpressure'
   import {
@@ -58,7 +56,6 @@
     'task_failed',
     'arranged',
     'annotation',
-    'net_io',
     // Runtime-health push refresh (the WS handler bumps runtimeSeq) and the
     // Host section's live pressure readings. All low-rate: one sample per
     // 10s tick, transitions/stalls/episodes only when something is wrong.
@@ -93,10 +90,6 @@
   // 5s resync tick; dropped back to null when a refresh fails, because a
   // stale count would read as current.
   let offload = $state<{ running: number; queued: number; max_threads: number } | null>(null)
-  // Latest host network throughput reading from the net_io WS heartbeat.
-  // Null until the first frame — older backends and hosts without
-  // /proc/net/dev never send one, and the readout simply stays hidden.
-  let net = $state<NetRates | null>(null)
   // Bumped on runtime_health / runtime_stall / runtime_lag_episode WS
   // frames; the Runtime tab refetches its snapshot when this changes.
   let runtimeSeq = $state(0)
@@ -134,13 +127,6 @@
   })
 
   const tasksList = $derived(Object.values(allTasks))
-
-  // A rate readout that stops updating is worse than none: without frames it
-  // would freeze at the last value and read as current. The WS status is the
-  // only signal that frames stopped, so drop the reading when the stream does.
-  $effect(() => {
-    if (status !== 'connected') net = null
-  })
 
   // --- cluster view (Executors tab) -------------------------------------------
   //
@@ -290,11 +276,6 @@
         // (contract v1.15). Null when the sample carries no pressure keys.
         const parsed = hostPressureFromEvent({ ts: e.ts, metadata: e.metadata ?? null })
         if (parsed) hostPressure = parsed
-        break
-      }
-      case 'net_io': {
-        const rates = netFromEvent(e)
-        if (rates) net = rates
         break
       }
       // task_complete / message_complete / window_complete drive the poll-backed
@@ -565,19 +546,12 @@
   <h1>Live Pipeline</h1>
   <span class="badge status-{status}">WS: {WS_STATUS_LABELS[status]}</span>
   <button class="freeze" class:on={frozen} onclick={() => setFrozen(!frozen)}>{frozen ? 'Frozen' : 'Live'}</button>
+  <!-- Timed consume pause (opt-in via ui.consume_pause.enabled; renders
+       nothing otherwise). Idle it is one small popover button in this row;
+       while a pause is active its banner wraps onto a full-width line under
+       the row, so every tab sees it. -->
+  <ConsumePauseControl />
   <span class="spacer"></span>
-  {#if net}
-    {#if net.nfs_read_mib_s != null && net.nfs_write_mib_s != null}
-      <span
-        class="net"
-        title="NFS bytes transferred to/from the servers behind this worker's NFS mounts (from mountstats). Visible even from inside a container, where the Net counters cannot see kernel-NFS traffic. Per-mount counters — other host processes using the same mount contribute."
-      >NFS: R {net.nfs_read_mib_s.toFixed(1)} · W {net.nfs_write_mib_s.toFixed(1)} MiB/s</span>
-    {/if}
-    <span
-      class="net"
-      title="Network throughput across the worker's network namespace interfaces (worker + subprocesses + anything sharing the namespace). In a container this does NOT include kernel-NFS traffic — that leaves through the host's interfaces; see the NFS readout."
-    >Net: RX {net.rx_mib_s.toFixed(1)} · TX {net.tx_mib_s.toFixed(1)} MiB/s</span>
-  {/if}
   {#if offload}
     <span
       class="offload"
@@ -589,11 +563,6 @@
        pool during incidents. -->
   <span class="pool">Pool: {pool.active} / {pool.max > 0 ? pool.max : '—'} slots, <span class="waiting">{pool.waiting}</span> waiting</span>
 </div>
-
-<!-- Timed consume pause (opt-in via ui.consume_pause.enabled; renders
-     nothing otherwise). Above the tabs: an active pause affects everything
-     this page shows, so its banner must be visible from every tab. -->
-<ConsumePauseControl />
 
 <p class="tab-hint">{TAB_HINTS[activeTab]}</p>
 
@@ -686,6 +655,7 @@
 <style>
   .head {
     display: flex;
+    flex-wrap: wrap; /* the active consume-pause banner takes its own line */
     align-items: center;
     gap: 0.75rem;
     margin-bottom: 0.25rem;
@@ -748,12 +718,6 @@
   }
   .offload .waiting {
     color: #b45309;
-  }
-  .net {
-    font-size: 0.875rem;
-    color: var(--muted);
-    font-variant-numeric: tabular-nums; /* rates tick every frame — no jitter */
-    margin-right: 1rem;
   }
   .tabs {
     display: flex;

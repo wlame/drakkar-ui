@@ -58,6 +58,11 @@ async function settled() {
   flushSync()
 }
 
+function openPresets(target: HTMLElement) {
+  ;(target.querySelector('.pause-toggle') as HTMLButtonElement).click()
+  flushSync()
+}
+
 function renderMounted() {
   const target = document.createElement('div')
   document.body.appendChild(target)
@@ -84,11 +89,23 @@ describe('ConsumePauseControl', () => {
     cleanup()
   })
 
-  it('offers one button per configured preset, human-labelled', async () => {
+  it('idle: shows only the toggle until it is opened', async () => {
     vi.stubGlobal('fetch', stubFetch(pauseState()).stub)
     const { target, cleanup } = renderMounted()
     await settled()
     const labels = [...target.querySelectorAll('button')].map((b) => b.textContent)
+    expect(labels).toHaveLength(1)
+    expect(labels[0]).toContain('Pause consuming')
+    expect(target.querySelector('.pause-pop')).toBeNull()
+    cleanup()
+  })
+
+  it('opening the toggle offers one button per configured preset, human-labelled', async () => {
+    vi.stubGlobal('fetch', stubFetch(pauseState()).stub)
+    const { target, cleanup } = renderMounted()
+    await settled()
+    openPresets(target)
+    const labels = [...target.querySelectorAll('.pause-pop button')].map((b) => b.textContent)
     expect(labels).toEqual(['15s', '1m', '5m', '15m'])
     cleanup()
   })
@@ -98,6 +115,7 @@ describe('ConsumePauseControl', () => {
     vi.stubGlobal('fetch', stub)
     const { target, cleanup } = renderMounted()
     await settled()
+    openPresets(target)
 
     const oneMinute = [...target.querySelectorAll('button')].find((b) => b.textContent === '1m')!
     oneMinute.click()
@@ -115,8 +133,9 @@ describe('ConsumePauseControl', () => {
     await settled()
 
     expect(target.querySelector('.paused-banner')).toBeNull()
-    const labels = [...target.querySelectorAll('button')].map((b) => b.textContent)
-    expect(labels).toEqual(['15s', '1m', '5m', '15m'])
+    // Back to idle: the popover is closed again, only the toggle remains.
+    expect(target.querySelector('.pause-pop')).toBeNull()
+    expect(target.querySelector('.pause-toggle')).not.toBeNull()
     cleanup()
   })
 
@@ -146,7 +165,8 @@ describe('ConsumePauseControl', () => {
     )
     const { target, cleanup } = renderMounted()
     await settled()
-    ;[...target.querySelectorAll('button')][0].click()
+    openPresets(target)
+    ;[...target.querySelectorAll<HTMLButtonElement>('.pause-pop button')][0].click()
     await settled()
     expect(target.querySelector('.error')?.textContent).toContain('Consumer is not running')
     cleanup()

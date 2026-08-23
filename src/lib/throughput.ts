@@ -11,7 +11,7 @@ export interface ThroughputWindow {
   tasks: number
 }
 
-/** The five fixed windows, keyed by their width in seconds as a string. */
+/** The three fixed windows, keyed by their width in seconds as a string. */
 export type ThroughputWindows = Record<string, ThroughputWindow>
 
 /** One received frame, anchored at its wire timestamp. */
@@ -20,16 +20,17 @@ export interface ThroughputSample {
   windows: ThroughputWindows
 }
 
-/** Contract v1.16 pins this set; every frame carries all five. */
-export const THROUGHPUT_WINDOW_KEYS = ['1', '5', '30', '60', '300'] as const
+/** Contract v1.19 pins this set; every frame carries all three. */
+export const THROUGHPUT_WINDOW_KEYS = ['1', '5', '30'] as const
+
+/** The window the timeline track draws until the operator picks another. */
+export const THROUGHPUT_DEFAULT_WINDOW = '5'
 
 /** Chip labels for the window switcher. */
 export const THROUGHPUT_WINDOW_LABELS: Record<string, string> = {
   '1': '1s',
   '5': '5s',
   '30': '30s',
-  '60': '60s',
-  '300': '5m',
 }
 
 function windowOf(value: unknown): ThroughputWindow | null {

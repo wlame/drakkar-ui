@@ -19,7 +19,7 @@
 
 <script lang="ts">
   // Executor timeline, ported from live.html's Executors tab: an h2 with the
-  // window note, a Zoom toolbar + legend row, and a white panel containing the
+  // window note, a Zoom toolbar + legend strip, and a white panel containing the
   // time axis, one lane per executor slot and a fixed-height hover-detail strip.
   // Bars are colored by the configured rules (falling back to status); the
   // view auto-follows "now" until the operator scrolls away from the right
@@ -38,6 +38,7 @@
   import { link } from '../../lib/router'
   import { baseTaskId, type TaskView } from '../../lib/live'
   import {
+    THROUGHPUT_DEFAULT_WINDOW,
     THROUGHPUT_WINDOW_KEYS,
     THROUGHPUT_WINDOW_LABELS,
     fmtCost,
@@ -151,9 +152,10 @@
   let hoveredMarker = $state<MarkerPin | null>(null)
 
   // --- Throughput track (contract v1.16) -----------------------------------
-  // Which of the five windows the track draws; every frame carries all of
-  // them, so switching is instant and client-side.
-  let throughputWindow = $state('60')
+  // Which of the three windows the track draws; every frame carries all of
+  // them, so switching is instant and client-side. The switcher lives in the
+  // gear popover — the toolbar stays quiet unless the operator asks.
+  let throughputWindow = $state<string>(THROUGHPUT_DEFAULT_WINDOW)
   let hoveredThroughput = $state<ThroughputSample | null>(null)
   const TRACK_H = 40
   const throughputSamples = $derived(throughput ?? [])
@@ -781,19 +783,6 @@
     <button class="tbtn plusminus" onclick={zoomOut} title="Zoom out">-</button>
     <button class="tbtn reset" onclick={zoomReset} title="Reset zoom">Reset</button>
   </div>
-  {#if showThroughput && throughputNow}
-    <div class="tp-controls" title="Throughput window: sliding average width for the track below the lanes">
-      <span class="tp-lbl">Throughput:</span>
-      {#each THROUGHPUT_WINDOW_KEYS as key (key)}
-        <button
-          class="tbtn tp-chip"
-          class:active={throughputWindow === key}
-          onclick={() => (throughputWindow = key)}>{THROUGHPUT_WINDOW_LABELS[key]}</button
-        >
-      {/each}
-      <span class="tp-now">{fmtCost(throughputNow.throughput)}/s · {throughputNow.task_rate.toFixed(1)} t/s</span>
-    </div>
-  {/if}
   <button class="tbtn now" onclick={jumpNow}>Now &rarr;</button>
   {#if highlightKey}
     <label class="role-input" title={`Emphasize tasks whose ${highlightKey} label exceeds n`}>
@@ -819,26 +808,42 @@
       />
     </label>
   {/if}
-  <div class="legend">
-    <span><i style:background="#34d399"></i>completed</span>
-    <span><i style:background="#fbbf24"></i>running</span>
-    <span><i style:background="#f87171"></i>failed</span>
+  <!-- Color key as a bare semaphore: the cubes alone, each naming its
+       meaning on hover / to assistive tech. The words cost more toolbar
+       width than everything else in the row combined. -->
+  <div class="legend" role="img" aria-label="Bar color key">
+    <i style:background="#34d399" title="completed" aria-label="completed"></i>
+    <i style:background="#fbbf24" title="running" aria-label="running"></i>
+    <i style:background="#f87171" title="failed" aria-label="failed"></i>
     {#each ruleLegend as entry}
-      <span><i style:background={entry.color}></i>{entry.label}</span>
+      <i style:background={entry.color} title={entry.label} aria-label={entry.label}></i>
     {/each}
   </div>
   <div class="roles" bind:this={gearEl}>
     <button
       class="tbtn gear"
       onclick={toggleGear}
-      title="Label roles"
-      aria-label="Label roles"
+      title="Timeline settings"
+      aria-label="Timeline settings"
       aria-expanded={gearOpen}
     >
       &#9881;{#if anyOverridden}<i class="dot"></i>{/if}
     </button>
     {#if gearOpen}
       <div class="role-pop">
+        {#if showThroughput && throughputNow}
+          <div class="tp-controls" title="Throughput window: sliding average width for the track below the lanes">
+            <span class="tp-lbl">Throughput window</span>
+            {#each THROUGHPUT_WINDOW_KEYS as key (key)}
+              <button
+                class="tbtn tp-chip"
+                class:active={throughputWindow === key}
+                onclick={() => (throughputWindow = key)}>{THROUGHPUT_WINDOW_LABELS[key]}</button
+              >
+            {/each}
+            <span class="tp-now">{fmtCost(throughputNow.throughput)}/s · {throughputNow.task_rate.toFixed(1)} t/s</span>
+          </div>
+        {/if}
         <div class="role-pop-head">
           <span>Label roles</span>
           <button class="tbtn" onclick={resetAllRoles}>Reset all</button>
@@ -1054,11 +1059,15 @@
     display: block;
     width: 100%;
   }
+  /* Inside the gear popover, above the label-role rows. */
   .tp-controls {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.25rem;
-    margin-left: 0.75rem;
+    padding-bottom: 0.375rem;
+    margin-bottom: 0.375rem;
+    border-bottom: 1px solid var(--line);
   }
   .tp-lbl {
     font-size: 0.75rem;
@@ -1150,21 +1159,15 @@
   .legend {
     margin-left: auto;
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    font-size: 0.75rem;
-    color: #6b7280;
-  }
-  .legend span {
-    display: inline-flex;
     align-items: center;
+    gap: 0.25rem;
   }
   .legend i {
     display: inline-block;
     width: 0.75rem;
     height: 0.75rem;
     border-radius: 0.25rem;
-    margin-right: 0.25rem;
+    cursor: help;
   }
 
   /* Role-override popover. Anchored to the gear button and kept in the

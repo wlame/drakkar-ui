@@ -16,8 +16,6 @@ function frame(ts: number, value = 100) {
         '1': win(value),
         '5': win(value),
         '30': win(value),
-        '60': win(value),
-        '300': win(value),
       },
     }),
   }
@@ -28,7 +26,7 @@ describe('throughputFromEvent', () => {
     const sample = throughputFromEvent(frame(1700000000, 41.25e6))
     expect(sample).not.toBeNull()
     expect(sample?.ts).toBe(1700000000)
-    expect(sample?.windows['60']).toEqual({ throughput: 41.25e6, task_rate: 1.5, tasks: 9 })
+    expect(sample?.windows['30']).toEqual({ throughput: 41.25e6, task_rate: 1.5, tasks: 9 })
   })
 
   it('rejects frames missing a pinned window', () => {
@@ -45,7 +43,7 @@ describe('throughputFromEvent', () => {
     const badEntry = {
       ts: 1,
       metadata: JSON.stringify({
-        windows: { '1': 'oops', '5': {}, '30': {}, '60': {}, '300': {} },
+        windows: { '1': 'oops', '5': {}, '30': {} },
       }),
     }
     expect(throughputFromEvent(badEntry)).toBeNull()

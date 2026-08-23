@@ -1,10 +1,11 @@
 <script lang="ts">
   // Timed consume-pause control (contract v1.14). Renders nothing unless the
   // deployment opted in (ui.consume_pause.enabled — carried by the state
-  // endpoint, no failure-probe needed). Idle: one row of preset buttons
-  // ("Pause 15s / 1m / 5m / 15m", from the configured presets). Active: a
-  // loud banner with a live countdown to the server's resume deadline and a
-  // Resume button.
+  // endpoint, no failure-probe needed). Idle: one small "Pause consuming"
+  // button that opens a popover of preset buttons ("15s / 1m / 5m / 15m",
+  // from the configured presets) — a debug control nobody needs every day
+  // should not own a row of the page. Active: a loud banner with a live
+  // countdown to the server's resume deadline and a Resume button.
   //
   // The countdown ticks client-side from resume_at_ms (the server-
   // authoritative deadline), and the state is re-polled every few seconds
@@ -21,6 +22,8 @@
   let now = $state(Date.now())
   let busy = $state(false)
   let error = $state<string | null>(null)
+  let presetsOpen = $state(false)
+  let popEl = $state<HTMLDivElement>()
 
   async function refresh() {
     try {
@@ -33,6 +36,7 @@
   async function pause(seconds: number) {
     busy = true
     error = null
+    presetsOpen = false
     try {
       snapshot = await api.consumePause(seconds)
     } catch (e) {
@@ -71,6 +75,17 @@
     return `${minutes}:${String(seconds).padStart(2, '0')}`
   })
 
+  // Close the presets on a click anywhere outside the control (pointerdown,
+  // so the decision is made against the DOM as it was when the press began).
+  $effect(() => {
+    if (!presetsOpen) return
+    function onPointerDown(e: PointerEvent) {
+      if (popEl && !popEl.contains(e.target as Node)) presetsOpen = false
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  })
+
   onMount(() => {
     void refresh()
     const tick = setInterval(() => {
@@ -96,37 +111,83 @@
       <button class="resume" onclick={resume} disabled={busy}>Resume now</button>
     </div>
   {:else}
-    <div class="pause-row">
-      <span class="label" title="Pause message intake for a bounded period (debug). Uses partition pause — the consumer group is untouched, no rebalance. Auto-resumes at the deadline.">Pause consuming:</span>
-      {#each snapshot.durations_seconds as seconds}
-        <button onclick={() => pause(seconds)} disabled={busy}>{fmtDuration(seconds)}</button>
-      {/each}
+    <div class="pause-ctl" bind:this={popEl}>
+      <button
+        class="pause-toggle"
+        class:on={presetsOpen}
+        onclick={() => (presetsOpen = !presetsOpen)}
+        aria-expanded={presetsOpen}
+        title="Pause message intake for a bounded period (debug). Uses partition pause — the consumer group is untouched, no rebalance. Auto-resumes at the deadline."
+      >Pause consuming &#9662;</button>
+      {#if presetsOpen}
+        <div class="pause-pop" role="group" aria-label="Pause consuming presets">
+          <span class="label">Pause for</span>
+          {#each snapshot.durations_seconds as seconds}
+            <button onclick={() => pause(seconds)} disabled={busy}>{fmtDuration(seconds)}</button>
+          {/each}
+        </div>
+      {/if}
     </div>
   {/if}
   {#if error}<p class="error">{error}</p>{/if}
 {/if}
 
 <style>
-  .pause-row {
+  /* Idle: a header-row pill like the Live/Frozen button next to it, with
+     the presets in an anchored popover. */
+  .pause-ctl {
+    position: relative;
+  }
+  .pause-toggle {
+    font-size: 0.75rem;
+    border-radius: 0.25rem;
+    padding: 0.125rem 0.5rem;
+    background: #f5f3ee;
+    color: #6b7280;
+    border: 1px solid #ddd9ce;
+  }
+  .pause-toggle.on {
+    background: #fef3c7;
+    color: #92400e;
+    border-color: #fcd34d;
+  }
+  .pause-pop {
+    position: absolute;
+    top: calc(100% + 0.25rem);
+    left: 0;
+    z-index: 20;
     display: flex;
     align-items: center;
     gap: 0.4rem;
-    margin: 0.4rem 0 0.6rem;
+    padding: 0.4rem 0.6rem;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 0.375rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    white-space: nowrap;
   }
-  .pause-row .label {
+  .pause-pop .label {
     font-size: 0.78rem;
     color: var(--muted);
   }
-  .pause-row button {
+  .pause-pop button {
     font-size: 0.75rem;
     padding: 0.15rem 0.55rem;
   }
+  /* Errors and the active banner each own a full line of the header row
+     the control sits in. */
+  .error {
+    flex-basis: 100%;
+    margin: 0;
+  }
+  /* Active: the banner owns a full line of the header row it sits in. */
   .paused-banner {
+    flex-basis: 100%;
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 0.6rem;
-    margin: 0.4rem 0 0.6rem;
+    margin: 0.1rem 0 0.4rem;
     padding: 0.5rem 0.8rem;
     border: 1px solid rgba(217, 119, 6, 0.5);
     border-radius: 8px;

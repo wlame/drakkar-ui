@@ -6,7 +6,6 @@ import {
   normalizeRecentTasks,
   annotationFromEvent,
   annotationsForArrange,
-  netFromEvent,
   type AnnotationView,
 } from './live'
 import type { RecentTask, WsEvent } from './types'
@@ -346,52 +345,5 @@ describe('annotationsForArrange', () => {
     // side must not collapse into a match-everything.
     expect(annotationsForArrange([ann({ window_id: null })], arrange)).toHaveLength(0)
     expect(annotationsForArrange([ann({})], { ...arrange, window_id: null })).toHaveLength(0)
-  })
-})
-
-describe('netFromEvent', () => {
-  const frame = (metadata?: string): WsEvent => ({ event: 'net_io', ts: 1000, metadata })
-
-  it('extracts the RX/TX rates', () => {
-    const e = frame(JSON.stringify({ rx_mib_s: 12.5, tx_mib_s: 0.75, interval_s: 10 }))
-    expect(netFromEvent(e)).toEqual({ rx_mib_s: 12.5, tx_mib_s: 0.75 })
-  })
-
-  it('returns null for other event types', () => {
-    expect(netFromEvent({ event: 'task_started', ts: 1000 })).toBeNull()
-  })
-
-  it('returns null without metadata', () => {
-    expect(netFromEvent(frame(undefined))).toBeNull()
-  })
-
-  it('returns null on malformed metadata JSON', () => {
-    expect(netFromEvent(frame('not json'))).toBeNull()
-  })
-
-  it('returns null when a rate field is missing or not a number', () => {
-    expect(netFromEvent(frame(JSON.stringify({ rx_mib_s: 1 })))).toBeNull()
-    expect(netFromEvent(frame(JSON.stringify({ rx_mib_s: '1', tx_mib_s: 2 })))).toBeNull()
-  })
-
-  it('carries the NFS pair when both fields are numbers (contract v1.11)', () => {
-    const e = frame(
-      JSON.stringify({ rx_mib_s: 1, tx_mib_s: 2, nfs_read_mib_s: 850.5, nfs_write_mib_s: 0.25 }),
-    )
-    expect(netFromEvent(e)).toEqual({
-      rx_mib_s: 1,
-      tx_mib_s: 2,
-      nfs_read_mib_s: 850.5,
-      nfs_write_mib_s: 0.25,
-    })
-  })
-
-  it('drops a half-formed NFS pair but keeps the RX/TX rates', () => {
-    const e = frame(JSON.stringify({ rx_mib_s: 1, tx_mib_s: 2, nfs_read_mib_s: 850.5 }))
-    expect(netFromEvent(e)).toEqual({ rx_mib_s: 1, tx_mib_s: 2 })
-    const bad = frame(
-      JSON.stringify({ rx_mib_s: 1, tx_mib_s: 2, nfs_read_mib_s: '850', nfs_write_mib_s: 1 }),
-    )
-    expect(netFromEvent(bad)).toEqual({ rx_mib_s: 1, tx_mib_s: 2 })
   })
 })

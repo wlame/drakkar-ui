@@ -820,7 +820,8 @@ emits them.
   bursty by nature. Clients must ignore unknown metadata keys.
 - **`net_io` WS frame** (broadcast only, never persisted — the pinned
   20-column row shape is untouched), described below; the UI readout stays
-  hidden on backends that never send it.
+  hidden on backends that never send it. **Retired in v1.19** together
+  with the `rx_bytes_total` / `tx_bytes_total` keys above.
 
 - **`net_io` WS frame**, one per state-sync tick (default 10s), in the
   standard event wire shape: `{ts, dt, event:"net_io", metadata:<JSON str>}`.
@@ -867,7 +868,7 @@ endpoint, no events-table change.
   window-scoped rows, mirroring window-scoped annotations' trace-matching
   contract. Clients must ignore unknown metadata keys.
 
-## v1.11 additions (2026-08-14)
+## v1.11 additions (2026-08-14) — retired in v1.19
 
 Four additive optional keys on the existing `net_io` WS frame's metadata,
 no new frame, no events-table change:
@@ -1147,7 +1148,8 @@ column, no new endpoint.
   `{ts, dt, event: "throughput", metadata: <JSON str>}`. Metadata:
   `{"windows": {"1": {"throughput": number, "task_rate": number,
   "tasks": int}, "5": {...}, "30": {...}, "60": {...}, "300": {...}}}` —
-  all five keys always present; quiet windows report zeros, so an idle or
+  all five keys always present (**v1.19 trims the set to `1`/`5`/`30`**);
+  quiet windows report zeros, so an idle or
   stalled worker draws a real dip rather than a gap. Subscribers opt in
   via `?events=` as with any type. No frames at all when the feature is
   off — the UI hides its readouts entirely.
@@ -1219,6 +1221,38 @@ clustered-first sort order.
   process died. Such a worker keeps its row but now reports
   `online: false`, so clients can gray it out and skip live (WebSocket)
   connections to it instead of retrying a dead address.
+
+## v1.19 changes (2026-08-23)
+
+A pruning release — nothing new, two surfaces retired. Pre-1.0: no
+compatibility shims on either side.
+
+- **`net_io` WS frame retired** (the v1.9 frame and its v1.11 NFS keys).
+  Backends no longer sample `/proc/net/dev` or the `bytes:` line of
+  `/proc/self/mountstats`, send no `net_io` frames, and ignore `net_io`
+  in a `?events=` subscription like any unknown type. The UI no longer
+  subscribes to it and has no `Net: RX/TX` or `NFS: R/W` readouts. The
+  per-mount NFS **health** (`nfs_mounts` RTT / retransmits on
+  `resource_sample`, v1.15) is unaffected — that is latency, not a byte
+  rate, and the Runtime tab still shows it.
+- **`resource_sample`** no longer carries `rx_bytes_total` /
+  `tx_bytes_total`. Readers must already tolerate absent keys (every
+  field is optional), so nothing changes for them beyond the keys never
+  appearing again.
+- **Throughput window set is `1`, `5`, `30`** seconds (`60` and `300`
+  dropped) in the `throughput` WS frame, the `worker_state.throughput`
+  JSON, and the Prometheus `window` label of `drakkar_throughput` /
+  `drakkar_task_rate`. The UI requires exactly the three pinned keys when
+  parsing a frame and ignores extra keys, so a v1.16–v1.18 backend's
+  five-window frame still parses; `worker_state` rows written before
+  v1.19 keep their five-window JSON. The Live timeline draws the `5`
+  window by default; the switcher (`1s` / `5s` / `30s`) and the current
+  reading moved from the toolbar into the timeline's gear popover.
+- **UI presentation** (informative, not contractual): the consume-pause
+  presets (v1.14) are behind a `Pause consuming` popover button in the
+  Live header instead of their own row; the active-pause banner is
+  unchanged. The timeline color legend is swatches only, each naming its
+  meaning on hover.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 

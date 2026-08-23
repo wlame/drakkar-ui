@@ -354,119 +354,6 @@ describe('Live cluster view', () => {
   })
 })
 
-describe('Live net readout', () => {
-  function pushNetFrame(rx: number, tx: number) {
-    socketOpts!.onEvent({
-      event: 'net_io',
-      ts: NOW,
-      metadata: JSON.stringify({ rx_mib_s: rx, tx_mib_s: tx, interval_s: 10 }),
-    })
-    flushSync()
-  }
-
-  it('shows RX/TX rates from net_io frames', async () => {
-    const { target, teardown } = mountLive()
-    await settled()
-    expect(target.textContent).not.toContain('Net:')
-
-    socketOpts!.onStatus('connected')
-    flushSync()
-    pushNetFrame(12.34, 0.56)
-
-    expect(target.textContent).toContain('Net: RX 12.3 · TX 0.6 MiB/s')
-
-    teardown()
-  })
-
-  it('drops the readout when the stream disconnects', async () => {
-    const { target, teardown } = mountLive()
-    await settled()
-    socketOpts!.onStatus('connected')
-    flushSync()
-    pushNetFrame(1.0, 2.0)
-    expect(target.textContent).toContain('Net: RX 1.0')
-
-    // A frozen rate would read as current — it must vanish with the stream.
-    socketOpts!.onStatus('disconnected')
-    flushSync()
-    expect(target.textContent).not.toContain('Net:')
-
-    teardown()
-  })
-
-  it('ignores malformed net_io metadata', async () => {
-    const { target, teardown } = mountLive()
-    await settled()
-    socketOpts!.onStatus('connected')
-    flushSync()
-
-    socketOpts!.onEvent({ event: 'net_io', ts: NOW, metadata: 'not json' })
-    flushSync()
-
-    expect(target.textContent).not.toContain('Net:')
-
-    teardown()
-  })
-
-  it('shows the NFS readout when the frame carries the NFS pair', async () => {
-    const { target, teardown } = mountLive()
-    await settled()
-    socketOpts!.onStatus('connected')
-    flushSync()
-
-    socketOpts!.onEvent({
-      event: 'net_io',
-      ts: NOW,
-      metadata: JSON.stringify({
-        rx_mib_s: 1.5,
-        tx_mib_s: 0.5,
-        nfs_read_mib_s: 850.25,
-        nfs_write_mib_s: 0.75,
-      }),
-    })
-    flushSync()
-
-    expect(target.textContent).toContain('NFS: R 850.3 · W 0.8 MiB/s')
-    expect(target.textContent).toContain('Net: RX 1.5 · TX 0.5 MiB/s')
-
-    teardown()
-  })
-
-  it('hides only the NFS readout when a later frame omits the pair', async () => {
-    // The NFS mount can vanish (remount interval, unmount) while the
-    // interface counters keep streaming — the readouts are independent.
-    const { target, teardown } = mountLive()
-    await settled()
-    socketOpts!.onStatus('connected')
-    flushSync()
-
-    socketOpts!.onEvent({
-      event: 'net_io',
-      ts: NOW,
-      metadata: JSON.stringify({
-        rx_mib_s: 1.0,
-        tx_mib_s: 0.5,
-        nfs_read_mib_s: 10,
-        nfs_write_mib_s: 1,
-      }),
-    })
-    flushSync()
-    expect(target.textContent).toContain('NFS: R 10.0')
-
-    socketOpts!.onEvent({
-      event: 'net_io',
-      ts: NOW,
-      metadata: JSON.stringify({ rx_mib_s: 2.0, tx_mib_s: 0.5 }),
-    })
-    flushSync()
-
-    expect(target.textContent).not.toContain('NFS:')
-    expect(target.textContent).toContain('Net: RX 2.0')
-
-    teardown()
-  })
-})
-
 describe('Live offload readout', () => {
   it('stays hidden when the overview has no offload key (Go backends)', async () => {
     const { target, teardown } = mountLive()
@@ -537,19 +424,22 @@ describe('Live throughput routing', () => {
     await settled()
     socketOpts!.onStatus('connected')
     flushSync()
-    expect(target.querySelector('.tp-now')).toBeNull()
+    expect(target.querySelector('.tl-throughput')).toBeNull()
 
     const win = { throughput: 41_250_000, task_rate: 9, tasks: 9 }
     socketOpts!.onEvent({
       event: 'throughput',
       ts: NOW,
       metadata: JSON.stringify({
-        windows: { '1': win, '5': win, '30': win, '60': win, '300': win },
+        windows: { '1': win, '5': win, '30': win },
       }),
     })
     flushSync()
 
     expect(target.querySelector('.tl-throughput polyline')).not.toBeNull()
+    // The window switcher and the current reading live in the gear popover.
+    ;(target.querySelector('button.gear') as HTMLButtonElement).click()
+    flushSync()
     expect(target.querySelector('.tp-now')?.textContent).toContain('41.3M/s')
 
     teardown()
