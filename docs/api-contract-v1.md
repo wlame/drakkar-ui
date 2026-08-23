@@ -123,11 +123,15 @@ the appendix.
   snapshot stacks emits `[]`; the UI tolerates it.
 
 ### Live
-- `GET /api/v1/live/overview` → `{worker_id, running_tasks, pending_tasks,
+- `GET /api/v1/live/overview` → `{worker_id, running_tasks:int,
+  pending_tasks:int,
   arranging:[{partition,duration,message_count,labels[≤10]}], pool_active,
   pool_waiting, pool_max, partition_count, max_ui_rows, ws_min_duration_ms,
   hook_flags:{task_complete,message_complete,window_complete},
   kafka_ui_base:str, kafka_ui_cluster:str, kafka_source_topic:str}`.
+  `running_tasks` counts the in-flight tasks holding an executor slot (their
+  subprocess is live); `pending_tasks` counts those arranged but still queued
+  behind the pool gate. **Counts, not maps, since v1.20** — see below.
   The three `kafka_ui_*` keys are always present as strings, empty when the
   Kafka-UI deep-link integration is unconfigured; the UI renders deep links only
   when all three are non-empty. The UI fetches this endpoint once at boot to
@@ -1253,6 +1257,31 @@ compatibility shims on either side.
   Live header instead of their own row; the active-pause banner is
   unchanged. The timeline color legend is swatches only, each naming its
   meaning on hover.
+
+## v1.20 changes (2026-08-23)
+
+- **`live/overview.running_tasks` / `.pending_tasks` are integers.** They
+  were objects keyed by `task_id`, each value
+  `{task_id, args, partition, source_offsets}`. No UI release ever read
+  either map, and `openapi-v1.yaml` has always typed both as `integer` —
+  the maps were cost with no consumer.
+
+  The cost was real on both sides. A backend built one entry per in-flight
+  task on every poll, `args` included, and derived the running/pending
+  split from an SQL anti-join (`task_started` rows with no terminal row)
+  with no time bound and no `LIMIT`, forcing a recorder flush first. One
+  source message can arrange a thousand tasks, so both scaled with
+  in-flight work and history size rather than with worker size, and a page
+  refresh on a busy worker could stall the event loop for seconds.
+
+  Backends now report the split from in-memory pipeline state: the
+  executor pool's set of slot-holding task ids, probed against the
+  partition processors' in-flight sets. That is O(max_executors ×
+  partitions) and touches no database, so the Live page also keeps
+  answering when the recorder DB is wedged.
+
+  Pre-1.0: no compatibility shim. A client reading the old maps sees a
+  number; a v1.20 backend never emits an object here.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 
