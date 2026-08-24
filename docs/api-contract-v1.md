@@ -14,6 +14,14 @@ the appendix.
 
 ## Conventions (apply to all endpoints)
 
+- **Deployment posture (normative for backends):** this contract describes an
+  operator surface for an **internal** service. Backends must not assume it is
+  safe to expose on an untrusted network, and the auth, rate limiting and input
+  checks specified here are defence in depth rather than a security perimeter —
+  the perimeter is the operator's network and the application built on top.
+  Backends should default to a loopback bind and warn when serving the UI
+  without a token.
+
 - **Base path / versioning:** all JSON APIs live under `/api/v1/...`. Backends
   may keep serving legacy unprefixed `/api/...` aliases for their built-in
   pages; the UI only ever calls `/api/v1/*`. Probes (`/healthz`, `/readyz`) and

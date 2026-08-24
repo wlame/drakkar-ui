@@ -36,6 +36,34 @@ UI reads it from a `?token=` query parameter (remembered in `localStorage`) and
 sends it as `Authorization: Bearer …`. With no token configured — the dev-trust
 default — requests are unauthenticated.
 
+## Security posture
+
+**This UI is an operator tool for an internal service. It is not built to face
+an untrusted network, and neither is the backend it talks to.**
+
+drakkar-ui renders whatever a Drakkar worker serves it: subprocess output, task
+arguments and environment, cache contents, live event streams and the resolved
+worker configuration. It holds no secrets of its own and enforces nothing — the
+bearer token it forwards is checked by the backend, not here. So the security
+question is never "is the SPA safe"; it is "who can reach the worker".
+
+That answer belongs to whoever deploys the worker. Backends ship an opt-in
+bearer token, a WebSocket origin check, kill switches for the side-effecting
+endpoints, path containment on file downloads, and secret masking in the
+config view — all of it **defence in depth, not a security perimeter**. The
+perimeter is the operator's network and the application built on top of
+Drakkar.
+
+Deploy the worker (and therefore this UI) on a trusted, private contour: a
+VPC, an internal cluster network, an operator-only ingress. Full detail:
+[Security posture](https://wlame.github.io/drakkar/security/).
+
+One thing that *is* this repo's responsibility: a custom renderer module
+(`ui.custom_renderers_path`) is deployment-owned JavaScript served
+same-origin, with full DOM access. Configuring one means choosing to run your
+own code in the UI's origin — ship it with the same care as the worker's
+config.
+
 ## Develop
 
 The toolchain runs entirely inside Docker (`oven/bun`); you do **not** install
