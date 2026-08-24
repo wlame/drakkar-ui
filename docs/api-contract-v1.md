@@ -201,9 +201,19 @@ the appendix.
   total_error, recent:[{ts,duration,status,error}]≤20}`.
 - `POST /api/v1/debug/probe` body `ProbeInput` → `DebugReport` (below). 200 even
   on timeout (`truncated:true`); 503 `{"detail":"executor pool not ready"}` when
-  the probe is unavailable; 422 on invalid input. `ProbeInput`: `{value:str
+  the probe is unavailable; 422 on invalid input; **429
+  `{error:str, max_waiters:int}` with `Retry-After: 1` when too many probes are
+  already queued** (v1.20). `ProbeInput`: `{value:str
   (≤10MB), key:str|null, partition:int(≥0), offset:int(≥0), topic:str,
   timestamp:int|null, use_cache:bool}`.
+
+  Probes serialize on a single lock — one runs at a time, by design, because
+  a probe swaps process-wide handler state. Each queued probe already gives
+  up at its own wall-clock cap, but the queue itself was unbounded, so a
+  refreshed page or a script could stack requests that each pin memory and a
+  connection on the server that also answers the Kubernetes probes. Backends
+  shed past 16 queued. A client seeing 429 should retry, not treat it as a
+  probe failure.
 
 ### Runtime health
 - `GET /api/v1/runtime/health` → `{enabled:true, state:"healthy"|"degraded"|
@@ -1282,6 +1292,19 @@ compatibility shims on either side.
 
   Pre-1.0: no compatibility shim. A client reading the old maps sees a
   number; a v1.20 backend never emits an object here.
+
+- **`POST /api/v1/debug/probe` answers 429** when more than 16 probes are
+  already queued (`{error, max_waiters}` plus `Retry-After: 1`). Probes
+  serialize on one lock; the queue in front of it had no bound. See the
+  Debug section above.
+
+- **HTTP transport limits** (informative, not a wire change): both backends
+  now bound keep-alive idle time (120 s), request header size (64 KiB) and
+  request body size on every HTTP surface, and the Python backend — which
+  had none of these — additionally bounds its webapp body READ in time
+  (`request_timeout_seconds` + 30 s, answering **408**), which Go already
+  got from `http.Server.WriteTimeout`. Deployments should still front these
+  ports with a proxy that enforces its own read timeouts.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 
