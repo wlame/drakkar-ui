@@ -64,18 +64,58 @@ shell:
 clean:
     rm -rf dist node_modules drakkar-ui-*.tar.gz
 
-# Copy the canonical OpenAPI spec into both backends' vendored copies.
-# Backends pin their route tables to it with parity tests, so run their
-# suites after syncing.
+# Copy the canonical OpenAPI spec into both backends' vendored copies, and
+# record its checksum beside each one. Backends pin their route tables to
+# the vendored copy with parity tests, so run their suites after syncing.
+#
+# The checksum is what stops the copies drifting back: each backend asserts
+# its vendored spec still hashes to the recorded value, so editing a
+# vendored copy directly — instead of editing this repo's canonical file
+# and re-syncing — fails that backend's own suite.
 sync-openapi:
-    cp docs/openapi-v1.yaml ../drakkar/drakkar/uiserver/openapi.yaml
-    cp docs/openapi-v1.yaml ../drakkar-go/internal/uiserver/openapi.yaml
-    @echo "synced; re-run each backend's parity tests"
+    #!/usr/bin/env bash
+    set -euo pipefail
+    sum=$(sha256sum docs/openapi-v1.yaml | cut -d' ' -f1)
+    for dest in ../drakkar/drakkar/uiserver ../drakkar-go/internal/uiserver; do
+        if [[ ! -d "$dest" ]]; then
+            echo "skip: $dest not checked out"
+            continue
+        fi
+        cp docs/openapi-v1.yaml "$dest/openapi.yaml"
+        echo "$sum" > "$dest/openapi-v1.sha256"
+        echo "synced $dest"
+    done
+    echo "re-run each backend's parity tests"
+
+# Verify both backends' vendored specs still match the canonical one.
+# Skips a backend that is not checked out beside this repo, so it is safe
+# in CI; locally it is the gate that catches a hand-edited vendored copy.
+check-openapi-sync:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    status=0
+    for dest in ../drakkar/drakkar/uiserver ../drakkar-go/internal/uiserver; do
+        if [[ ! -f "$dest/openapi.yaml" ]]; then
+            echo "skip: $dest/openapi.yaml not checked out"
+            continue
+        fi
+        if diff -q docs/openapi-v1.yaml "$dest/openapi.yaml" >/dev/null; then
+            echo "ok:   $dest/openapi.yaml"
+        else
+            echo "DRIFT: $dest/openapi.yaml differs from docs/openapi-v1.yaml"
+            diff docs/openapi-v1.yaml "$dest/openapi.yaml" || true
+            status=1
+        fi
+    done
+    if [[ $status -ne 0 ]]; then
+        echo "run 'just sync-openapi' after fixing the canonical spec"
+    fi
+    exit $status
 
 # ── Gates ────────────────────────────────────────────────────────────────────
 
 # The exact gates GitHub CI enforces, in order. Run before pushing.
-ci: image install check lint test build
+ci: image install check lint test build check-openapi-sync
 
 # ── Releasing (print-only for anything that mutates a remote) ─────────────────
 

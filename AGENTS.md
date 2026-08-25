@@ -31,8 +31,12 @@ byte-identically (`just sync-openapi` copies it to
 `../drakkar/drakkar/uiserver/openapi.yaml` and
 `../drakkar-go/internal/uiserver/openapi.yaml`), serve it at
 `GET /api/v1/openapi.json` + a self-hosted Swagger page at `GET /docs`, and
-pin their live route tables to its `paths` with a parity unit test — so
-surface drift fails CI on the drifting backend. The UI only ever calls
+pin their live route tables to its `paths` with a parity unit test — so a
+route added or removed on one backend fails CI there. That test compares
+the path inventory only, not parameters or schemas, so each backend also
+pins the checksum `just sync-openapi` records beside its vendored copy:
+editing a vendored spec instead of this repo's canonical one fails that
+backend's suite. `just check-openapi-sync` verifies both copies from here. The UI only ever calls
 `/api/v1/*` and `/ws` (probes `/healthz`/`/readyz` unprefixed) and assumes
 nothing backend-specific. Changing an endpoint's shape means: update the
 contract doc AND the OpenAPI spec, mirror the types in `src/lib/types.ts`,
