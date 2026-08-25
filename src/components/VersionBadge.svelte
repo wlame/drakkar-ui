@@ -35,12 +35,11 @@
     }
   }
 
-  // "release" bundles report their tag; anything else is the backend's
-  // built-in fallback pages (which cannot render this SPA — but the badge
-  // copy stays accurate if that ever changes).
-  const servedUI = $derived(
-    identity?.ui_version ?? (identity?.ui_source ? `built-in pages` : null)
-  )
+  // A served bundle reports its release tag. There is no other case for
+  // this component to render: backends no longer ship a built-in HTML
+  // fallback, and one that resolved no bundle serves no SPA to run this
+  // code. A pre-v1.1 backend sends no ui_version at all, hence the null.
+  const servedUI = $derived(identity?.ui_version ?? null)
 
   function onDocClick(e: MouseEvent) {
     if (open && root && !root.contains(e.target as Node)) open = false

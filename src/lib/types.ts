@@ -146,7 +146,7 @@ export interface Identity {
   backend?: string // "python" | "go"
   backend_version?: string // backend-native: semver (py) or git-describe (go)
   ui_version?: string | null // served drakkar-ui release tag, null = built-in pages
-  ui_source?: string // "release" | "embedded" | "builtin"
+  ui_source?: string // "release" when a bundle is served; "" when none is
   // Named link-template bases (ui.link_bases), always present (possibly {})
   // on a fresh backend; absent entirely on backends that predate enrichment.
   link_bases?: Record<string, string>

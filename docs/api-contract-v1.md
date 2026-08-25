@@ -22,10 +22,12 @@ the appendix.
   Backends should default to a loopback bind and warn when serving the UI
   without a token.
 
-- **Base path / versioning:** all JSON APIs live under `/api/v1/...`. Backends
-  may keep serving legacy unprefixed `/api/...` aliases for their built-in
-  pages; the UI only ever calls `/api/v1/*`. Probes (`/healthz`, `/readyz`) and
-  the WebSocket (`/ws`) stay unprefixed (kubelet/browser contracts).
+- **Base path / versioning:** all JSON APIs live under `/api/v1/...`, and
+  nowhere else. Backends used to also serve legacy unprefixed `/api/...`
+  aliases for their own built-in HTML pages; those pages are gone and the
+  aliases went with them, so an unprefixed path is no longer a route on
+  either backend. Probes (`/healthz`, `/readyz`) and the WebSocket (`/ws`)
+  stay unprefixed (kubelet/browser contracts).
 - **Auth:** when `auth_token` is configured, every `/api/*` route requires
   `Authorization: Bearer <t>` or `?token=<t>`; an empty token disables auth
   (dev-trust default). Failure → `401 {"detail":"Invalid or missing auth
@@ -100,8 +102,7 @@ the appendix.
 - `GET /api/v1/identity` (v1.1) → `{worker_id:str, cluster:str|null,
   config_summary:str}`. Worker self-identity; `config_summary` is the one-line
   human-readable config string the reference debug page shows in its banner
-  (may be empty). Auth as all `/api/*` routes. v1-only — no legacy unprefixed
-  `/api/identity` alias. Older backends 404; the UI degrades gracefully (plain
+  (may be empty). Auth as all `/api/*` routes. Older backends 404; the UI degrades gracefully (plain
   page heading instead of the banner).
 - `GET /api/v1/partitions` → array of per-partition rows: partition-summary
   columns (`partition, last_consumed, last_committed, last_committed_offset,
@@ -144,9 +145,11 @@ the appendix.
   Kafka-UI deep-link integration is unconfigured; the UI renders deep links only
   when all three are non-empty. The UI fetches this endpoint once at boot to
   hydrate runtime config, and again on the Live page.
-- `GET /api/v1/events?limit=200&after_id=0&partitions=&event_types=` → array of
-  full recorder event rows (`SELECT *`, id DESC). Malformed `partitions` CSV →
-  **422**. `limit` ≤ 10000 → 422 above. No DB → `[]`.
+- `GET /api/v1/events?limit=200&after_id=0&partitions=&event_types=&origin=` →
+  array of full recorder event rows (`SELECT *`, id DESC). Malformed
+  `partitions` CSV → **422**. `limit` ≤ 10000 → 422 above. No DB → `[]`.
+  `origin` (`kafka` | `http`) keeps only Kafka-origin tasks or webapp
+  requests; omit it for both.
 - `GET /api/v1/recent-tasks?minutes=2` →
   `{tasks:[<entry>...], lane_count:int, truncated:bool}` (no DB → `[]`). Each
   entry: `{task_id, partition, start_ts, end_ts, duration, status, args, pid,
@@ -342,13 +345,14 @@ Version visibility and a machine-readable surface description. All additive.
     `py-drakkar` package version; Go: git-describe build stamp, `"dev"` when
     unstamped).
   - `ui_version:str|null` — the drakkar-ui release tag this backend is
-    serving (e.g. `"v0.1.1"`), `null` when the built-in pages serve (or
-    when an embedded pre-release stub carries no tag).
-  - `ui_source:str` — `"release"` (fetched/cached bundle) | `"embedded"`
-    (the release baked into the backend binary/package, served when the
-    cache is empty and GitHub is unreachable) | `"builtin"`
-    (server-rendered fallback pages; only when `ui.release.enabled=false`
-    or resolution errored). The UI must tolerate unknown future values.
+    serving (e.g. `"v0.1.1"`), `null` when no bundle could be resolved and
+    the backend is running API-only.
+  - `ui_source:str` — `"release"` (a fetched or cached bundle), or `""`
+    when no bundle is being served. Backends no longer ship a built-in HTML
+    fallback or a bundle baked into the binary/package: with nothing cached
+    and no reachable release source they run API-only and answer every page
+    request with **503** plus a JSON body naming the remedies (`error`,
+    `detail`, `remedies[]`). The UI must tolerate unknown future values.
 - `GET /api/v1/openapi.json` → the OpenAPI 3.1 document describing this
   surface, converted from the canonical `docs/openapi-v1.yaml` in this repo
   (vendored byte-identically into both backends). Protected by the same
