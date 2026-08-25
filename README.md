@@ -171,4 +171,4 @@ current focus.
 
 ## License
 
-MIT © wlame
+MIT © wlame — see [`LICENSE`](LICENSE).
