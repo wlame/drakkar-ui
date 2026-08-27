@@ -38,7 +38,9 @@
   }
   .expandable:not(.expanded) {
     display: inline-block;
-    max-width: 22rem;
+    /* Floor = the old fixed cap, so narrow layouts are unchanged; the vw term
+       lets wide windows (and the f-key wide layout) give the text real room. */
+    max-width: clamp(22rem, 35vw, 60rem);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -299,7 +299,7 @@
   }
 
   .path-cell {
-    max-width: 20rem;
+    max-width: clamp(20rem, 25vw, 40rem);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -312,7 +312,7 @@
     font-size: 0.85rem;
   }
   .value-cell {
-    max-width: 24rem;
+    max-width: clamp(24rem, 30vw, 60rem);
     overflow-wrap: anywhere;
   }
   .changed-value {

@@ -216,7 +216,7 @@
     white-space: nowrap;
   }
   .clip {
-    max-width: 34rem;
+    max-width: clamp(34rem, 40vw, 70rem);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

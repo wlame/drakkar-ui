@@ -255,7 +255,7 @@
     font-size: 0.85rem;
   }
   .key {
-    max-width: 24rem;
+    max-width: clamp(24rem, 30vw, 50rem);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

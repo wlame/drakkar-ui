@@ -112,7 +112,7 @@
     align-items: center;
   }
   .help {
-    max-width: 28rem;
+    max-width: clamp(28rem, 40vw, 70rem);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

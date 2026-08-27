@@ -518,7 +518,7 @@
     color: var(--muted);
   }
   .preview {
-    max-width: 24rem;
+    max-width: clamp(24rem, 35vw, 60rem);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -538,7 +538,7 @@
   }
   /* argv can be long; the cell truncates and the full value is on the title. */
   .argv {
-    max-width: 18rem;
+    max-width: clamp(18rem, 30vw, 50rem);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
