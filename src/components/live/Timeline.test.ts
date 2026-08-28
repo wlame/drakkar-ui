@@ -591,6 +591,43 @@ describe('custom timeline events', () => {
     )
   })
 
+  // String.replace treats a string replacement's `$&`/`$1`/`$$`/... as
+  // substitution patterns; a replacer FUNCTION does not, so handler text
+  // containing one of those sequences must come through unmangled.
+  it('inserts handler text with a $-sequence literally, not as a replace pattern', () => {
+    const decl = eventDecl('deploy', { label: 'deploy {text}' })
+    const ev = eventInstance('deploy', tasks[0].start_ts, { text: 'v2.1 ($&/$1/$$)' })
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: [ev],
+    })
+
+    const chip = target.querySelector('.event-chip') as HTMLElement
+    expect(chip).not.toBeNull()
+    expect(chip.textContent).toBe('deploy v2.1 ($&/$1/$$)')
+  })
+
+  it('shows an unresolved-link note in the hover strip when action=link cannot resolve an href', () => {
+    // {sha} is never supplied (no `values` on the instance, no matching
+    // link_bases entry), so resolveEventLink returns null and the chip
+    // renders as a plain button rather than an anchor.
+    const decl = eventDecl('deploy', { action: 'link', link: 'https://ci.example/{sha}' })
+    const ev = eventInstance('deploy', tasks[0].start_ts)
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: [ev],
+    })
+
+    const chip = target.querySelector('button.event-chip') as HTMLButtonElement
+    expect(chip).not.toBeNull()
+    chip.dispatchEvent(new Event('mouseenter'))
+    flushSync()
+
+    expect(target.querySelector('.tl-hover')?.textContent).toContain(
+      'link unresolved — missing variable',
+    )
+  })
+
   it('emphasizes matching bars when a highlight chip is clicked, and clears on a second click', () => {
     const decl = eventDecl('slow_window', { kind: 'flag', action: 'highlight' })
     const match: EventMatch = { offsets: [[0, 5]] }
@@ -610,6 +647,28 @@ describe('custom timeline events', () => {
     expect(barFor(target, 'empty').classList.contains('dim')).toBe(false)
 
     chip.click()
+    flushSync()
+    expect(barFor(target, 'big').classList.contains('dim')).toBe(false)
+    expect(barFor(target, 'empty').classList.contains('dim')).toBe(false)
+  })
+
+  it('clears active highlight emphasis on Escape', () => {
+    const decl = eventDecl('slow_window', { kind: 'flag', action: 'highlight' })
+    const match: EventMatch = { offsets: [[0, 5]] }
+    const ev = eventInstance('slow_window', tasks[0].start_ts, { match })
+    const matchingTask: TaskView = { ...tasks[1], source_offsets: [5] }
+    const { target } = renderTracked({
+      tasks: [tasks[0], matchingTask],
+      timeline: { ...config, events: [decl] },
+      events: [ev],
+    })
+
+    const chip = target.querySelector('button.event-chip') as HTMLButtonElement
+    chip.click()
+    flushSync()
+    expect(barFor(target, 'big').classList.contains('dim')).toBe(true)
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     flushSync()
     expect(barFor(target, 'big').classList.contains('dim')).toBe(false)
     expect(barFor(target, 'empty').classList.contains('dim')).toBe(false)

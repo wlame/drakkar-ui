@@ -444,11 +444,13 @@
    *
    * Used whenever the live stream had a hole in it: a reconnect, a reported
    * drop, or a resume after the tab was idle. `resync` alone is not enough —
-   * the Arrange list is built purely from `arranged` frames, so any batch that
-   * arrived during the gap would stay missing until the page was reloaded.
+   * the Arrange list is built purely from `arranged` frames and the custom
+   * timeline events buffer purely from WS annotations, so any batch or
+   * event that arrived during the gap would stay missing until the page
+   * was reloaded.
    */
   async function fullResync() {
-    await Promise.all([resync(), loadArrangesBoot()])
+    await Promise.all([resync(), loadArrangesBoot(), loadTimelineEventsHistory()])
   }
 
   async function loadArrangesBoot() {

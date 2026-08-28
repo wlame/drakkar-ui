@@ -592,10 +592,13 @@
   }
 
   // Only `{text}` substitutes in a declared label template (contract v1.21);
-  // with no template the chip falls back to the type name itself.
+  // with no template the chip falls back to the type name itself. The
+  // replacement is a function, not a string, so a `$` in the handler's
+  // event text (`$&`, `$1`, `$$`, ...) is inserted literally instead of
+  // being interpreted as a String.replace substitution pattern.
   function resolveEventLabel(decl: TimelineEventDecl, ev: TimelineEventView): string {
     if (!decl.label) return decl.name
-    return decl.label.replace(/\{text\}/g, ev.text)
+    return decl.label.replace(/\{text\}/g, () => ev.text)
   }
 
   // Composite identity for keyed each-blocks and the hover-clear effect
@@ -656,6 +659,20 @@
   const eventMarkerLines = $derived(eventViews.filter((e) => e.decl.kind === 'marker'))
   const eventRangeBands = $derived(eventViews.filter((e) => e.decl.kind === 'range'))
 
+  // The chip behind the currently hovered instance, so the hover strip can
+  // tell an action=link chip with no resolved href (chip.link === null: an
+  // unresolved {var}, see resolveEventLink) apart from a link that simply
+  // isn't configured. Looked up by eventKey, not `===`: hoveredEvent is a
+  // $state field, so assigning it `chip.event` wraps the value in its own
+  // reactive proxy with a different identity than the object still sitting
+  // in eventViews (the same reason the cull-guard effect above compares by
+  // key rather than reference).
+  const hoveredEventChip = $derived.by(() => {
+    if (!hoveredEvent) return undefined
+    const key = eventKey(hoveredEvent)
+    return eventViews.find((v) => eventKey(v.event) === key)
+  })
+
   // Same "hovered element left the rendered set" guard the marker pins use
   // above: a hovered chip can be culled by a scroll, or dropped by a
   // visibility toggle, without ever firing its own mouseleave.
@@ -682,6 +699,27 @@
       activeEventKey = key
     }
   }
+
+  // Esc clears the active highlight/filter emphasis — a lighter-weight
+  // escape hatch than reclicking the same chip. The listener only exists
+  // while emphasis is actually active (mirrors the pointerdown-outside gear
+  // listener above), and it neither calls preventDefault nor stops
+  // propagation, so it cannot shadow any other Escape handler on the page —
+  // same non-interference goal as Live.svelte's onKey guarding against
+  // input/textarea/select/contenteditable targets below.
+  $effect(() => {
+    if (!eventEmphasisActive) return
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return
+      const t = e.target as HTMLElement
+      const tag = (t.tagName || '').toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || t.isContentEditable) return
+      activeEventMatch = null
+      activeEventKey = null
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  })
 
   // Axis ticks: HH:MM:SS labels at a zoom-dependent interval (the reference's
   // rebuildAxis picks 5..120s so labels never crowd each other). Positions are
@@ -1276,6 +1314,9 @@
         {#each Object.entries(hoveredEvent.values) as [k, v]}
           <span class="chip label-chip">{k}={String(v)}</span>
         {/each}
+      {/if}
+      {#if hoveredEventChip?.decl.action === 'link' && !hoveredEventChip.link}
+        <span class="hint">link unresolved — missing variable</span>
       {/if}
     {:else}
       <span class="hint">hover over a task bar to see details</span>

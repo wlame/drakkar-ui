@@ -491,3 +491,28 @@ describe('Live host pressure routing', () => {
     teardown()
   })
 })
+
+describe('Live full resync on reconnect', () => {
+  // fullResync used to omit the custom-timeline-events backfill, so any
+  // event emitted while the WS was down (a reconnect gap, or a drop the
+  // server reported) never appeared — the buffer only grew from live WS
+  // annotations. Both onOpen (reconnect) and onGap (reported drop) call
+  // fullResync; onOpen is enough to pin the fix since both share the same
+  // implementation.
+  it('re-backfills timeline events on a WS reconnect, not just tasks/arranges', async () => {
+    const { teardown } = mountLive()
+    await settled()
+
+    const timelineCalls = () =>
+      fetchMock.mock.calls.filter(([input]) => String(input).includes('/timeline/events')).length
+    const before = timelineCalls()
+    expect(before).toBeGreaterThan(0) // the initial mount already backfilled once
+
+    socketOpts!.onOpen?.()
+    await settled()
+
+    expect(timelineCalls()).toBeGreaterThan(before)
+
+    teardown()
+  })
+})
