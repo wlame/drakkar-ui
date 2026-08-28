@@ -694,8 +694,15 @@
     })
   })
 
-  function clusterKey(decl: TimelineEventDecl, cluster: { left: number }): string {
-    return `${decl.name}|${cluster.left}`
+  // Identity-stable cluster key: the first member's own eventKey, not the
+  // cluster's pixel `left`. `left` is `(ts - originTs) * pxPerSec` — it
+  // changes on every zoom step, so a position-derived key made zoom recreate
+  // every chip/line element and silently closed any open member popover (the
+  // activeClusterKey guard below stopped matching mid-zoom). A member's own
+  // identity survives a zoom exactly like `eventKey` already lets
+  // hoveredEvent/hoveredEventChip survive a scroll-driven recompute.
+  function clusterKey(decl: TimelineEventDecl, cluster: { members: EventChip[] }): string {
+    return `${decl.name}|${eventKey(cluster.members[0].event)}`
   }
 
   // In-lane visuals, split by kind: markers draw a full-height guide line —
@@ -705,10 +712,10 @@
   // one already draws as a real, visually distinct rectangle). Flags draw
   // nothing in the lanes — the track chip is their only visual.
   const eventMarkerLines = $derived.by(() => {
-    const out: { left: number; decl: TimelineEventDecl }[] = []
+    const out: { left: number; decl: TimelineEventDecl; key: string }[] = []
     for (const t of trackViews) {
       if (t.decl.kind !== 'marker') continue
-      for (const c of t.clusters) out.push({ left: c.left, decl: t.decl })
+      for (const c of t.clusters) out.push({ left: c.left, decl: t.decl, key: clusterKey(t.decl, c) })
     }
     return out
   })
@@ -790,7 +797,7 @@
     activateHighlightFilter(chip.decl, chip.event)
   }
 
-  function toggleClusterPopover(decl: TimelineEventDecl, cluster: { left: number }) {
+  function toggleClusterPopover(decl: TimelineEventDecl, cluster: { members: EventChip[] }) {
     const key = clusterKey(decl, cluster)
     activeClusterKey = activeClusterKey === key ? null : key
   }
@@ -1258,9 +1265,13 @@
                           {t.decl.name} &middot; {c.members.length}
                         </div>
                         {#each c.members as m (eventKey(m.event))}
+                          {@const unresolved = t.decl.action === 'link' && !m.link}
                           <button
                             class="event-cluster-member"
+                            class:unresolved
                             type="button"
+                            disabled={unresolved}
+                            title={unresolved ? 'link unresolved — missing variable' : undefined}
                             onclick={() => onMemberActivate(t.decl, m.event)}
                           >
                             <span class="member-time">{fmtTimeMs(m.event.ts)}</span>
@@ -1353,7 +1364,7 @@
             style:background={chip.decl.color}
           ></div>
         {/each}
-        {#each eventMarkerLines as line (`${line.decl.name}|${line.left}`)}
+        {#each eventMarkerLines as line (line.key)}
           <div
             class="tl-event-line"
             class:bold={(line.decl.line ?? 'solid') === 'bold'}
@@ -1969,6 +1980,19 @@
   }
   .event-cluster-member:hover {
     background: #f3f4f6;
+  }
+  /* An action=link member whose template left an unresolved {var} (see
+     resolveEventLink) — same dimmed treatment and wording as the single-chip
+     hover strip's "link unresolved" hint, instead of a silent no-op click. */
+  .event-cluster-member.unresolved {
+    color: #9ca3af;
+    cursor: default;
+  }
+  .event-cluster-member.unresolved:hover {
+    background: transparent;
+  }
+  .event-cluster-member.unresolved .member-title {
+    color: #9ca3af;
   }
   .member-time {
     font-family: var(--mono);

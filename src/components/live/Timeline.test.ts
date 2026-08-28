@@ -5,7 +5,7 @@
 // `paused` is set on every mount so neither the 250ms `now` tick nor the
 // auto-follow rAF loop runs — the geometry under test is static then, and the
 // tests stay deterministic.
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushSync, mount, unmount } from 'svelte'
 import Timeline from './Timeline.svelte'
 import type { TaskView } from '../../lib/live'
@@ -832,5 +832,87 @@ describe('per-type event tracks', () => {
     document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
     flushSync()
     expect(target.querySelector('.event-cluster-pop')).toBeNull()
+  })
+
+  it('keeps DOM identity and an open popover across a zoom change (identity key, not position)', () => {
+    const decl = eventDecl('deploy')
+    const base = tasks[0].start_ts
+    // 0.05s apart: at both the default 16px/sec and the 32px/sec zoomed-in
+    // rate the spread stays far inside the 12px collapse distance, so the
+    // cluster's membership itself does not change across the zoom step —
+    // only every chip's `left` position does.
+    const evs = [
+      eventInstance('deploy', base, { text: 'a' }),
+      eventInstance('deploy', base + 0.05, { text: 'b' }),
+      eventInstance('deploy', base + 0.1, { text: 'c' }),
+    ]
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: evs,
+    })
+
+    const wrapBefore = target.querySelector('.event-cluster-wrap') as HTMLElement
+    const chipBefore = target.querySelector('.event-chip.cluster') as HTMLButtonElement
+    const leftBefore = styleNumber(wrapBefore, 'left')
+    chipBefore.click()
+    flushSync()
+    expect(target.querySelector('.event-cluster-pop')).not.toBeNull()
+
+    const zoomInBtn = [...target.querySelectorAll('.tbtn.plusminus')].find(
+      (b) => b.getAttribute('title') === 'Zoom in',
+    ) as HTMLButtonElement
+    zoomInBtn.click()
+    flushSync()
+
+    // Position moved (doubled pxPerSec)...
+    const wrapAfter = target.querySelector('.event-cluster-wrap') as HTMLElement
+    expect(styleNumber(wrapAfter, 'left')).toBeCloseTo(leftBefore * 2, 5)
+    // ...but the element itself is the same node — an identity-derived key
+    // means the keyed {#each} reused it rather than tearing it down and
+    // rebuilding it, and the popover that was open on it is still open.
+    expect(wrapAfter).toBe(wrapBefore)
+    expect(target.querySelector('.event-chip.cluster')).toBe(chipBefore)
+    expect(target.querySelector('.event-cluster-pop')).not.toBeNull()
+    expect(target.querySelectorAll('.event-cluster-member')).toHaveLength(3)
+  })
+
+  it('shows a disabled, titled row for a cluster member whose link cannot resolve, instead of a silent no-op', () => {
+    const decl = eventDecl('deploy', {
+      action: 'link',
+      link: 'https://ci.example/{sha}',
+      label: '{text}',
+    })
+    const base = tasks[0].start_ts
+    const evs = [
+      eventInstance('deploy', base, { text: 'resolved', values: { sha: 'abc123' } }),
+      eventInstance('deploy', base + 0.05, { text: 'unresolved' }), // no `sha` value
+    ]
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: evs,
+    })
+
+    ;(target.querySelector('.event-chip.cluster') as HTMLButtonElement).click()
+    flushSync()
+    const members = [...target.querySelectorAll('.event-cluster-member')] as HTMLButtonElement[]
+    expect(members).toHaveLength(2)
+
+    const resolvedRow = members.find((m) => m.textContent?.includes('resolved'))!
+    const unresolvedRow = members.find((m) => m.textContent?.includes('unresolved'))!
+    expect(resolvedRow.classList.contains('unresolved')).toBe(false)
+    expect(resolvedRow.disabled).toBe(false)
+    expect(resolvedRow.title).toBe('')
+
+    expect(unresolvedRow.classList.contains('unresolved')).toBe(true)
+    expect(unresolvedRow.disabled).toBe(true)
+    expect(unresolvedRow.title).toBe('link unresolved — missing variable')
+
+    // Disabled elements don't dispatch click in the browser — the row is
+    // truly inert, not just silently no-op-ing on an active click.
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    unresolvedRow.click()
+    flushSync()
+    expect(openSpy).not.toHaveBeenCalled()
+    openSpy.mockRestore()
   })
 })
