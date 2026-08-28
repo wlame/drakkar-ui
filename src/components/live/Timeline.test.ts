@@ -1029,4 +1029,58 @@ describe('per-type event tracks', () => {
     expect(trackAfterScroll.style.height).toBe('44px')
     expect(trackAfterScroll.querySelectorAll('.event-chip')).toHaveLength(1)
   })
+
+  // The wire format truncates an instance's ts to whole milliseconds and
+  // stamps partition from the emitting hook's own Kafka partition (see
+  // eventContentKey's doc comment in lib/timelineEvents.ts) — so two
+  // genuinely different range instances of one type CAN legitimately share
+  // type+ts+partition. Before the identity fix, the keyed {#each} over
+  // eventRangeBands threw Svelte's each_key_duplicate on exactly this input,
+  // which unmounts the component (this is the reported "task bars
+  // disappear" — any subsequent re-render hit the same broken list).
+  it('renders two distinct events that share type+ts+partition without throwing or losing the bars', () => {
+    const decl = eventDecl('scan_window_processing_range', { kind: 'range', action: 'highlight' })
+    const ts = tasks[0].start_ts
+    const evs = [
+      eventInstance('scan_window_processing_range', ts, {
+        text: '3 tasks',
+        endTs: ts + 1,
+        partition: 11,
+      }),
+      eventInstance('scan_window_processing_range', ts, {
+        text: '7 tasks',
+        endTs: ts + 2,
+        partition: 11,
+      }),
+    ]
+    let target!: HTMLElement
+    expect(() => {
+      target = renderTracked({ timeline: { ...config, events: [decl] }, events: evs }).target
+    }).not.toThrow()
+    expect(barFor(target, 'big')).not.toBeNull()
+    expect(barFor(target, 'empty')).not.toBeNull()
+    expect(target.querySelectorAll('.tl-event-band')).toHaveLength(2)
+  })
+
+  // A separate case from the above: two BYTE-IDENTICAL instances (a genuine
+  // ingestion-level duplicate, e.g. the same wire delivery recorded twice)
+  // still collide on every content field, not just type+ts+partition — the
+  // occurrence-index tiebreaker in withUniqueKeys is what keeps this one
+  // from throwing, not the richer identity key alone.
+  it('renders exact-duplicate event instances without throwing or losing the bars', () => {
+    const decl = eventDecl('scan_window_processing_range', { kind: 'range', action: 'highlight' })
+    const ts = tasks[0].start_ts
+    const one = eventInstance('scan_window_processing_range', ts, {
+      text: 'dup',
+      endTs: ts + 1,
+      partition: 11,
+    })
+    const evs = [one, { ...one }]
+    let target!: HTMLElement
+    expect(() => {
+      target = renderTracked({ timeline: { ...config, events: [decl] }, events: evs }).target
+    }).not.toThrow()
+    expect(barFor(target, 'big')).not.toBeNull()
+    expect(target.querySelectorAll('.tl-event-band')).toHaveLength(2)
+  })
 })

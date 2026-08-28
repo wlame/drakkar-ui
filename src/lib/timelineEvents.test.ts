@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   clusterEvents,
+  eventContentKey,
   EVENT_LABEL_PX_PER_CHAR,
   eventFromWsEvent,
   eventGeometry,
@@ -18,6 +19,7 @@ import {
   TRACK_TALL_HEIGHT_PX,
   trimLabelForVertical,
   VERTICAL_LABEL_MAX_CHARS,
+  withUniqueKeys,
   type TimelineEventView,
 } from './timelineEvents'
 import type { TimelineEventDecl, WsEvent } from './types'
@@ -592,5 +594,67 @@ describe('qualifyingEventTracks', () => {
     const decls = [decl({ name: 'a' })]
     const events = [eventView({ type: 'a' })]
     expect(qualifyingEventTracks(decls, events, {}).map((d) => d.name)).toEqual(['a'])
+  })
+})
+
+describe('eventContentKey', () => {
+  it('collides on a bare type+ts+partition triple, same as the wire format can', () => {
+    // The wire format truncates ts to whole milliseconds and stamps
+    // partition from the emitting hook's own Kafka partition — two genuinely
+    // different range instances of one type can share both, so a naive
+    // type|ts|partition key is not unique. This pins the collision case
+    // eventContentKey exists to resolve, via end_ts/text/values/match.
+    const a = eventView({
+      type: 'scan_window_processing_range',
+      ts: 1000,
+      partition: 11,
+      text: '3 tasks',
+      endTs: 1001,
+    })
+    const b = eventView({
+      type: 'scan_window_processing_range',
+      ts: 1000,
+      partition: 11,
+      text: '7 tasks',
+      endTs: 1002,
+    })
+    expect(eventContentKey(a)).not.toBe(eventContentKey(b))
+  })
+
+  it('is stable for the same instance data', () => {
+    const a = eventView({ values: { sha: 'abc' }, match: { label: ['k', 'v'] } })
+    const b = eventView({ values: { sha: 'abc' }, match: { label: ['k', 'v'] } })
+    expect(eventContentKey(a)).toBe(eventContentKey(b))
+  })
+
+  it('still collides for two byte-identical instances — the case withUniqueKeys handles', () => {
+    const a = eventView({ text: 'dup' })
+    const b = eventView({ text: 'dup' })
+    expect(eventContentKey(a)).toBe(eventContentKey(b))
+  })
+})
+
+describe('withUniqueKeys', () => {
+  it('keeps a bare key for the first occurrence and every already-unique item', () => {
+    const items = [{ id: 'a' }, { id: 'b' }, { id: 'c' }]
+    const out = withUniqueKeys(items, (i) => i.id)
+    expect(out.map((i) => i.key)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('appends a deterministic #n suffix to every occurrence after the first', () => {
+    const items = [{ id: 'x' }, { id: 'y' }, { id: 'x' }, { id: 'x' }]
+    const out = withUniqueKeys(items, (i) => i.id)
+    expect(out.map((i) => i.key)).toEqual(['x', 'y', 'x#2', 'x#3'])
+    // Every key is unique, which is the actual invariant a keyed {#each} needs.
+    expect(new Set(out.map((i) => i.key)).size).toBe(out.length)
+  })
+
+  it('is a no-op on an empty input', () => {
+    expect(withUniqueKeys([], (i: { id: string }) => i.id)).toEqual([])
+  })
+
+  it('preserves the original item fields alongside the added key', () => {
+    const out = withUniqueKeys([{ id: 'a', label: 'A' }], (i) => i.id)
+    expect(out[0]).toEqual({ id: 'a', label: 'A', key: 'a' })
   })
 })

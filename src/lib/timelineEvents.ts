@@ -229,6 +229,72 @@ export function matchesEventMatch(task: TaskView, match: EventMatch): boolean {
   return false
 }
 
+// --- event identity ----------------------------------------------------------
+//
+// The wire format truncates an instance's timestamp to whole milliseconds
+// (TimelineEventEmitter.emit, drakkar/timeline_events.py: `int(ts_s * 1000)`)
+// and stamps `partition` from the emitting hook's Kafka partition
+// (Annotator.emit, drakkar/annotations.py: `partition=ctx.partition`) — not
+// from anything unique to the instance itself. Two genuinely different
+// instances of the same declared type, completing within the same
+// millisecond on the same partition, legitimately share type+ts+partition:
+// a `kind: range` type whose `ts`/`end_ts` mark a just-finished unit of work
+// (e.g. a per-message processing span) collides exactly this way under
+// enough throughput on one partition. `eventContentKey` folds in the rest of
+// an instance's own data so two such instances get different identities;
+// `withUniqueKeys` is the last-resort backstop for the remaining case this
+// can't solve — two byte-identical duplicate instances (e.g. an ingestion
+// path that records the same wire delivery twice).
+
+/** 32-bit FNV-1a, base-36 — cheap and deterministic, not cryptographic; only
+ * used to keep `eventContentKey` short while still folding in `values`/
+ * `match`, which can otherwise be arbitrarily large. */
+function shortHash(s: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0).toString(36)
+}
+
+/**
+ * Content-based identity for one event instance. Unlike a bare
+ * `type|ts|partition` triple, this also distinguishes two instances that
+ * collide on that triple but carry different `end_ts`/`text`/`values`/
+ * `match` — see the section comment above for why that collision is a real,
+ * expected case rather than a data bug. Not guaranteed unique across a list
+ * on its own: two truly byte-identical instances still collide here too —
+ * see `withUniqueKeys` for the render-list-level guarantee, and prefer
+ * deduping byte-identical instances at ingestion instead (Live.svelte) where
+ * that's the actual cause.
+ */
+export function eventContentKey(ev: TimelineEventView): string {
+  const tail = shortHash(JSON.stringify(ev.values) + '|' + JSON.stringify(ev.match))
+  return `${ev.type}|${ev.ts}|${ev.endTs ?? ''}|${ev.partition}|${ev.text}|${tail}`
+}
+
+/**
+ * Assigns each item a key via `keyOf`, then appends a deterministic `#n`
+ * occurrence suffix to every item after the first sharing that key — so a
+ * Svelte keyed `{#each}` over the result never sees a duplicate, even for
+ * two items whose `keyOf` output is identical (byte-identical duplicates, or
+ * a `keyOf` that is necessarily lossy). Order-stable and pure: the same
+ * input array always produces the same keys, so this is safe to call from a
+ * `$derived`. The first occurrence of a key keeps it bare, so code matching
+ * on a bare `keyOf(item)` (hover lookups, `activeEventKey` compares) still
+ * finds an instance when duplicates exist.
+ */
+export function withUniqueKeys<T>(items: T[], keyOf: (item: T) => string): (T & { key: string })[] {
+  const seen = new Map<string, number>()
+  return items.map((item) => {
+    const base = keyOf(item)
+    const count = (seen.get(base) ?? 0) + 1
+    seen.set(base, count)
+    return { ...item, key: count === 1 ? base : `${base}#${count}` }
+  })
+}
+
 function storageKey(workerId: string): string {
   return `dk.timeline.events.${workerId}`
 }

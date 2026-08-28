@@ -89,6 +89,8 @@
     trackHeight,
     qualifyingEventTracks,
     EVENT_TRACK_COLLAPSE_PX,
+    eventContentKey,
+    withUniqueKeys,
     type EventLabelPrefs,
     type EventMatch,
     type TimelineEventView,
@@ -629,12 +631,15 @@
     return decl.label.replace(/\{text\}/g, () => ev.text)
   }
 
-  // Composite identity for keyed each-blocks and the hover-clear effect
-  // below: instances carry no id of their own, but type+ts+partition is
-  // unique in practice (two instances of the same type at the same
-  // millisecond on the same partition would be indistinguishable anyway).
+  // Content-based identity, for the hover/active-state EQUALITY comparisons
+  // below (not for each-block keys — see EventChip.key for those). A bare
+  // type|ts|partition triple is NOT unique on its own: the wire format
+  // truncates ts to whole milliseconds and stamps partition from the
+  // emitting hook's own Kafka partition, so two genuinely different
+  // instances of one type can legitimately share all three — see
+  // eventContentKey's doc comment in lib/timelineEvents.ts.
   function eventKey(ev: TimelineEventView): string {
-    return `${ev.type}|${ev.ts}|${ev.partition}`
+    return eventContentKey(ev)
   }
 
   interface EventChip {
@@ -644,6 +649,13 @@
     width: number | null
     label: string
     link: string | null
+    // Guaranteed unique WITHIN the list this chip was built into (allChips
+    // or fullEventChips, each independently) — see withUniqueKeys. Every
+    // each-block keying on an EventChip (or a cluster/member derived from
+    // one) uses this instead of eventKey(chip.event), which is only
+    // content-based and can still collide for a true byte-identical
+    // duplicate.
+    key: string
   }
 
   const EVENT_CHIP_CAP = 500
@@ -658,10 +670,15 @@
   // instances outside the given pixel range (rendering callers), or omit it
   // for a buffer-wide pass (track layout, which must not depend on scroll —
   // see `fullEventChips` below).
+  //
+  // withUniqueKeys' occurrence-index tiebreaker is applied here, once, over
+  // the whole joined list — every each-block downstream (including a
+  // cluster's `members`, a subset of this list) inherits an already-unique
+  // key instead of re-deriving one from content that can collide.
   function joinEventChips(cullBounds: { from: number; to: number } | null): EventChip[] {
     if (eventDecls.length === 0) return []
     const bases = getLinkBases()
-    const out: EventChip[] = []
+    const out: Omit<EventChip, 'key'>[] = []
     for (const ev of events) {
       const decl = eventDeclByName.get(ev.type)
       if (!decl || eventVisibility[decl.name] === false) continue
@@ -680,7 +697,7 @@
       })
       if (out.length >= EVENT_CHIP_CAP) break
     }
-    return out
+    return withUniqueKeys(out, (c) => eventKey(c.event))
   }
 
   // Viewport-culled join, for everything that only needs to draw the
@@ -742,15 +759,18 @@
     })
   })
 
-  // Identity-stable cluster key: the first member's own eventKey, not the
-  // cluster's pixel `left`. `left` is `(ts - originTs) * pxPerSec` — it
-  // changes on every zoom step, so a position-derived key made zoom recreate
-  // every chip/line element and silently closed any open member popover (the
-  // activeClusterKey guard below stopped matching mid-zoom). A member's own
-  // identity survives a zoom exactly like `eventKey` already lets
-  // hoveredEvent/hoveredEventChip survive a scroll-driven recompute.
+  // Identity-stable cluster key: the first member's own guaranteed-unique
+  // EventChip.key, not the cluster's pixel `left`. `left` is
+  // `(ts - originTs) * pxPerSec` — it changes on every zoom step, so a
+  // position-derived key made zoom recreate every chip/line element and
+  // silently closed any open member popover (the activeClusterKey guard
+  // below stopped matching mid-zoom). A member's own key survives a zoom
+  // exactly like `eventKey` already lets hoveredEvent/hoveredEventChip
+  // survive a scroll-driven recompute — and, being drawn from EventChip.key
+  // rather than content alone, two clusters can never collide even if their
+  // anchor members happen to be content-identical.
   function clusterKey(decl: TimelineEventDecl, cluster: { members: EventChip[] }): string {
-    return `${decl.name}|${eventKey(cluster.members[0].event)}`
+    return `${decl.name}|${cluster.members[0].key}`
   }
 
   // In-lane visuals, split by kind: markers draw a full-height guide line —
@@ -1326,7 +1346,7 @@
                         <div class="event-cluster-pop-head">
                           {t.decl.name} &middot; {c.members.length}
                         </div>
-                        {#each c.members as m (eventKey(m.event))}
+                        {#each c.members as m (m.key)}
                           {@const unresolved = t.decl.action === 'link' && !m.link}
                           <button
                             class="event-cluster-member"
@@ -1426,7 +1446,7 @@
         {#each visibleMarkers as m (m.ts)}
           <div class="marker-line" style:left={`${m.left}px`}></div>
         {/each}
-        {#each eventRangeBands as chip (eventKey(chip.event))}
+        {#each eventRangeBands as chip (chip.key)}
           <div
             class="tl-event-band"
             style:left={`${chip.left}px`}
