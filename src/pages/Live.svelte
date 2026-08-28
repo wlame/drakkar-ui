@@ -37,8 +37,10 @@
     type ThroughputSample,
   } from '../lib/throughput'
   import {
+    appendEventDeduped,
     eventFromWsEvent,
     eventsFromHistory,
+    mergeHistorySnapshot,
     type TimelineEventView,
   } from '../lib/timelineEvents'
   import Timeline from '../components/live/Timeline.svelte'
@@ -271,8 +273,12 @@
         // Custom timeline events (contract v1.21) ride the same WS frame,
         // tagged by their own metadata.kind — a frame can only be one or the
         // other, so both parsers running is fine (exactly one returns non-null).
+        // Deduped against the buffer rather than unconditionally prepended:
+        // a redelivery, or an instance the next loadTimelineEventsHistory()
+        // snapshot also turns up, would otherwise double up in the buffer —
+        // see appendEventDeduped's doc comment in lib/timelineEvents.ts.
         const tev = eventFromWsEvent(e)
-        if (tev) timelineEvents = [tev, ...timelineEvents].slice(0, TIMELINE_EVENTS_MAX)
+        if (tev) timelineEvents = appendEventDeduped(timelineEvents, tev, TIMELINE_EVENTS_MAX)
         break
       }
       case 'runtime_health':
@@ -478,11 +484,17 @@
   // from connect time onward, same rationale as loadArrangesBoot above. A
   // 404 (backend predates the feature) or a degraded read resolves to
   // `null` from the api layer, which leaves the buffer empty rather than an
-  // error.
+  // error. Merged, not replaced wholesale: a live WS delivery can land while
+  // this fetch is in flight, and a plain overwrite would either drop it (not
+  // yet in the snapshot) or double it up (the snapshot's own query already
+  // picked it up too) — see mergeHistorySnapshot's doc comment.
   async function loadTimelineEventsHistory() {
     try {
       const payload = await api.timelineEvents(maxAgeMinutes)
-      if (payload) timelineEvents = eventsFromHistory(payload).slice(0, TIMELINE_EVENTS_MAX)
+      if (payload) {
+        const history = eventsFromHistory(payload)
+        timelineEvents = mergeHistorySnapshot(timelineEvents, history, TIMELINE_EVENTS_MAX)
+      }
     } catch {
       /* best-effort — WS annotations still populate going forward */
     }

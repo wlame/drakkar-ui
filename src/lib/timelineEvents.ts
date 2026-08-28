@@ -295,6 +295,51 @@ export function withUniqueKeys<T>(items: T[], keyOf: (item: T) => string): (T & 
   })
 }
 
+// --- buffer ingestion (Live.svelte) -------------------------------------------
+//
+// Two independent paths feed the page's `timelineEvents` buffer: WS
+// `annotation` frames (live, from connect time onward) and the
+// `/timeline/events` history-backfill endpoint (a point-in-time snapshot,
+// fetched at mount and again on every reconnect). Nothing reconciles them —
+// a live delivery already in the buffer can also show up in the very next
+// backfill snapshot (the recorder had it durable before the snapshot query
+// ran), and a backfill snapshot can arrive concurrently with a live
+// redelivery of something it already contains. Left unchecked, either
+// overlap puts the exact same instance in the buffer twice.
+
+/**
+ * Appends one live instance to `existing` (newest-first), unless an instance
+ * with the same content identity ({@link eventContentKey}) is already
+ * present — see the section comment above for why that can happen even
+ * without a redelivery bug on the wire.
+ */
+export function appendEventDeduped(
+  existing: TimelineEventView[],
+  instance: TimelineEventView,
+  max: number,
+): TimelineEventView[] {
+  const key = eventContentKey(instance)
+  if (existing.some((e) => eventContentKey(e) === key)) return existing
+  return [instance, ...existing].slice(0, max)
+}
+
+/**
+ * Replaces `existing` with a fresh `history` snapshot (already newest-first,
+ * per the backend's own ordering), while keeping any live-only instance from
+ * `existing` that isn't in the snapshot — a wholesale replace would
+ * otherwise silently drop a delivery that landed after the snapshot's own
+ * query ran.
+ */
+export function mergeHistorySnapshot(
+  existing: TimelineEventView[],
+  history: TimelineEventView[],
+  max: number,
+): TimelineEventView[] {
+  const historyKeys = new Set(history.map(eventContentKey))
+  const liveOnly = existing.filter((e) => !historyKeys.has(eventContentKey(e)))
+  return [...liveOnly, ...history].slice(0, max)
+}
+
 function storageKey(workerId: string): string {
   return `dk.timeline.events.${workerId}`
 }

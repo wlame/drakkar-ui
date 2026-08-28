@@ -8,7 +8,13 @@ import { flushSync, mount, unmount } from 'svelte'
 import Live from './Live.svelte'
 import { identity } from '../lib/config'
 import { hash } from '../lib/router'
-import type { Identity, RecentTask, TimelineConfig, WorkerPeer } from '../lib/types'
+import type {
+  Identity,
+  RecentTask,
+  TimelineConfig,
+  TimelineEventDecl,
+  WorkerPeer,
+} from '../lib/types'
 
 // Stubbed rather than opening a real socket: happy-dom's WebSocket would try
 // to connect, and these tests drive the page entirely through its HTTP resync.
@@ -77,6 +83,10 @@ let workersPayload: WorkerPeer[] = []
 // What GET /api/v1/live/overview answers with. Reassigned by the offload
 // readout tests — key-presence of `offload` is the contract's feature flag.
 let overviewPayload: Record<string, unknown>
+// What GET /api/v1/timeline/events answers with (the custom-timeline-events
+// backfill). `null` (the default) leaves the buffer to WS deliveries alone,
+// matching every existing test's expectations.
+let timelineEventsPayload: unknown = null
 
 function defaultOverview(): Record<string, unknown> {
   return {
@@ -89,13 +99,23 @@ function defaultOverview(): Record<string, unknown> {
   }
 }
 
-const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+// Named so a test that needs to override routing for one endpoint (host
+// pressure routing, below) can still fall through to this for everything
+// else, instead of replacing the whole dispatcher and silently starving
+// every OTHER endpoint for the rest of the file — `mockImplementation`
+// (unlike `mockImplementationOnce`) replaces it permanently, and
+// `fetchMock.mockClear()` in beforeEach only resets call history, not the
+// implementation.
+async function defaultFetchDispatch(input: RequestInfo | URL) {
   const url = String(input)
   if (url.includes('/recent-tasks')) return okJson(recentPayload)
   if (url.includes('/workers')) return okJson(workersPayload)
   if (url.includes('/live/overview')) return okJson(overviewPayload)
+  if (url.includes('/timeline/events')) return okJson(timelineEventsPayload)
   return okJson([])
-})
+}
+
+const fetchMock = vi.fn(defaultFetchDispatch)
 
 beforeEach(() => {
   // Fake timers from before mount: the 5s resync interval is created during
@@ -105,8 +125,10 @@ beforeEach(() => {
   recentPayload = { tasks: [recentTask('t-1', 2), recentTask('t-2', 1)], lane_count: 4 }
   workersPayload = []
   overviewPayload = defaultOverview()
+  timelineEventsPayload = null
   socketOpts = null
-  fetchMock.mockClear()
+  fetchMock.mockReset()
+  fetchMock.mockImplementation(defaultFetchDispatch)
   vi.stubGlobal('fetch', fetchMock)
   identity.set(null)
   // The router's fragment store is module-global, so a tab selected by one
@@ -512,6 +534,105 @@ describe('Live full resync on reconnect', () => {
     await settled()
 
     expect(timelineCalls()).toBeGreaterThan(before)
+
+    teardown()
+  })
+})
+
+describe('Live timeline-events ingestion dedup', () => {
+  // Two independent paths feed timelineEvents: the /timeline/events
+  // backfill (a point-in-time snapshot, fetched at mount) and WS
+  // 'annotation' frames (live, from connect time onward). Nothing used to
+  // reconcile them, so an instance the backfill already captured could
+  // arrive again over WS (a redelivery, or simply the same instance both
+  // paths independently picked up) and double up in the render list — see
+  // appendEventDeduped/mergeHistorySnapshot in lib/timelineEvents.ts.
+  // kind: 'range' rather than 'marker' — range instances render one
+  // .tl-event-band per instance and are never clustered (unlike markers,
+  // which merge same-position duplicates into a single "+N" glyph and would
+  // hide a duplicate-entry bug behind an unchanged chip count).
+  const decl: TimelineEventDecl = {
+    name: 'scan_window_processing_range',
+    kind: 'range',
+    color: '#7c3aed',
+    show: true,
+    action: 'none',
+  }
+
+  function historyEnvelope(ts: number, partition: number, text: string) {
+    return {
+      kind: 'timeline_event',
+      scope: 'message',
+      hook: 'on_message_complete',
+      window_id: null,
+      offsets: [],
+      data: {
+        type: 'scan_window_processing_range',
+        ts_ms: Math.round(ts * 1000),
+        end_ts_ms: Math.round((ts + 1) * 1000),
+        text,
+      },
+      ts,
+      partition,
+    }
+  }
+
+  function wsAnnotation(ts: number, partition: number, text: string) {
+    return {
+      event: 'annotation',
+      ts,
+      partition,
+      metadata: JSON.stringify({
+        kind: 'timeline_event',
+        scope: 'message',
+        hook: 'on_message_complete',
+        window_id: null,
+        offsets: [],
+        data: {
+          type: 'scan_window_processing_range',
+          ts_ms: Math.round(ts * 1000),
+          end_ts_ms: Math.round((ts + 1) * 1000),
+          text,
+        },
+      }),
+    }
+  }
+
+  function bandCount(target: HTMLElement): number {
+    return target.querySelectorAll('.tl-event-band').length
+  }
+
+  it('does not double an instance the backfill already captured when it also arrives over WS', async () => {
+    identity.set(identityWith({ ...timelineConfig(1), events: [decl] }))
+    const ts = NOW - 30
+    timelineEventsPayload = { events: [historyEnvelope(ts, 11, 'shared')], unavailable: false }
+    const { target, teardown } = mountLive()
+    await settled()
+    expect(bandCount(target)).toBe(1)
+
+    // The exact same instance (same type/ts/partition/text) redelivered —
+    // e.g. a WS reconnect, or simply landing on the wire again after the
+    // backfill snapshot already picked it up.
+    socketOpts!.onEvent(wsAnnotation(ts, 11, 'shared'))
+    flushSync()
+
+    expect(bandCount(target)).toBe(1)
+
+    teardown()
+  })
+
+  it('still renders a genuinely distinct instance delivered over WS after the backfill', async () => {
+    identity.set(identityWith({ ...timelineConfig(1), events: [decl] }))
+    const ts = NOW - 30
+    timelineEventsPayload = { events: [historyEnvelope(ts, 11, 'first')], unavailable: false }
+    const { target, teardown } = mountLive()
+    await settled()
+    expect(bandCount(target)).toBe(1)
+
+    socketOpts!.onEvent(wsAnnotation(ts + 5, 11, 'second'))
+    flushSync()
+
+    expect(bandCount(target)).toBe(2)
 
     teardown()
   })

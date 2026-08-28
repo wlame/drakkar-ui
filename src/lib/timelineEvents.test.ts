@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  appendEventDeduped,
   clusterEvents,
   eventContentKey,
   EVENT_LABEL_PX_PER_CHAR,
@@ -10,6 +11,7 @@ import {
   layoutTrack,
   loadEventVisibility,
   matchesEventMatch,
+  mergeHistorySnapshot,
   qualifyingEventTracks,
   resolveEventLink,
   resolveEventVisibility,
@@ -656,5 +658,59 @@ describe('withUniqueKeys', () => {
   it('preserves the original item fields alongside the added key', () => {
     const out = withUniqueKeys([{ id: 'a', label: 'A' }], (i) => i.id)
     expect(out[0]).toEqual({ id: 'a', label: 'A', key: 'a' })
+  })
+})
+
+describe('appendEventDeduped', () => {
+  it('prepends a genuinely new instance', () => {
+    const existing = [eventView({ text: 'old' })]
+    const fresh = eventView({ text: 'new', ts: 2000 })
+    expect(appendEventDeduped(existing, fresh, 500)).toEqual([fresh, ...existing])
+  })
+
+  it('leaves the buffer unchanged when the instance is already present (redelivery)', () => {
+    const one = eventView({ text: 'dup' })
+    const existing = [one, eventView({ text: 'other', ts: 2000 })]
+    expect(appendEventDeduped(existing, { ...one }, 500)).toEqual(existing)
+  })
+
+  it('still prepends a distinct instance that collides on type+ts+partition alone', () => {
+    const a = eventView({ type: 'x', ts: 1000, partition: 11, text: '3 tasks' })
+    const b = eventView({ type: 'x', ts: 1000, partition: 11, text: '7 tasks' })
+    expect(appendEventDeduped([a], b, 500)).toEqual([b, a])
+  })
+
+  it('caps the result at max', () => {
+    const existing = [eventView({ text: 'a' }), eventView({ text: 'b' })]
+    expect(appendEventDeduped(existing, eventView({ text: 'c' }), 2)).toHaveLength(2)
+  })
+})
+
+describe('mergeHistorySnapshot', () => {
+  it('replaces the buffer with the snapshot when nothing is live-only', () => {
+    const existing = [eventView({ text: 'a' })]
+    const history = [eventView({ text: 'a' }), eventView({ text: 'b', ts: 2000 })]
+    expect(mergeHistorySnapshot(existing, history, 500)).toEqual(history)
+  })
+
+  it('keeps a live-only instance the snapshot has not caught up to yet', () => {
+    const liveOnly = eventView({ text: 'just arrived', ts: 3000 })
+    const existing = [liveOnly]
+    const history = [eventView({ text: 'a' })]
+    expect(mergeHistorySnapshot(existing, history, 500)).toEqual([liveOnly, ...history])
+  })
+
+  it('does not duplicate an instance the snapshot and the live buffer both carry', () => {
+    const shared = eventView({ text: 'shared' })
+    const existing = [shared]
+    const history = [{ ...shared }]
+    const out = mergeHistorySnapshot(existing, history, 500)
+    expect(out).toHaveLength(1)
+  })
+
+  it('caps the merged result at max', () => {
+    const existing = [eventView({ text: 'live', ts: 3000 })]
+    const history = [eventView({ text: 'a' }), eventView({ text: 'b', ts: 2000 })]
+    expect(mergeHistorySnapshot(existing, history, 2)).toHaveLength(2)
   })
 })
