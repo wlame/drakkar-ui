@@ -1,14 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  clusterEvents,
+  EVENT_LABEL_PX_PER_CHAR,
   eventFromWsEvent,
   eventGeometry,
   eventsFromHistory,
+  layoutTrack,
   loadEventVisibility,
   matchesEventMatch,
+  qualifyingEventTracks,
   resolveEventLink,
   resolveEventVisibility,
   saveEventVisibility,
+  trackHeight,
+  TRACK_BASE_HEIGHT_PX,
+  TRACK_TALL_HEIGHT_PX,
+  trimLabelForVertical,
+  VERTICAL_LABEL_MAX_CHARS,
   type TimelineEventView,
 } from './timelineEvents'
 import type { TimelineEventDecl, WsEvent } from './types'
@@ -428,5 +437,144 @@ describe('resolveEventVisibility', () => {
   it('ignores overrides for names with no matching declaration', () => {
     const decls = [decl({ name: 'a', show: true })]
     expect(resolveEventVisibility(decls, { a: true, ghost: false })).toEqual({ a: true })
+  })
+})
+
+describe('clusterEvents', () => {
+  it('keeps far-apart items as separate single-member clusters', () => {
+    const items = [{ left: 0 }, { left: 100 }, { left: 250 }]
+    const clusters = clusterEvents(items, 12)
+    expect(clusters).toHaveLength(3)
+    expect(clusters.map((c) => c.members.length)).toEqual([1, 1, 1])
+  })
+
+  it('merges items within collapsePx of the cluster anchor into one cluster', () => {
+    const items = [{ left: 0 }, { left: 5 }, { left: 11 }]
+    const clusters = clusterEvents(items, 12)
+    expect(clusters).toHaveLength(1)
+    expect(clusters[0].left).toBe(0)
+    expect(clusters[0].members).toHaveLength(3)
+  })
+
+  it('merges relative to the cluster anchor, not the previous member', () => {
+    // 0, 10, 20: each consecutive gap is 10 (<=12), but 20 is 20px from the
+    // anchor (0) — anchor-relative merge (mirroring deriveMarkers) keeps 20
+    // out of the first cluster rather than chaining it in.
+    const items = [{ left: 0 }, { left: 10 }, { left: 20 }]
+    const clusters = clusterEvents(items, 12)
+    expect(clusters).toHaveLength(2)
+    expect(clusters[0].members).toHaveLength(2)
+    expect(clusters[1].members).toHaveLength(1)
+  })
+
+  it('sorts unsorted input by left before clustering', () => {
+    const items = [{ left: 250 }, { left: 0 }, { left: 100 }]
+    const clusters = clusterEvents(items, 12)
+    expect(clusters.map((c) => c.left)).toEqual([0, 100, 250])
+  })
+
+  it('returns [] for an empty input', () => {
+    expect(clusterEvents([], 12)).toEqual([])
+  })
+})
+
+describe('layoutTrack', () => {
+  function item(left: number, label: string) {
+    return { left, label }
+  }
+
+  it('renders a lone chip horizontally regardless of label length', () => {
+    const longLabel = 'a'.repeat(40)
+    const out = layoutTrack([item(0, longLabel)], 12)
+    expect(out).toHaveLength(1)
+    expect(out[0].mode).toBe('horizontal')
+    expect(out[0].displayLabel).toBe(longLabel)
+  })
+
+  it('renders a multi-member cluster as a "+N" glyph, not text labels', () => {
+    const out = layoutTrack([item(0, 'a'), item(5, 'b'), item(10, 'c')], 12)
+    expect(out).toHaveLength(1)
+    expect(out[0].mode).toBe('cluster')
+    expect(out[0].members).toHaveLength(3)
+    expect(out[0].displayLabel).toBe('+3')
+  })
+
+  it('keeps a short label horizontal when it fits before the next cluster', () => {
+    const gapPx = 4 * EVENT_LABEL_PX_PER_CHAR + 20
+    const out = layoutTrack([item(0, 'abcd'), item(gapPx, 'x')], 12)
+    expect(out[0].mode).toBe('horizontal')
+    expect(out[0].displayLabel).toBe('abcd')
+  })
+
+  it('switches a label to trimmed vertical text when it cannot fit before the next cluster', () => {
+    const longLabel = 'deployment-marker-event'
+    const tightGapPx = 5 // far tighter than the label needs at any px/char estimate
+    const out = layoutTrack([item(0, longLabel), item(tightGapPx, 'x')], 1)
+    expect(out[0].mode).toBe('vertical')
+    expect(out[0].displayLabel).toBe(trimLabelForVertical(longLabel))
+    expect(out[0].displayLabel.length).toBeLessThanOrEqual(VERTICAL_LABEL_MAX_CHARS)
+  })
+
+  it('is a no-op on an empty track', () => {
+    expect(layoutTrack([], 12)).toEqual([])
+  })
+})
+
+describe('trimLabelForVertical', () => {
+  it('leaves a label at or under the char cap untouched', () => {
+    expect(trimLabelForVertical('abcdef')).toBe('abcdef')
+    expect(trimLabelForVertical('abc')).toBe('abc')
+  })
+
+  it('trims a longer label to the cap with a trailing ellipsis', () => {
+    const trimmed = trimLabelForVertical('deployment_marker')
+    expect(trimmed).toBe('deplo…')
+    expect(trimmed.length).toBe(VERTICAL_LABEL_MAX_CHARS)
+  })
+
+  it('respects a custom char cap', () => {
+    expect(trimLabelForVertical('abcdefgh', 3)).toBe('ab…')
+  })
+})
+
+describe('trackHeight', () => {
+  it('is the base height when no visible chip is vertical', () => {
+    expect(trackHeight([{ mode: 'horizontal' }, { mode: 'cluster' }])).toBe(TRACK_BASE_HEIGHT_PX)
+  })
+
+  it('grows to the tall height once any visible chip is vertical', () => {
+    expect(trackHeight([{ mode: 'horizontal' }, { mode: 'vertical' }])).toBe(TRACK_TALL_HEIGHT_PX)
+  })
+
+  it('is the base height for an empty (fully culled) track', () => {
+    expect(trackHeight([])).toBe(TRACK_BASE_HEIGHT_PX)
+  })
+})
+
+describe('qualifyingEventTracks', () => {
+  it('keeps declaration order among qualifying types', () => {
+    const decls = [decl({ name: 'c' }), decl({ name: 'a' }), decl({ name: 'b' })]
+    const events = [eventView({ type: 'a' }), eventView({ type: 'b' }), eventView({ type: 'c' })]
+    const out = qualifyingEventTracks(decls, events, { a: true, b: true, c: true })
+    expect(out.map((d) => d.name)).toEqual(['c', 'a', 'b'])
+  })
+
+  it('drops a type with no instance in the buffer', () => {
+    const decls = [decl({ name: 'a' }), decl({ name: 'b' })]
+    const events = [eventView({ type: 'a' })]
+    const out = qualifyingEventTracks(decls, events, { a: true, b: true })
+    expect(out.map((d) => d.name)).toEqual(['a'])
+  })
+
+  it('drops a type hidden via the gear (visibility false)', () => {
+    const decls = [decl({ name: 'a' })]
+    const events = [eventView({ type: 'a' })]
+    expect(qualifyingEventTracks(decls, events, { a: false })).toEqual([])
+  })
+
+  it('keeps a type with no visibility entry (treated as visible)', () => {
+    const decls = [decl({ name: 'a' })]
+    const events = [eventView({ type: 'a' })]
+    expect(qualifyingEventTracks(decls, events, {}).map((d) => d.name)).toEqual(['a'])
   })
 })

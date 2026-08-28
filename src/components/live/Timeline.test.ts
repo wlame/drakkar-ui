@@ -681,3 +681,156 @@ describe('custom timeline events', () => {
     expect(target.querySelector('.tl-event-band')).toBeNull()
   })
 })
+
+describe('per-type event tracks', () => {
+  const trackFor = (target: HTMLElement, name: string) =>
+    target.querySelector(`.event-track[aria-label="${name} timeline events"]`)
+
+  it('renders one track per type that is visible and has an instance in the buffer, in declaration order', () => {
+    const deployDecl = eventDecl('deploy')
+    const ghostDecl = eventDecl('ghost') // declared, but no instance below — no track
+    const ev = eventInstance('deploy', tasks[0].start_ts)
+    const { target } = renderTracked({
+      timeline: { ...config, events: [deployDecl, ghostDecl] },
+      events: [ev],
+    })
+
+    expect(trackFor(target, 'deploy')).not.toBeNull()
+    expect(trackFor(target, 'ghost')).toBeNull()
+    expect(trackFor(target, 'deploy')?.querySelector('.track-label')?.textContent).toBe('deploy')
+  })
+
+  it('drops a track when its type is hidden via the gear, and restores it when re-enabled', () => {
+    const decl = eventDecl('deploy')
+    const ev = eventInstance('deploy', tasks[0].start_ts)
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: [ev],
+    })
+    expect(trackFor(target, 'deploy')).not.toBeNull()
+
+    ;(target.querySelector('button.gear') as HTMLButtonElement).click()
+    flushSync()
+    const checkbox = target.querySelector(
+      'input[type="checkbox"][aria-label="Show deploy timeline events"]',
+    ) as HTMLInputElement
+    checkbox.checked = false
+    checkbox.dispatchEvent(new Event('change', { bubbles: true }))
+    flushSync()
+    expect(trackFor(target, 'deploy')).toBeNull()
+
+    checkbox.checked = true
+    checkbox.dispatchEvent(new Event('change', { bubbles: true }))
+    flushSync()
+    expect(trackFor(target, 'deploy')).not.toBeNull()
+  })
+
+  it('collapses a dense same-type burst into one "+N" cluster glyph', () => {
+    const decl = eventDecl('deploy')
+    const base = tasks[0].start_ts
+    // 0.2s apart at the default 16px/sec (8 * zoom 2) is 3.2px — well inside
+    // the 12px collapse distance from the first (anchor) member.
+    const evs = [
+      eventInstance('deploy', base, { text: 'a' }),
+      eventInstance('deploy', base + 0.2, { text: 'b' }),
+      eventInstance('deploy', base + 0.4, { text: 'c' }),
+    ]
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: evs,
+    })
+
+    const chips = target.querySelectorAll('.event-chip')
+    expect(chips).toHaveLength(1)
+    expect(chips[0].classList.contains('cluster')).toBe(true)
+    expect(chips[0].textContent?.trim()).toBe('+3')
+  })
+
+  it('keeps a lone chip horizontal but switches a crowded one to trimmed vertical text, growing the track', () => {
+    const decl = eventDecl('maintenance_window_alert') // 24 chars — needs real room
+    const base = tasks[0].start_ts
+    const evs = [
+      eventInstance('maintenance_window_alert', base, { text: 'first' }),
+      // +2.5s => 40px at 16px/sec: far enough not to cluster (>12px), but
+      // nowhere near enough room for a 24-char label to fit before it.
+      eventInstance('maintenance_window_alert', base + 2.5, { text: 'x' }),
+    ]
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: evs,
+    })
+
+    const track = trackFor(target, 'maintenance_window_alert') as HTMLElement
+    expect(track).not.toBeNull()
+    expect(track.style.height).toBe('44px')
+
+    const chips = track.querySelectorAll('.event-chip')
+    expect(chips).toHaveLength(2)
+    expect(chips[0].classList.contains('vertical')).toBe(true)
+    // Trimmed to VERTICAL_LABEL_MAX_CHARS (6) with a trailing ellipsis.
+    expect(chips[0].textContent).toBe('maint…')
+    // The second chip has no further neighbor, so it stays horizontal even
+    // though its own label ('maintenance_window_alert') is long too.
+    expect(chips[1].classList.contains('vertical')).toBe(false)
+  })
+
+  it('shows cluster member details on hover and opens a popover listing members on click', () => {
+    const decl = eventDecl('slow_window', { kind: 'flag', action: 'highlight', label: '{text}' })
+    const base = tasks[0].start_ts
+    const evs = [
+      eventInstance('slow_window', base, { text: 'first', match: { offsets: [[0, 10]] } }),
+      eventInstance('slow_window', base + 0.2, { text: 'second', match: { offsets: [[0, 20]] } }),
+    ]
+    const taskA: TaskView = { ...tasks[0], source_offsets: [10] }
+    const taskB: TaskView = { ...tasks[1], source_offsets: [20] }
+    const { target } = renderTracked({
+      tasks: [taskA, taskB],
+      timeline: { ...config, events: [decl] },
+      events: evs,
+    })
+
+    const cluster = target.querySelector('.event-chip.cluster') as HTMLButtonElement
+    expect(cluster).not.toBeNull()
+    cluster.dispatchEvent(new Event('mouseenter'))
+    flushSync()
+    const hover = target.querySelector('.tl-hover') as HTMLElement
+    expect(hover.textContent).toContain('Members:')
+    expect(hover.textContent).toContain('2')
+    expect(hover.textContent).toContain('first')
+    expect(hover.textContent).toContain('second')
+
+    cluster.click()
+    flushSync()
+    const pop = target.querySelector('.event-cluster-pop') as HTMLElement
+    expect(pop).not.toBeNull()
+    const members = pop.querySelectorAll('.event-cluster-member')
+    expect(members).toHaveLength(2)
+    expect(members[0].textContent).toContain('first')
+    expect(members[1].textContent).toContain('second')
+
+    // Clicking a member fires its own highlight action and closes the popover.
+    ;(members[0] as HTMLButtonElement).click()
+    flushSync()
+    expect(target.querySelector('.event-cluster-pop')).toBeNull()
+    expect(barFor(target, taskA.task_id).classList.contains('dim')).toBe(false)
+    expect(barFor(target, taskB.task_id).classList.contains('dim')).toBe(true)
+  })
+
+  it('closes the cluster popover on an outside click', () => {
+    const decl = eventDecl('deploy')
+    const base = tasks[0].start_ts
+    const evs = [eventInstance('deploy', base), eventInstance('deploy', base + 0.2)]
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: evs,
+    })
+
+    ;(target.querySelector('.event-chip.cluster') as HTMLButtonElement).click()
+    flushSync()
+    expect(target.querySelector('.event-cluster-pop')).not.toBeNull()
+
+    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    flushSync()
+    expect(target.querySelector('.event-cluster-pop')).toBeNull()
+  })
+})

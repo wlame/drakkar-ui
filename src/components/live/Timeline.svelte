@@ -83,8 +83,13 @@
     loadEventVisibility,
     saveEventVisibility,
     resolveEventVisibility,
+    layoutTrack,
+    trackHeight,
+    qualifyingEventTracks,
+    EVENT_TRACK_COLLAPSE_PX,
     type EventMatch,
     type TimelineEventView,
+    type TrackChip,
   } from '../../lib/timelineEvents'
   import { getLinkBases } from '../../lib/enrich'
 
@@ -169,6 +174,14 @@
   let hovered = $state<TaskView | null>(null)
   let hoveredMarker = $state<MarkerPin | null>(null)
   let hoveredEvent = $state<TimelineEventView | null>(null)
+  // Cluster hover/click state for the per-type event tracks below. A hovered
+  // cluster feeds the .tl-hover strip like a single event does; a clicked
+  // cluster opens the member popover, tracked by key (not object identity —
+  // trackViews recomputes on every viewport cull pass, so a click handler
+  // closing over "this cluster object" would go stale the moment the
+  // operator scrolled).
+  let hoveredCluster = $state<{ decl: TimelineEventDecl; members: EventChip[] } | null>(null)
+  let activeClusterKey = $state<string | null>(null)
 
   // --- Throughput track (contract v1.16) -----------------------------------
   // Which of the three windows the track draws; every frame carries all of
@@ -627,7 +640,10 @@
   // EVENT_CHIP_CAP survivors — `events` arrives newest-first (WS prepend +
   // history backfill), so taking the first ones that pass the join keeps
   // the most recent instances rather than an arbitrary slice.
-  const eventViews = $derived.by<EventChip[]>(() => {
+  //
+  // This is the shared per-instance geometry pass; `trackViews` below groups
+  // its output by type into the per-track density ladder actually rendered.
+  const allChips = $derived.by<EventChip[]>(() => {
     if (eventDecls.length === 0) return []
     const culling = viewportWidth > 0
     const visibleFrom = scrollLeft - CULL_MARGIN_PX
@@ -653,52 +669,158 @@
     return out
   })
 
-  // In-lane visuals, split by kind: markers draw a full-height guide line,
-  // ranges draw a translucent duration band. Flags draw nothing in the
-  // lanes — the rail chip is their only visual.
-  const eventMarkerLines = $derived(eventViews.filter((e) => e.decl.kind === 'marker'))
-  const eventRangeBands = $derived(eventViews.filter((e) => e.decl.kind === 'range'))
+  // Which declared types get their own track: gear-visible AND represented
+  // in the full loaded buffer (`events`, not the viewport-culled `allChips`)
+  // — see qualifyingEventTracks' doc comment for why the buffer, not the
+  // viewport, decides this.
+  const eventTrackDecls = $derived(qualifyingEventTracks(eventDecls, events, eventVisibility))
 
-  // The chip behind the currently hovered instance, so the hover strip can
-  // tell an action=link chip with no resolved href (chip.link === null: an
-  // unresolved {var}, see resolveEventLink) apart from a link that simply
-  // isn't configured. Looked up by eventKey, not `===`: hoveredEvent is a
-  // $state field, so assigning it `chip.event` wraps the value in its own
-  // reactive proxy with a different identity than the object still sitting
-  // in eventViews (the same reason the cull-guard effect above compares by
-  // key rather than reference).
+  interface TrackView {
+    decl: TimelineEventDecl
+    clusters: TrackChip<EventChip>[]
+    height: number
+  }
+
+  // One row per qualifying type, in declaration order, each laid out
+  // independently through the cluster -> horizontal -> vertical density
+  // ladder (lib/timelineEvents.ts). Tracks stack in normal document flow
+  // (each is its own fixed-height block), so no manual top-offset math is
+  // needed here.
+  const trackViews = $derived.by<TrackView[]>(() => {
+    return eventTrackDecls.map((decl) => {
+      const chips = allChips.filter((c) => c.decl.name === decl.name)
+      const clusters = layoutTrack(chips, EVENT_TRACK_COLLAPSE_PX)
+      return { decl, clusters, height: trackHeight(clusters) }
+    })
+  })
+
+  function clusterKey(decl: TimelineEventDecl, cluster: { left: number }): string {
+    return `${decl.name}|${cluster.left}`
+  }
+
+  // In-lane visuals, split by kind: markers draw a full-height guide line —
+  // one per rendered CLUSTER, not per member, so a dense marker burst draws
+  // one line where the chip itself collapsed to one glyph. Ranges draw a
+  // translucent duration band per instance (bands are never clustered: each
+  // one already draws as a real, visually distinct rectangle). Flags draw
+  // nothing in the lanes — the track chip is their only visual.
+  const eventMarkerLines = $derived.by(() => {
+    const out: { left: number; decl: TimelineEventDecl }[] = []
+    for (const t of trackViews) {
+      if (t.decl.kind !== 'marker') continue
+      for (const c of t.clusters) out.push({ left: c.left, decl: t.decl })
+    }
+    return out
+  })
+  const eventRangeBands = $derived(allChips.filter((c) => c.decl.kind === 'range'))
+
+  // The chip behind the currently hovered single-member instance, so the
+  // hover strip can tell an action=link chip with no resolved href
+  // (chip.link === null: an unresolved {var}, see resolveEventLink) apart
+  // from a link that simply isn't configured. Looked up by eventKey, not
+  // `===`: hoveredEvent is a $state field, so assigning it `chip.event`
+  // wraps the value in its own reactive proxy with a different identity
+  // than the object still sitting in allChips (the same reason the
+  // cull-guard effect below compares by key rather than reference).
   const hoveredEventChip = $derived.by(() => {
     if (!hoveredEvent) return undefined
     const key = eventKey(hoveredEvent)
-    return eventViews.find((v) => eventKey(v.event) === key)
+    return allChips.find((v) => eventKey(v.event) === key)
   })
 
   // Same "hovered element left the rendered set" guard the marker pins use
   // above: a hovered chip can be culled by a scroll, or dropped by a
   // visibility toggle, without ever firing its own mouseleave.
   $effect(() => {
-    const views = eventViews
+    const views = allChips
     const hoveredKey = untrack(() => (hoveredEvent ? eventKey(hoveredEvent) : undefined))
     if (hoveredKey === undefined) return
     if (!views.some((v) => eventKey(v.event) === hoveredKey)) hoveredEvent = null
   })
 
-  // Click handling by action: `link` chips are anchors and need no handler
-  // here; `none` does nothing. `highlight`/`filter` both drive the one
-  // emphasize/dim effect in v1 (see the `roleInputActive`/`passes` wiring
-  // above) — clicking the chip that is already active clears it.
-  function onEventChipActivate(chip: EventChip) {
-    if (chip.decl.action !== 'highlight' && chip.decl.action !== 'filter') return
-    if (!chip.event.match) return
-    const key = eventKey(chip.event)
+  // Same guard for a hovered cluster glyph: matched by its first member's
+  // key, since the cluster object itself is rebuilt every recompute.
+  $effect(() => {
+    const views = trackViews
+    const first = untrack(() => hoveredCluster?.members[0])
+    if (!first) return
+    const key = eventKey(first.event)
+    const stillThere = views.some((t) =>
+      t.clusters.some(
+        (c) => c.mode === 'cluster' && c.members.some((m) => eventKey(m.event) === key),
+      ),
+    )
+    if (!stillThere) hoveredCluster = null
+  })
+
+  // And for an open cluster popover: closes it if a scroll/recompute drops
+  // the cluster it was anchored to, the same way the gear popover has no
+  // such guard because it isn't tied to recomputed geometry.
+  $effect(() => {
+    const views = trackViews
+    const key = untrack(() => activeClusterKey)
+    if (key === null) return
+    const stillThere = views.some((t) =>
+      t.clusters.some((c) => c.mode === 'cluster' && clusterKey(t.decl, c) === key),
+    )
+    if (!stillThere) activeClusterKey = null
+  })
+
+  // Shared highlight/filter toggle, driven by either a direct single-chip
+  // click or a member row inside a cluster popover. Both action names drive
+  // the one emphasize/dim effect in v1 (see the `roleInputActive`/`passes`
+  // wiring above) — clicking the chip/member that is already active clears
+  // it.
+  function activateHighlightFilter(decl: TimelineEventDecl, ev: TimelineEventView) {
+    if (decl.action !== 'highlight' && decl.action !== 'filter') return
+    if (!ev.match) return
+    const key = eventKey(ev)
     if (activeEventKey === key) {
       activeEventMatch = null
       activeEventKey = null
     } else {
-      activeEventMatch = chip.event.match
+      activeEventMatch = ev.match
       activeEventKey = key
     }
   }
+
+  // Direct single-chip click: `link` chips are anchors and need no handler
+  // here; `none` does nothing.
+  function onEventChipActivate(chip: EventChip) {
+    activateHighlightFilter(chip.decl, chip.event)
+  }
+
+  function toggleClusterPopover(decl: TimelineEventDecl, cluster: { left: number }) {
+    const key = clusterKey(decl, cluster)
+    activeClusterKey = activeClusterKey === key ? null : key
+  }
+
+  // A member row's click fires that instance's normal action and closes the
+  // popover — `link` opens the resolved href in a new tab exactly like a
+  // direct link chip would (window.open rather than an <a> href, since a
+  // popover row isn't itself the anchor); `highlight`/`filter` reuse the
+  // shared toggle; `none` just closes the popover.
+  function onMemberActivate(decl: TimelineEventDecl, ev: TimelineEventView) {
+    if (decl.action === 'link') {
+      const href = resolveEventLink(decl, ev, getLinkBases())
+      if (href) window.open(href, '_blank', 'noopener')
+    } else {
+      activateHighlightFilter(decl, ev)
+    }
+    activeClusterKey = null
+  }
+
+  // Close the cluster popover on a click anywhere outside its own trigger +
+  // panel — same pointerdown-outside idiom as the gear popover below.
+  $effect(() => {
+    if (activeClusterKey === null) return
+    function onPointerDown(e: PointerEvent) {
+      const target = e.target as HTMLElement
+      if (!target.closest('.event-cluster-wrap')) activeClusterKey = null
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  })
 
   // Esc clears the active highlight/filter emphasis — a lighter-weight
   // escape hatch than reclicking the same chip. The listener only exists
@@ -1094,46 +1216,94 @@
           <div class="tick-label" style:left={`${tk.left}px`}>{tk.label}</div>
         {/each}
       </div>
-      {#if timeline?.events}
-        <!-- Custom-event rail (contract v1.21), between the axis and the
-             role-marker rail: one chip per visible instance whose type has a
-             declaration. Same rail-clears-hover idiom as .tl-markers below. -->
-        <div
-          class="tl-events"
-          role="group"
-          aria-label="Timeline events"
-          onmouseleave={() => (hoveredEvent = null)}
-        >
-          {#each eventViews as chip (eventKey(chip.event))}
-            {#if chip.link}
-              <a
-                class="event-chip"
-                href={chip.link}
-                target="_blank"
-                rel="noopener"
-                style:left={`${chip.left}px`}
-                style:border-left-color={chip.decl.color}
-                style:color={chip.decl.color}
-                onmouseenter={() => (hoveredEvent = chip.event)}
-                onmouseleave={() => (hoveredEvent = null)}
-                onfocus={() => (hoveredEvent = chip.event)}
-                onblur={() => (hoveredEvent = null)}
-              >{chip.label}</a>
-            {:else}
-              <button
-                class="event-chip"
-                type="button"
-                class:active={activeEventKey !== null && eventKey(chip.event) === activeEventKey}
-                style:left={`${chip.left}px`}
-                style:border-left-color={chip.decl.color}
-                style:color={chip.decl.color}
-                onmouseenter={() => (hoveredEvent = chip.event)}
-                onmouseleave={() => (hoveredEvent = null)}
-                onfocus={() => (hoveredEvent = chip.event)}
-                onblur={() => (hoveredEvent = null)}
-                onclick={() => onEventChipActivate(chip)}
-              >{chip.label}</button>
-            {/if}
+      {#if trackViews.length > 0}
+        <!-- Custom-event tracks (contract v1.21), between the axis and the
+             role-marker rail: one 16px/44px track per qualifying declared
+             type, stacked in declaration order. Each track carries its own
+             density ladder — see layoutTrack in lib/timelineEvents.ts. -->
+        <div class="tl-events" role="group" aria-label="Timeline events">
+          {#each trackViews as t (t.decl.name)}
+            <div
+              class="event-track"
+              role="group"
+              aria-label={`${t.decl.name} timeline events`}
+              style:height={`${t.height}px`}
+              onmouseleave={() => {
+                hoveredEvent = null
+                hoveredCluster = null
+              }}
+            >
+              <span class="track-label" style:color={t.decl.color}>{t.decl.name}</span>
+              {#each t.clusters as c (clusterKey(t.decl, c))}
+                {#if c.mode === 'cluster'}
+                  <span class="event-cluster-wrap" style:left={`${c.left}px`}>
+                    <button
+                      class="event-chip cluster"
+                      type="button"
+                      style:border-left-color={t.decl.color}
+                      style:color={t.decl.color}
+                      aria-label={`${c.members.length} ${t.decl.name} events`}
+                      onmouseenter={() => (hoveredCluster = { decl: t.decl, members: c.members })}
+                      onmouseleave={() => (hoveredCluster = null)}
+                      onfocus={() => (hoveredCluster = { decl: t.decl, members: c.members })}
+                      onblur={() => (hoveredCluster = null)}
+                      onclick={() => toggleClusterPopover(t.decl, c)}
+                    >
+                      <span class="chip-dot" style:background={t.decl.color}></span
+                      >{c.displayLabel}</button
+                    >
+                    {#if activeClusterKey === clusterKey(t.decl, c)}
+                      <div class="event-cluster-pop">
+                        <div class="event-cluster-pop-head">
+                          {t.decl.name} &middot; {c.members.length}
+                        </div>
+                        {#each c.members as m (eventKey(m.event))}
+                          <button
+                            class="event-cluster-member"
+                            type="button"
+                            onclick={() => onMemberActivate(t.decl, m.event)}
+                          >
+                            <span class="member-time">{fmtTimeMs(m.event.ts)}</span>
+                            <span class="member-title">{m.label}</span>
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </span>
+                {:else if c.members[0].link}
+                  <a
+                    class="event-chip"
+                    class:vertical={c.mode === 'vertical'}
+                    href={c.members[0].link}
+                    target="_blank"
+                    rel="noopener"
+                    style:left={`${c.left}px`}
+                    style:border-left-color={t.decl.color}
+                    style:color={t.decl.color}
+                    onmouseenter={() => (hoveredEvent = c.members[0].event)}
+                    onmouseleave={() => (hoveredEvent = null)}
+                    onfocus={() => (hoveredEvent = c.members[0].event)}
+                    onblur={() => (hoveredEvent = null)}
+                  >{c.displayLabel}</a>
+                {:else}
+                  <button
+                    class="event-chip"
+                    class:vertical={c.mode === 'vertical'}
+                    type="button"
+                    class:active={activeEventKey !== null &&
+                      eventKey(c.members[0].event) === activeEventKey}
+                    style:left={`${c.left}px`}
+                    style:border-left-color={t.decl.color}
+                    style:color={t.decl.color}
+                    onmouseenter={() => (hoveredEvent = c.members[0].event)}
+                    onmouseleave={() => (hoveredEvent = null)}
+                    onfocus={() => (hoveredEvent = c.members[0].event)}
+                    onblur={() => (hoveredEvent = null)}
+                    onclick={() => onEventChipActivate(c.members[0])}
+                  >{c.displayLabel}</button>
+                {/if}
+              {/each}
+            </div>
           {/each}
         </div>
       {/if}
@@ -1183,13 +1353,13 @@
             style:background={chip.decl.color}
           ></div>
         {/each}
-        {#each eventMarkerLines as chip (eventKey(chip.event))}
+        {#each eventMarkerLines as line (`${line.decl.name}|${line.left}`)}
           <div
             class="tl-event-line"
-            class:bold={(chip.decl.line ?? 'solid') === 'bold'}
-            class:dotted={chip.decl.line === 'dotted'}
-            style:left={`${chip.left}px`}
-            style:border-left-color={chip.decl.color}
+            class:bold={(line.decl.line ?? 'solid') === 'bold'}
+            class:dotted={line.decl.line === 'dotted'}
+            style:left={`${line.left}px`}
+            style:border-left-color={line.decl.color}
           ></div>
         {/each}
         {#each bars as b (b.task.task_id)}
@@ -1317,6 +1487,16 @@
       {/if}
       {#if hoveredEventChip?.decl.action === 'link' && !hoveredEventChip.link}
         <span class="hint">link unresolved — missing variable</span>
+      {/if}
+    {:else if hoveredCluster}
+      <span class="hl">Type:</span><span class="hv">{hoveredCluster.decl.name}</span>
+      <span class="hl">Members:</span><span class="hv">{hoveredCluster.members.length}</span>
+      <br />
+      {#each hoveredCluster.members.slice(0, 5) as m}
+        <span class="chip label-chip">{fmtTimeMs(m.event.ts)} &mdash; {m.label}</span>
+      {/each}
+      {#if hoveredCluster.members.length > 5}
+        <span class="hint">+{hoveredCluster.members.length - 5} more</span>
       {/if}
     {:else}
       <span class="hint">hover over a task bar to see details</span>
@@ -1675,17 +1855,39 @@
     z-index: 1;
   }
 
-  /* Custom-event rail (contract v1.21), between the axis and the role-marker
-     rail: one chip per visible declared-type instance. Colors come from the
-     declaration, not a fixed palette — operators pick their own. */
+  /* Custom-event tracks (contract v1.21), between the axis and the
+     role-marker rail: one track per qualifying declared type, stacked in
+     declaration order. Colors come from the declaration, not a fixed
+     palette — operators pick their own. */
   .tl-events {
     position: relative;
-    height: 14px;
+  }
+  /* One type's row. Fixed height set inline from lib/timelineEvents.ts'
+     trackHeight (16px base, 44px once any visible chip needs vertical
+     text) — normal document flow stacks tracks without any top-offset math. */
+  .event-track {
+    position: relative;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  /* Mimics .lane-label: floats over the track's own content rather than
+     reserving space, same as the lane-number labels below. */
+  .track-label {
+    position: absolute;
+    left: 2px;
+    top: 0;
+    font-size: 9px;
+    line-height: 16px;
+    font-family: var(--mono);
+    pointer-events: none;
+    z-index: 1;
+    opacity: 0.7;
   }
   .event-chip {
     position: absolute;
     top: 0;
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
     max-width: 12rem;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1698,12 +1900,86 @@
     padding: 0 3px;
     font-family: var(--mono);
     font-size: 9px;
-    line-height: 14px;
+    line-height: 16px;
     text-decoration: none;
     cursor: pointer;
   }
   .event-chip.active {
     font-weight: 700;
+  }
+  /* Density-ladder step 3: a label that can't fit before the next cluster
+     runs vertically instead of overlapping it — trimmed to
+     VERTICAL_LABEL_MAX_CHARS by layoutTrack, so it always fits the tall
+     44px track. */
+  .event-chip.vertical {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    max-width: none;
+    height: 100%;
+    line-height: 1.1;
+  }
+  /* Density-ladder step 1: a dense burst collapses into one glyph + count. */
+  .event-chip.cluster {
+    font-weight: 600;
+  }
+  .chip-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex: none;
+  }
+  .event-cluster-wrap {
+    position: absolute;
+    top: 0;
+  }
+  /* Member popover: mimics the gear .role-pop pattern (absolute, anchored to
+     its own trigger, closed on an outside click). */
+  .event-cluster-pop {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 20;
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 0.375rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    padding: 0.25rem;
+    min-width: 14rem;
+    max-height: 12rem;
+    overflow-y: auto;
+  }
+  .event-cluster-pop-head {
+    font-size: 0.7rem;
+    color: #6b7280;
+    padding: 0.125rem 0.375rem 0.25rem;
+  }
+  .event-cluster-member {
+    display: flex;
+    align-items: baseline;
+    gap: 0.375rem;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    border-radius: 0.25rem;
+    padding: 0.1875rem 0.375rem;
+    font-size: 0.7rem;
+    cursor: pointer;
+  }
+  .event-cluster-member:hover {
+    background: #f3f4f6;
+  }
+  .member-time {
+    font-family: var(--mono);
+    color: #9ca3af;
+    flex: none;
+  }
+  .member-title {
+    color: #374151;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* In-lane visuals: a marker's full-height guide line, and a range's
