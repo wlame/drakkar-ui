@@ -83,10 +83,13 @@
     loadEventVisibility,
     saveEventVisibility,
     resolveEventVisibility,
+    loadEventLabelPrefs,
+    saveEventLabelPrefs,
     layoutTrack,
     trackHeight,
     qualifyingEventTracks,
     EVENT_TRACK_COLLAPSE_PX,
+    type EventLabelPrefs,
     type EventMatch,
     type TimelineEventView,
     type TrackChip,
@@ -604,6 +607,18 @@
     eventVisOverrides = loadEventVisibility(workerId)
   }
 
+  // Same writable-derived idiom for the "Vertical labels" opt-in (contract
+  // unaffected — this is purely a client display prefs, not a declared
+  // field). Off by default: the automatic vertical-text stage of the
+  // density ladder reads badly and surprised operators, so it now only
+  // engages when a viewer explicitly turns it on via the gear popover.
+  let eventLabelPrefs = $derived.by<EventLabelPrefs>(() => loadEventLabelPrefs(workerId))
+
+  function toggleVerticalLabels(vertical: boolean) {
+    saveEventLabelPrefs(workerId, { vertical })
+    eventLabelPrefs = loadEventLabelPrefs(workerId)
+  }
+
   // Only `{text}` substitutes in a declared label template (contract v1.21);
   // with no template the chip falls back to the type name itself. The
   // replacement is a function, not a string, so a `$` in the handler's
@@ -689,7 +704,7 @@
   const trackViews = $derived.by<TrackView[]>(() => {
     return eventTrackDecls.map((decl) => {
       const chips = allChips.filter((c) => c.decl.name === decl.name)
-      const clusters = layoutTrack(chips, EVENT_TRACK_COLLAPSE_PX)
+      const clusters = layoutTrack(chips, EVENT_TRACK_COLLAPSE_PX, eventLabelPrefs.vertical)
       return { decl, clusters, height: trackHeight(clusters) }
     })
   })
@@ -1207,6 +1222,20 @@
               </label>
             </div>
           {/each}
+          <div class="role-row event-row">
+            <label
+              class="event-check"
+              title="When a label can't fit horizontally, spell it out vertically instead of collapsing to a plain glyph"
+            >
+              <input
+                type="checkbox"
+                checked={eventLabelPrefs.vertical}
+                onchange={(e) => toggleVerticalLabels(e.currentTarget.checked)}
+                aria-label="Vertical labels"
+              />
+              <span class="event-name">Vertical labels</span>
+            </label>
+          </div>
         {/if}
       </div>
     {/if}
@@ -1285,6 +1314,7 @@
                   <a
                     class="event-chip"
                     class:vertical={c.mode === 'vertical'}
+                    class:glyph={c.mode === 'glyph'}
                     href={c.members[0].link}
                     target="_blank"
                     rel="noopener"
@@ -1295,11 +1325,15 @@
                     onmouseleave={() => (hoveredEvent = null)}
                     onfocus={() => (hoveredEvent = c.members[0].event)}
                     onblur={() => (hoveredEvent = null)}
-                  >{c.displayLabel}</a>
+                  >{#if c.mode === 'glyph'}<span
+                        class="chip-dot"
+                        style:background={t.decl.color}
+                      ></span>{:else}{c.displayLabel}{/if}</a>
                 {:else}
                   <button
                     class="event-chip"
                     class:vertical={c.mode === 'vertical'}
+                    class:glyph={c.mode === 'glyph'}
                     type="button"
                     class:active={activeEventKey !== null &&
                       eventKey(c.members[0].event) === activeEventKey}
@@ -1311,7 +1345,10 @@
                     onfocus={() => (hoveredEvent = c.members[0].event)}
                     onblur={() => (hoveredEvent = null)}
                     onclick={() => onEventChipActivate(c.members[0])}
-                  >{c.displayLabel}</button>
+                  >{#if c.mode === 'glyph'}<span
+                        class="chip-dot"
+                        style:background={t.decl.color}
+                      ></span>{:else}{c.displayLabel}{/if}</button>
                 {/if}
               {/each}
             </div>
@@ -1932,6 +1969,13 @@
   /* Density-ladder step 1: a dense burst collapses into one glyph + count. */
   .event-chip.cluster {
     font-weight: 600;
+  }
+  /* Default degrade step for a single label that can't fit: a bare colored
+     dot, no text — the vertical-text stage above is opt-in only (gear
+     popover "Vertical labels" toggle), off by default. */
+  .event-chip.glyph {
+    padding: 0 3px;
+    min-width: 6px;
   }
   .chip-dot {
     display: inline-block;

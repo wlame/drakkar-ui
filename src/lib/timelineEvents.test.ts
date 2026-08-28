@@ -506,10 +506,26 @@ describe('layoutTrack', () => {
     expect(out[0].displayLabel).toBe('abcd')
   })
 
-  it('switches a label to trimmed vertical text when it cannot fit before the next cluster', () => {
+  it('degrades a label that cannot fit to a bare glyph by default (vertical text is opt-in)', () => {
     const longLabel = 'deployment-marker-event'
     const tightGapPx = 5 // far tighter than the label needs at any px/char estimate
     const out = layoutTrack([item(0, longLabel), item(tightGapPx, 'x')], 1)
+    expect(out[0].mode).toBe('glyph')
+    expect(out[0].displayLabel).toBe('')
+  })
+
+  it('degrades to glyph the same way when verticalEnabled is explicitly false', () => {
+    const longLabel = 'deployment-marker-event'
+    const tightGapPx = 5
+    const out = layoutTrack([item(0, longLabel), item(tightGapPx, 'x')], 1, false)
+    expect(out[0].mode).toBe('glyph')
+    expect(out[0].displayLabel).toBe('')
+  })
+
+  it('switches a label to trimmed vertical text when verticalEnabled is true and it cannot fit', () => {
+    const longLabel = 'deployment-marker-event'
+    const tightGapPx = 5 // far tighter than the label needs at any px/char estimate
+    const out = layoutTrack([item(0, longLabel), item(tightGapPx, 'x')], 1, true)
     expect(out[0].mode).toBe('vertical')
     expect(out[0].displayLabel).toBe(trimLabelForVertical(longLabel))
     expect(out[0].displayLabel.length).toBeLessThanOrEqual(VERTICAL_LABEL_MAX_CHARS)

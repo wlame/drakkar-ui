@@ -746,7 +746,20 @@ describe('per-type event tracks', () => {
     expect(chips[0].textContent?.trim()).toBe('+3')
   })
 
-  it('keeps a lone chip horizontal but switches a crowded one to trimmed vertical text, growing the track', () => {
+  // Turns on the "Vertical labels" gear toggle — opt-in since it defaults
+  // off (the automatic vertical stage read badly and surprised operators).
+  function enableVerticalLabels(target: HTMLElement) {
+    ;(target.querySelector('button.gear') as HTMLButtonElement).click()
+    flushSync()
+    const checkbox = target.querySelector(
+      'input[type="checkbox"][aria-label="Vertical labels"]',
+    ) as HTMLInputElement
+    checkbox.checked = true
+    checkbox.dispatchEvent(new Event('change', { bubbles: true }))
+    flushSync()
+  }
+
+  it('degrades a crowded label to a bare glyph by default, keeping the track at 16px', () => {
     const decl = eventDecl('maintenance_window_alert') // 24 chars — needs real room
     const base = tasks[0].start_ts
     const evs = [
@@ -762,6 +775,35 @@ describe('per-type event tracks', () => {
 
     const track = trackFor(target, 'maintenance_window_alert') as HTMLElement
     expect(track).not.toBeNull()
+    // Vertical labels are off by default, so nothing pushes the track tall.
+    expect(track.style.height).toBe('16px')
+
+    const chips = track.querySelectorAll('.event-chip')
+    expect(chips).toHaveLength(2)
+    expect(chips[0].classList.contains('vertical')).toBe(false)
+    expect(chips[0].classList.contains('glyph')).toBe(true)
+    expect(chips[0].textContent?.trim()).toBe('')
+    // The uncrowded second chip is unaffected either way.
+    expect(chips[1].classList.contains('glyph')).toBe(false)
+  })
+
+  it('keeps a lone chip horizontal but switches a crowded one to trimmed vertical text once the gear toggle is on, growing the track', () => {
+    const decl = eventDecl('maintenance_window_alert') // 24 chars — needs real room
+    const base = tasks[0].start_ts
+    const evs = [
+      eventInstance('maintenance_window_alert', base, { text: 'first' }),
+      // +2.5s => 40px at 16px/sec: far enough not to cluster (>12px), but
+      // nowhere near enough room for a 24-char label to fit before it.
+      eventInstance('maintenance_window_alert', base + 2.5, { text: 'x' }),
+    ]
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: evs,
+    })
+    enableVerticalLabels(target)
+
+    const track = trackFor(target, 'maintenance_window_alert') as HTMLElement
+    expect(track).not.toBeNull()
     expect(track.style.height).toBe('44px')
 
     const chips = track.querySelectorAll('.event-chip')
@@ -772,6 +814,40 @@ describe('per-type event tracks', () => {
     // The second chip has no further neighbor, so it stays horizontal even
     // though its own label ('maintenance_window_alert') is long too.
     expect(chips[1].classList.contains('vertical')).toBe(false)
+  })
+
+  it('persists the "Vertical labels" toggle across a remount', () => {
+    const decl = eventDecl('maintenance_window_alert')
+    const base = tasks[0].start_ts
+    const evs = [
+      eventInstance('maintenance_window_alert', base, { text: 'first' }),
+      eventInstance('maintenance_window_alert', base + 2.5, { text: 'x' }),
+    ]
+    const { target: firstTarget } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: evs,
+    })
+    enableVerticalLabels(firstTarget)
+    expect(JSON.parse(localStorage.getItem('dk.timeline.eventLabels.worker-a') ?? '{}')).toEqual({
+      vertical: true,
+    })
+
+    // A fresh mount (e.g. navigating away and back) reads the same worker's
+    // stored prefs, not the module-level default.
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: evs,
+    })
+    const track = trackFor(target, 'maintenance_window_alert') as HTMLElement
+    expect(track.style.height).toBe('44px')
+    expect(track.querySelector('.event-chip.vertical')).not.toBeNull()
+
+    ;(target.querySelector('button.gear') as HTMLButtonElement).click()
+    flushSync()
+    const checkbox = target.querySelector(
+      'input[type="checkbox"][aria-label="Vertical labels"]',
+    ) as HTMLInputElement
+    expect(checkbox.checked).toBe(true)
   })
 
   it('shows cluster member details on hover and opens a popover listing members on click', () => {

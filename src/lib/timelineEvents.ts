@@ -354,7 +354,7 @@ export const TRACK_BASE_HEIGHT_PX = 16
 /** Track height, in px, once at least one visible chip needs vertical mode. */
 export const TRACK_TALL_HEIGHT_PX = 44
 
-export type TrackChipMode = 'cluster' | 'horizontal' | 'vertical'
+export type TrackChipMode = 'cluster' | 'horizontal' | 'vertical' | 'glyph'
 
 export interface TrackChip<T> {
   left: number
@@ -381,18 +381,24 @@ export function trimLabelForVertical(
  * Lays out one event type's chips into the density ladder: cluster first
  * (a multi-member group within `collapsePx` becomes a single "+N" glyph),
  * then for every surviving single-member cluster, decide whether its label
- * fits horizontally in the gap before the next cluster or must switch to
- * vertical text, trimmed to {@link VERTICAL_LABEL_MAX_CHARS}.
+ * fits horizontally in the gap before the next cluster.
  *
  * A cluster with no next neighbor is always tried horizontally — there is
  * nothing ahead of it on the track to collide with. Zooming in spreads
  * clusters apart and grows the gaps between them, which is what naturally
- * walks chips back down the ladder (cluster -> vertical -> horizontal)
- * without this function knowing about zoom at all.
+ * walks chips back down the ladder without this function knowing about zoom
+ * at all.
+ *
+ * A label that doesn't fit degrades to a bare colored `'glyph'` (no text) by
+ * default — the automatic vertical-text stage reads badly and surprised
+ * operators, so it is opt-in via `verticalEnabled` (the gear popover's
+ * "Vertical labels" toggle). With it on, a non-fitting label instead switches
+ * to `'vertical'` text, trimmed to {@link VERTICAL_LABEL_MAX_CHARS}.
  */
 export function layoutTrack<T extends { left: number; label: string }>(
   items: T[],
   collapsePx: number = EVENT_TRACK_COLLAPSE_PX,
+  verticalEnabled: boolean = false,
 ): TrackChip<T>[] {
   const clusters = clusterEvents(items, collapsePx)
   return clusters.map((cluster, i) => {
@@ -408,12 +414,27 @@ export function layoutTrack<T extends { left: number; label: string }>(
     const next = clusters[i + 1]
     const available = next ? next.left - cluster.left - LABEL_EDGE_GAP_PX : Number.POSITIVE_INFINITY
     const fits = available >= label.length * EVENT_LABEL_PX_PER_CHAR
-    const mode: TrackChipMode = fits ? 'horizontal' : 'vertical'
+    if (fits) {
+      return {
+        left: cluster.left,
+        mode: 'horizontal' as const,
+        members: cluster.members,
+        displayLabel: label,
+      }
+    }
+    if (verticalEnabled) {
+      return {
+        left: cluster.left,
+        mode: 'vertical' as const,
+        members: cluster.members,
+        displayLabel: trimLabelForVertical(label),
+      }
+    }
     return {
       left: cluster.left,
-      mode,
+      mode: 'glyph' as const,
       members: cluster.members,
-      displayLabel: fits ? label : trimLabelForVertical(label),
+      displayLabel: '',
     }
   })
 }
@@ -445,4 +466,51 @@ export function qualifyingEventTracks(
 ): TimelineEventDecl[] {
   const typesPresent = new Set(events.map((e) => e.type))
   return decls.filter((d) => visibility[d.name] !== false && typesPresent.has(d.name))
+}
+
+function eventLabelPrefsStorageKey(workerId: string): string {
+  return `dk.timeline.eventLabels.${workerId}`
+}
+
+/** Per-viewer event-label display prefs (currently just the vertical-mode
+ * opt-in). A separate storage key from `loadEventVisibility`'s type-name ->
+ * boolean map: mixing a setting in there risks a future declared type named
+ * e.g. "vertical" colliding with the setting itself. */
+export interface EventLabelPrefs {
+  vertical: boolean
+}
+
+const DEFAULT_EVENT_LABEL_PREFS: EventLabelPrefs = { vertical: false }
+
+/**
+ * Reads a worker's event-label display prefs. Absent-safe: no stored value,
+ * a read error (private-mode localStorage denial), or corrupted JSON all
+ * resolve to the default ({@link DEFAULT_EVENT_LABEL_PREFS} — vertical
+ * labels off).
+ */
+export function loadEventLabelPrefs(workerId: string): EventLabelPrefs {
+  try {
+    const raw = localStorage.getItem(eventLabelPrefsStorageKey(workerId))
+    if (!raw) return { ...DEFAULT_EVENT_LABEL_PREFS }
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const obj = parsed as Record<string, unknown>
+      return { vertical: obj.vertical === true }
+    }
+    return { ...DEFAULT_EVENT_LABEL_PREFS }
+  } catch {
+    return { ...DEFAULT_EVENT_LABEL_PREFS }
+  }
+}
+
+/**
+ * Sets a worker's event-label display prefs, silently doing nothing if
+ * storage is unavailable or over quota (private-mode safety).
+ */
+export function saveEventLabelPrefs(workerId: string, prefs: EventLabelPrefs): void {
+  try {
+    localStorage.setItem(eventLabelPrefsStorageKey(workerId), JSON.stringify(prefs))
+  } catch {
+    // Silent no-op: private-mode storage denial or quota exceeded.
+  }
 }
