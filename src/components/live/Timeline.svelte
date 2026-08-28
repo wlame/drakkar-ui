@@ -651,26 +651,25 @@
   // Joins instances to enabled+visible declarations (an instance whose type
   // has no declaration, or whose declaration is currently hidden, is
   // skipped — not an error), computes geometry and resolves the label/link,
-  // culls the same way bars/markers are, and caps at the newest
-  // EVENT_CHIP_CAP survivors — `events` arrives newest-first (WS prepend +
-  // history backfill), so taking the first ones that pass the join keeps
-  // the most recent instances rather than an arbitrary slice.
-  //
-  // This is the shared per-instance geometry pass; `trackViews` below groups
-  // its output by type into the per-track density ladder actually rendered.
-  const allChips = $derived.by<EventChip[]>(() => {
+  // and caps at the newest EVENT_CHIP_CAP survivors — `events` arrives
+  // newest-first (WS prepend + history backfill), so taking the first ones
+  // that pass the join keeps the most recent instances rather than an
+  // arbitrary slice. `cullBounds` is optional: pass it to additionally drop
+  // instances outside the given pixel range (rendering callers), or omit it
+  // for a buffer-wide pass (track layout, which must not depend on scroll —
+  // see `fullEventChips` below).
+  function joinEventChips(cullBounds: { from: number; to: number } | null): EventChip[] {
     if (eventDecls.length === 0) return []
-    const culling = viewportWidth > 0
-    const visibleFrom = scrollLeft - CULL_MARGIN_PX
-    const visibleTo = scrollLeft + viewportWidth + CULL_MARGIN_PX
     const bases = getLinkBases()
     const out: EventChip[] = []
     for (const ev of events) {
       const decl = eventDeclByName.get(ev.type)
       if (!decl || eventVisibility[decl.name] === false) continue
       const { left, width } = eventGeometry(ev, originTs, pxPerSec)
-      const right = width != null ? left + width : left
-      if (culling && (right < visibleFrom || left > visibleTo)) continue
+      if (cullBounds) {
+        const right = width != null ? left + width : left
+        if (right < cullBounds.from || left > cullBounds.to) continue
+      }
       out.push({
         event: ev,
         decl,
@@ -682,10 +681,30 @@
       if (out.length >= EVENT_CHIP_CAP) break
     }
     return out
+  }
+
+  // Viewport-culled join, for everything that only needs to draw the
+  // currently-visible instances: in-lane marker lines/range bands, and the
+  // hover lookups (whose "hovered element left the rendered set" guards
+  // below are deliberately scroll-sensitive).
+  const allChips = $derived.by<EventChip[]>(() => {
+    const culling = viewportWidth > 0
+    if (!culling) return joinEventChips(null)
+    return joinEventChips({
+      from: scrollLeft - CULL_MARGIN_PX,
+      to: scrollLeft + viewportWidth + CULL_MARGIN_PX,
+    })
   })
 
+  // Buffer-wide join (no viewport cull), for track layout below. A track's
+  // height and each chip's cluster/horizontal/vertical mode must be a pure
+  // function of the type's full chip set, not of which chips currently sit
+  // in the culled window — see `trackViews`' own comment for why culling
+  // here would make the track visibly resize on every scroll frame.
+  const fullEventChips = $derived.by<EventChip[]>(() => joinEventChips(null))
+
   // Which declared types get their own track: gear-visible AND represented
-  // in the full loaded buffer (`events`, not the viewport-culled `allChips`)
+  // in the full loaded buffer (`events`, not a viewport-culled chip list)
   // — see qualifyingEventTracks' doc comment for why the buffer, not the
   // viewport, decides this.
   const eventTrackDecls = $derived(qualifyingEventTracks(eventDecls, events, eventVisibility))
@@ -701,11 +720,25 @@
   // ladder (lib/timelineEvents.ts). Tracks stack in normal document flow
   // (each is its own fixed-height block), so no manual top-offset math is
   // needed here.
+  //
+  // Clustering and the mode ladder always run over `fullEventChips` (the
+  // type's whole buffer), so a track's height can only change on a zoom,
+  // toggle, or data change — never on a scroll. Only the RENDERED cluster
+  // list is then culled to the viewport, by testing each cluster's own
+  // `left` — the same pixel-margin precision `allChips`' culling already
+  // used (a point event's cull box is just its `left`).
   const trackViews = $derived.by<TrackView[]>(() => {
+    const culling = viewportWidth > 0
+    const visibleFrom = scrollLeft - CULL_MARGIN_PX
+    const visibleTo = scrollLeft + viewportWidth + CULL_MARGIN_PX
     return eventTrackDecls.map((decl) => {
-      const chips = allChips.filter((c) => c.decl.name === decl.name)
+      const chips = fullEventChips.filter((c) => c.decl.name === decl.name)
       const clusters = layoutTrack(chips, EVENT_TRACK_COLLAPSE_PX, eventLabelPrefs.vertical)
-      return { decl, clusters, height: trackHeight(clusters) }
+      const height = trackHeight(clusters)
+      const rendered = culling
+        ? clusters.filter((c) => c.left >= visibleFrom && c.left <= visibleTo)
+        : clusters
+      return { decl, clusters: rendered, height }
     })
   })
 

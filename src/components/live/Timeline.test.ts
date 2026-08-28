@@ -991,4 +991,42 @@ describe('per-type event tracks', () => {
     expect(openSpy).not.toHaveBeenCalled()
     openSpy.mockRestore()
   })
+
+  it('keeps a track height stable across scroll positions instead of resizing as its neighbor chip is culled', async () => {
+    const decl = eventDecl('maintenance_window_alert') // 24 chars — needs real room
+    const base = tasks[0].start_ts
+    // Same spacing as the vertical-mode test above: 2.5s apart at 16px/sec
+    // (40px) is far enough not to cluster, but not enough room for the first
+    // chip's label to fit before the second — so with vertical labels on,
+    // the first chip needs vertical mode and the track needs its tall
+    // height, PROVIDED the layout decision is made from the type's whole
+    // buffer rather than whatever the current scroll position happens to
+    // leave in the culled render window.
+    const evs = [
+      eventInstance('maintenance_window_alert', base, { text: 'first' }),
+      eventInstance('maintenance_window_alert', base + 2.5, { text: 'x' }),
+    ]
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: evs,
+    })
+    enableVerticalLabels(target)
+
+    // Both chips inside the culled render window: height 44px, 2 rendered.
+    await measureViewport(target, 300, 27500)
+    const track = trackFor(target, 'maintenance_window_alert') as HTMLElement
+    expect(track.style.height).toBe('44px')
+    expect(track.querySelectorAll('.event-chip')).toHaveLength(2)
+
+    // Scroll far enough that the FIRST chip (the one that needs vertical
+    // mode) falls outside CULL_MARGIN_PX and is dropped from what's
+    // rendered — only the second chip is still in the DOM. The track's
+    // height must not shrink back to 16px: the layout decision (this chip
+    // needs vertical mode because of its neighbor) was made from the full
+    // buffer, not from whichever chips the current scroll happens to render.
+    await measureViewport(target, 300, 28260)
+    const trackAfterScroll = trackFor(target, 'maintenance_window_alert') as HTMLElement
+    expect(trackAfterScroll.style.height).toBe('44px')
+    expect(trackAfterScroll.querySelectorAll('.event-chip')).toHaveLength(1)
+  })
 })
