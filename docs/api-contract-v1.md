@@ -1375,6 +1375,76 @@ compatibility shims on either side.
   got from `http.Server.WriteTimeout`. Deployments should still front these
   ports with a proxy that enforces its own read timeouts.
 
+## v1.21 additions (2026-08-28)
+
+### Custom timeline events
+
+Operator-declared event types drawn on the live timeline. Optional end to
+end: a backend without the keys/endpoint below is a valid older backend and
+the UI renders no overlay.
+
+**Identity: `timeline.events`** — new OPTIONAL key on the existing
+`timeline` object: the declared event types, `enabled: false` entries
+omitted (the UI never learns about disabled types).
+
+```json
+"timeline": { "...existing keys...": "...",
+  "events": [
+    {"name": "deployment_marker", "kind": "marker", "color": "purple",
+     "line": "dotted", "label": "deploy {text}", "show": true,
+     "link": "{grafana}/d/deploys?from={ts_ms}", "action": "link"}
+  ]
+}
+```
+
+Field domains: `name` `[a-z_][a-z0-9_]*` unique; `kind` `marker|range|flag`;
+`color` timeline color name or `#rrggbb`; `line` `solid|bold|dotted`
+(markers only, default `solid`, omitted otherwise); `label` optional
+template (only `{text}` substitutes); `show` bool (initial UI visibility);
+`link` optional URL template (present iff `action` is `link`); `action`
+`none|link|highlight|filter` (default `none`). At most 50 entries.
+
+**Instance wire shape** — an instance is an ordinary `annotation` event
+(row and WS frame unchanged in shape), window-scoped (`offset` and
+`task_id` null), with this metadata envelope:
+
+```json
+{"kind": "timeline_event", "scope": "window", "hook": "on_message_complete",
+ "window_id": 41, "offsets": [1200, 1201],
+ "data": {"type": "deployment_marker", "ts_ms": 1756350000000,
+          "end_ts_ms": null, "text": "v2.1 deployed",
+          "values": {"sha": "ab12f"},
+          "match": null}}
+```
+
+`data.type` names a declared event type. `ts_ms`/`end_ts_ms` are
+epoch-milliseconds integers; `end_ts_ms` is non-null iff the type's kind is
+`range`. `values` is a flat object for tooltips and `{key}` link variables.
+`match` is `null` or exactly one of `{"window_id": 41}`,
+`{"offsets": [[0, 1200], [0, 1201]]}` (partition/offset pairs),
+`{"label": ["request", "req-123"]}`.
+
+Link templates resolve `{ts_ms}`, `{end_ts_ms}`, `{text}`, any `{key}`
+from `values`, and `{base}` names from identity `link_bases`. A template
+variable missing at render time → the UI renders the element without a
+link. Instances whose `type` has no declaration are ignored by the UI.
+
+**New endpoint `GET /api/v1/timeline/events?minutes=N`** — history
+backfill for the timeline's visible window.
+
+- `minutes` optional int, default and cap: the backend clamps to
+  `timeline.max_age_minutes`.
+- Response: `{"events": [InstanceEnvelope...], "unavailable": false}`,
+  newest-first, capped at the backend's `ui.max_rows`; each entry is the
+  metadata envelope above plus `"ts": <row epoch seconds float>` and
+  `"partition": <int>` from the event row. Degraded reader →
+  `{"events": [], "unavailable": true}` (HTTP 200).
+- 404 on backends predating v1.21 — the UI must tolerate it.
+
+**Live delivery** — instances arrive on the existing `/ws` `annotation`
+frames; the UI filters `metadata.kind == "timeline_event"`. No new WS
+event name.
+
 ## Appendix: divergence resolutions from the 2026-06 audit
 
 Canonical choices where the two reference backends disagreed; each backend
