@@ -48,7 +48,7 @@
   } from '../../lib/throughput'
   import { fmtTime, fmtTimeMs, fmtBytes } from '../../lib/format'
   import { pausableInterval, isHidden } from '../../lib/visibility'
-  import type { TimelineColorRule, TimelineConfig } from '../../lib/types'
+  import type { TimelineColorRule, TimelineConfig, TimelineEventDecl } from '../../lib/types'
   import { barColorFor, legendEntries } from '../../lib/timelineRules'
   import {
     TIMELINE_ROLES,
@@ -76,6 +76,17 @@
     RENDER_DELAY_SEC,
     type MarkerPin,
   } from '../../lib/timeline'
+  import {
+    eventGeometry,
+    resolveEventLink,
+    matchesEventMatch,
+    loadEventVisibility,
+    saveEventVisibility,
+    resolveEventVisibility,
+    type EventMatch,
+    type TimelineEventView,
+  } from '../../lib/timelineEvents'
+  import { getLinkBases } from '../../lib/enrich'
 
   let {
     tasks = [],
@@ -89,6 +100,7 @@
     shared = undefined,
     taskUrlBase = '',
     throughput = null,
+    events = [],
   }: {
     tasks?: TaskView[]
     laneCount?: number
@@ -121,6 +133,12 @@
     // absolute http(s) hrefs fall through to a normal full navigation.
     // Empty (the default) keeps the same-origin client-side route.
     taskUrlBase?: string
+    // Custom timeline-event instances (contract v1.21): WS `annotation`
+    // frames matching `kind: 'timeline_event'` plus the history-backfill
+    // endpoint, newest-first, owned by the page (see lib/timelineEvents.ts).
+    // Joined here against `timeline.events` declarations — an instance whose
+    // type has no matching declaration is dropped, not an error.
+    events?: TimelineEventView[]
   } = $props()
 
   const LANE_H = 22
@@ -150,6 +168,7 @@
   let viewport = $state<HTMLDivElement>()
   let hovered = $state<TaskView | null>(null)
   let hoveredMarker = $state<MarkerPin | null>(null)
+  let hoveredEvent = $state<TimelineEventView | null>(null)
 
   // --- Throughput track (contract v1.16) -----------------------------------
   // Which of the three windows the track draws; every frame carries all of
@@ -372,7 +391,23 @@
   const highlightActive = $derived(highlightKey !== '' && Number.isFinite(highlightThreshold))
   const filterNeedle = $derived(filterInput.trim().toLowerCase())
   const filterActive = $derived(filterKey !== '' && filterNeedle !== '')
-  const roleInputActive = $derived(highlightActive || filterActive)
+
+  // Custom-event emphasis (contract v1.21): the match hint from the last
+  // clicked `action: highlight|filter` chip, or null while none is active.
+  // Both action names drive the same emphasize/dim effect below — they stay
+  // separate on the wire so a future release can diverge their behavior
+  // (e.g. `filter` hiding non-matching bars outright instead of dimming
+  // them) without another contract bump.
+  let activeEventMatch = $state<EventMatch | null>(null)
+  // Which instance armed activeEventMatch, tracked by key rather than by
+  // object identity: `activeEventMatch = chip.event.match` boxes the value
+  // in a $state proxy, so a later `===` against the plain `chip.event.match`
+  // read off the (unproxied) `events` prop would never match — the "click
+  // the same chip again" toggle needs its own identity, not the boxed one.
+  let activeEventKey = $state<string | null>(null)
+  const eventEmphasisActive = $derived(activeEventMatch !== null)
+
+  const roleInputActive = $derived(highlightActive || filterActive || eventEmphasisActive)
 
   // A task missing the label never matches an active input — it cannot be
   // shown to clear the threshold or contain the needle.
@@ -476,7 +511,8 @@
       const passes =
         roleInputActive &&
         (!highlightActive || matchesHighlight(t, highlightKey, highlightThreshold)) &&
-        (!filterActive || matchesFilter(t, filterKey, filterNeedle))
+        (!filterActive || matchesFilter(t, filterKey, filterNeedle)) &&
+        (!eventEmphasisActive || matchesEventMatch(t, activeEventMatch as EventMatch))
       out.push({
         task: t,
         lane,
@@ -528,6 +564,124 @@
     if (hoveredTs === undefined) return
     if (!pins.some((m) => m.ts === hoveredTs)) hoveredMarker = null
   })
+
+  // --- custom timeline events (contract v1.21) ------------------------------
+  //
+  // Declared types travel on `timeline.events`; instances arrive pre-parsed
+  // from the page (WS `annotation` frames + history backfill — see
+  // lib/timelineEvents.ts). Visibility is resolved the same way label roles
+  // are: the declared `show` default, overridden per browser via the gear
+  // popover. NOT part of `shared` — the overlay is per-worker in v1, so
+  // cluster view's stacked timelines each keep their own.
+  const eventDecls = $derived(timeline?.events ?? [])
+  const eventDeclByName = $derived.by(() => {
+    const map = new Map<string, TimelineEventDecl>()
+    for (const d of eventDecls) map.set(d.name, d)
+    return map
+  })
+
+  // Writable derived, same idiom as `overrides` above: re-reads storage
+  // whenever `workerId` changes, and the checkbox handler assigns to it
+  // directly after a write so the toggle applies on the same tick.
+  let eventVisOverrides = $derived.by<Record<string, boolean>>(() => loadEventVisibility(workerId))
+  const eventVisibility = $derived(resolveEventVisibility(eventDecls, eventVisOverrides))
+
+  function toggleEventVisibility(name: string, visible: boolean) {
+    saveEventVisibility(workerId, name, visible)
+    eventVisOverrides = loadEventVisibility(workerId)
+  }
+
+  // Only `{text}` substitutes in a declared label template (contract v1.21);
+  // with no template the chip falls back to the type name itself.
+  function resolveEventLabel(decl: TimelineEventDecl, ev: TimelineEventView): string {
+    if (!decl.label) return decl.name
+    return decl.label.replace(/\{text\}/g, ev.text)
+  }
+
+  // Composite identity for keyed each-blocks and the hover-clear effect
+  // below: instances carry no id of their own, but type+ts+partition is
+  // unique in practice (two instances of the same type at the same
+  // millisecond on the same partition would be indistinguishable anyway).
+  function eventKey(ev: TimelineEventView): string {
+    return `${ev.type}|${ev.ts}|${ev.partition}`
+  }
+
+  interface EventChip {
+    event: TimelineEventView
+    decl: TimelineEventDecl
+    left: number
+    width: number | null
+    label: string
+    link: string | null
+  }
+
+  const EVENT_CHIP_CAP = 500
+
+  // Joins instances to enabled+visible declarations (an instance whose type
+  // has no declaration, or whose declaration is currently hidden, is
+  // skipped — not an error), computes geometry and resolves the label/link,
+  // culls the same way bars/markers are, and caps at the newest
+  // EVENT_CHIP_CAP survivors — `events` arrives newest-first (WS prepend +
+  // history backfill), so taking the first ones that pass the join keeps
+  // the most recent instances rather than an arbitrary slice.
+  const eventViews = $derived.by<EventChip[]>(() => {
+    if (eventDecls.length === 0) return []
+    const culling = viewportWidth > 0
+    const visibleFrom = scrollLeft - CULL_MARGIN_PX
+    const visibleTo = scrollLeft + viewportWidth + CULL_MARGIN_PX
+    const bases = getLinkBases()
+    const out: EventChip[] = []
+    for (const ev of events) {
+      const decl = eventDeclByName.get(ev.type)
+      if (!decl || eventVisibility[decl.name] === false) continue
+      const { left, width } = eventGeometry(ev, originTs, pxPerSec)
+      const right = width != null ? left + width : left
+      if (culling && (right < visibleFrom || left > visibleTo)) continue
+      out.push({
+        event: ev,
+        decl,
+        left,
+        width,
+        label: resolveEventLabel(decl, ev),
+        link: resolveEventLink(decl, ev, bases),
+      })
+      if (out.length >= EVENT_CHIP_CAP) break
+    }
+    return out
+  })
+
+  // In-lane visuals, split by kind: markers draw a full-height guide line,
+  // ranges draw a translucent duration band. Flags draw nothing in the
+  // lanes — the rail chip is their only visual.
+  const eventMarkerLines = $derived(eventViews.filter((e) => e.decl.kind === 'marker'))
+  const eventRangeBands = $derived(eventViews.filter((e) => e.decl.kind === 'range'))
+
+  // Same "hovered element left the rendered set" guard the marker pins use
+  // above: a hovered chip can be culled by a scroll, or dropped by a
+  // visibility toggle, without ever firing its own mouseleave.
+  $effect(() => {
+    const views = eventViews
+    const hoveredKey = untrack(() => (hoveredEvent ? eventKey(hoveredEvent) : undefined))
+    if (hoveredKey === undefined) return
+    if (!views.some((v) => eventKey(v.event) === hoveredKey)) hoveredEvent = null
+  })
+
+  // Click handling by action: `link` chips are anchors and need no handler
+  // here; `none` does nothing. `highlight`/`filter` both drive the one
+  // emphasize/dim effect in v1 (see the `roleInputActive`/`passes` wiring
+  // above) — clicking the chip that is already active clears it.
+  function onEventChipActivate(chip: EventChip) {
+    if (chip.decl.action !== 'highlight' && chip.decl.action !== 'filter') return
+    if (!chip.event.match) return
+    const key = eventKey(chip.event)
+    if (activeEventKey === key) {
+      activeEventMatch = null
+      activeEventKey = null
+    } else {
+      activeEventMatch = chip.event.match
+      activeEventKey = key
+    }
+  }
 
   // Axis ticks: HH:MM:SS labels at a zoom-dependent interval (the reference's
   // rebuildAxis picks 5..120s so labels never crowd each other). Positions are
@@ -868,6 +1022,25 @@
             >
           </div>
         {/each}
+        {#if eventDecls.length > 0}
+          <div class="role-pop-head event-pop-head">
+            <span>Timeline events</span>
+          </div>
+          {#each eventDecls as decl (decl.name)}
+            <div class="role-row event-row">
+              <label class="event-check">
+                <input
+                  type="checkbox"
+                  checked={eventVisibility[decl.name]}
+                  onchange={(e) => toggleEventVisibility(decl.name, e.currentTarget.checked)}
+                  aria-label={`Show ${decl.name} timeline events`}
+                />
+                <span class="event-swatch" style:background={decl.color}></span>
+                <span class="event-name">{decl.name}</span>
+              </label>
+            </div>
+          {/each}
+        {/if}
       </div>
     {/if}
   </div>
@@ -883,6 +1056,49 @@
           <div class="tick-label" style:left={`${tk.left}px`}>{tk.label}</div>
         {/each}
       </div>
+      {#if timeline?.events}
+        <!-- Custom-event rail (contract v1.21), between the axis and the
+             role-marker rail: one chip per visible instance whose type has a
+             declaration. Same rail-clears-hover idiom as .tl-markers below. -->
+        <div
+          class="tl-events"
+          role="group"
+          aria-label="Timeline events"
+          onmouseleave={() => (hoveredEvent = null)}
+        >
+          {#each eventViews as chip (eventKey(chip.event))}
+            {#if chip.link}
+              <a
+                class="event-chip"
+                href={chip.link}
+                target="_blank"
+                rel="noopener"
+                style:left={`${chip.left}px`}
+                style:border-left-color={chip.decl.color}
+                style:color={chip.decl.color}
+                onmouseenter={() => (hoveredEvent = chip.event)}
+                onmouseleave={() => (hoveredEvent = null)}
+                onfocus={() => (hoveredEvent = chip.event)}
+                onblur={() => (hoveredEvent = null)}
+              >{chip.label}</a>
+            {:else}
+              <button
+                class="event-chip"
+                type="button"
+                class:active={activeEventKey !== null && eventKey(chip.event) === activeEventKey}
+                style:left={`${chip.left}px`}
+                style:border-left-color={chip.decl.color}
+                style:color={chip.decl.color}
+                onmouseenter={() => (hoveredEvent = chip.event)}
+                onmouseleave={() => (hoveredEvent = null)}
+                onfocus={() => (hoveredEvent = chip.event)}
+                onblur={() => (hoveredEvent = null)}
+                onclick={() => onEventChipActivate(chip)}
+              >{chip.label}</button>
+            {/if}
+          {/each}
+        </div>
+      {/if}
       {#if markerKey}
         <!-- The rail clears the hover too: leaving a pin sideways moves the
              cursor onto the rail, and leaving the rail is the one event that
@@ -920,6 +1136,23 @@
         {/each}
         {#each visibleMarkers as m (m.ts)}
           <div class="marker-line" style:left={`${m.left}px`}></div>
+        {/each}
+        {#each eventRangeBands as chip (eventKey(chip.event))}
+          <div
+            class="tl-event-band"
+            style:left={`${chip.left}px`}
+            style:width={`${chip.width}px`}
+            style:background={chip.decl.color}
+          ></div>
+        {/each}
+        {#each eventMarkerLines as chip (eventKey(chip.event))}
+          <div
+            class="tl-event-line"
+            class:bold={(chip.decl.line ?? 'solid') === 'bold'}
+            class:dotted={chip.decl.line === 'dotted'}
+            style:left={`${chip.left}px`}
+            style:border-left-color={chip.decl.color}
+          ></div>
         {/each}
         {#each bars as b (b.task.task_id)}
           <a
@@ -1029,6 +1262,21 @@
     {:else if hoveredMarker}
       <span class="hl">marker:</span><span class="hv">{hoveredMarker.values.join(', ')}</span>
       <span class="hl">at</span><span class="hv">{fmtTimeMs(hoveredMarker.ts)}</span>
+    {:else if hoveredEvent}
+      <span class="hl">Type:</span><span class="hv">{hoveredEvent.type}</span>
+      {#if hoveredEvent.text}
+        <span class="hl">Text:</span><span class="hv">{hoveredEvent.text}</span>
+      {/if}
+      <span class="hl">At:</span><span class="hv">{fmtTimeMs(hoveredEvent.ts)}</span>
+      {#if hoveredEvent.endTs != null}
+        <span class="hl">To:</span><span class="hv">{fmtTimeMs(hoveredEvent.endTs)}</span>
+      {/if}
+      {#if Object.keys(hoveredEvent.values).length}
+        <br />
+        {#each Object.entries(hoveredEvent.values) as [k, v]}
+          <span class="chip label-chip">{k}={String(v)}</span>
+        {/each}
+      {/if}
     {:else}
       <span class="hint">hover over a task bar to see details</span>
     {/if}
@@ -1384,6 +1632,88 @@
     background: #9ca3af;
     pointer-events: none;
     z-index: 1;
+  }
+
+  /* Custom-event rail (contract v1.21), between the axis and the role-marker
+     rail: one chip per visible declared-type instance. Colors come from the
+     declaration, not a fixed palette — operators pick their own. */
+  .tl-events {
+    position: relative;
+    height: 14px;
+  }
+  .event-chip {
+    position: absolute;
+    top: 0;
+    display: inline-block;
+    max-width: 12rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    background: transparent;
+    border: none;
+    border-left-width: 2px;
+    border-left-style: solid;
+    border-radius: 0;
+    padding: 0 3px;
+    font-family: var(--mono);
+    font-size: 9px;
+    line-height: 14px;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .event-chip.active {
+    font-weight: 700;
+  }
+
+  /* In-lane visuals: a marker's full-height guide line, and a range's
+     translucent duration band. Both pointer-events: none — the rail chip
+     above is the hover/click target, so hovering the line or band itself
+     does nothing. */
+  .tl-event-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-left-width: 1px;
+    border-left-style: solid;
+    pointer-events: none;
+    z-index: 1;
+  }
+  .tl-event-line.bold {
+    border-left-width: 2px;
+  }
+  .tl-event-line.dotted {
+    border-left-style: dotted;
+  }
+  .tl-event-band {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    opacity: 0.15;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Gear popover: declared event-type visibility checkboxes. */
+  .event-pop-head {
+    margin-top: 0.5rem;
+  }
+  .event-row {
+    display: block;
+  }
+  .event-check {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.75rem;
+    color: #6b7280;
+    cursor: pointer;
+  }
+  .event-swatch {
+    display: inline-block;
+    width: 0.625rem;
+    height: 0.625rem;
+    border-radius: 0.15rem;
+    flex: none;
   }
 
   /* Hover-detail strip: fixed 9em height so the panel doesn't jump as tasks

@@ -36,6 +36,11 @@
     throughputFromEvent,
     type ThroughputSample,
   } from '../lib/throughput'
+  import {
+    eventFromWsEvent,
+    eventsFromHistory,
+    type TimelineEventView,
+  } from '../lib/timelineEvents'
   import Timeline from '../components/live/Timeline.svelte'
   import ConsumePauseControl from '../components/live/ConsumePauseControl.svelte'
   import TimelineStats from '../components/live/TimelineStats.svelte'
@@ -102,6 +107,14 @@
   let allTasks = $state<Record<string, TaskView>>({})
   let arranges = $state<ArrangeView[]>([])
   let annotations = $state<AnnotationView[]>([])
+  // Custom timeline-event instances (contract v1.21): parsed `annotation`
+  // frames carrying a `timeline_event` metadata envelope, newest-first,
+  // seeded from the history-backfill endpoint on mount. Kept in its own
+  // bounded buffer rather than folded into `annotations` — the Timeline
+  // overlay wants the parsed TimelineEventView shape, not the raw
+  // AnnotationView the Arrange tab renders.
+  let timelineEvents = $state<TimelineEventView[]>([])
+  const TIMELINE_EVENTS_MAX = 500
   let arrangeStates = $state<Record<string, ArrangeTaskState>>({})
   let taskResults = $state<TaskResult[]>([])
   let messageResults = $state<MessageResult[]>([])
@@ -255,6 +268,11 @@
         // often as to a task, so there is no single record they belong on.
         const ann = annotationFromEvent(e)
         if (ann) annotations = [ann, ...annotations].slice(0, maxHistory)
+        // Custom timeline events (contract v1.21) ride the same WS frame,
+        // tagged by their own metadata.kind — a frame can only be one or the
+        // other, so both parsers running is fine (exactly one returns non-null).
+        const tev = eventFromWsEvent(e)
+        if (tev) timelineEvents = [tev, ...timelineEvents].slice(0, TIMELINE_EVENTS_MAX)
         break
       }
       case 'runtime_health':
@@ -453,6 +471,21 @@
     }
   }
 
+  // Seeds the custom-events buffer from the history-backfill endpoint
+  // (contract v1.21) once at mount — the WS stream only carries instances
+  // from connect time onward, same rationale as loadArrangesBoot above. A
+  // 404 (backend predates the feature) or a degraded read resolves to
+  // `null` from the api layer, which leaves the buffer empty rather than an
+  // error.
+  async function loadTimelineEventsHistory() {
+    try {
+      const payload = await api.timelineEvents(maxAgeMinutes)
+      if (payload) timelineEvents = eventsFromHistory(payload).slice(0, TIMELINE_EVENTS_MAX)
+    } catch {
+      /* best-effort — WS annotations still populate going forward */
+    }
+  }
+
   // --- freeze ---
   function setFrozen(f: boolean) {
     frozen = f
@@ -497,6 +530,7 @@
       .catch(() => {})
 
     void loadArrangesBoot()
+    void loadTimelineEventsHistory()
     void resync()
 
     socket = createLiveSocket({
@@ -606,6 +640,7 @@
       timeline={timelineConfig}
       workerId={$identity?.worker_id}
       throughput={throughputSamples}
+      events={timelineEvents}
     />
     <TimelineStats tasks={tasksList} attached />
   {:else}
@@ -624,6 +659,7 @@
       workerId={$identity?.worker_id}
       shared={sharedControls}
       showHeader={false}
+      events={timelineEvents}
     />
     <TimelineStats tasks={tasksList} shared={sharedControls} attached />
     {#if clusterLoadFailed}

@@ -9,7 +9,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { flushSync, mount, unmount } from 'svelte'
 import Timeline from './Timeline.svelte'
 import type { TaskView } from '../../lib/live'
-import type { TimelineConfig } from '../../lib/types'
+import type { TimelineConfig, TimelineEventDecl } from '../../lib/types'
+import type { EventMatch, TimelineEventView } from '../../lib/timelineEvents'
 import { tagBoxWidth, TAG_EDGE_MARGIN_PX } from '../../lib/timeline'
 
 const NOW = Date.now() / 1000
@@ -124,6 +125,34 @@ async function measureViewport(target: HTMLElement, width: number, scrollLeft: n
 
 function styleNumber(el: HTMLElement, property: 'left' | 'width'): number {
   return parseFloat(el.style.getPropertyValue(property))
+}
+
+function eventDecl(name: string, extra: Partial<TimelineEventDecl> = {}): TimelineEventDecl {
+  return {
+    name,
+    kind: 'marker',
+    color: '#7c3aed',
+    show: true,
+    action: 'none',
+    ...extra,
+  }
+}
+
+function eventInstance(
+  type: string,
+  ts: number,
+  extra: Partial<TimelineEventView> = {},
+): TimelineEventView {
+  return {
+    type,
+    ts,
+    endTs: null,
+    text: '',
+    values: {},
+    match: null,
+    partition: 0,
+    ...extra,
+  }
 }
 
 const mounted: { target: HTMLElement; component: Record<string, unknown> }[] = []
@@ -467,5 +496,129 @@ describe('throughput track', () => {
 
     expect(target.querySelector('.tl-hover')?.textContent).toContain('Speed:')
     expect(target.querySelector('.tl-hover')?.textContent).toContain('4.2M/s')
+  })
+})
+
+describe('custom timeline events', () => {
+  it('draws a marker line for a custom event at its geometry position with the decl color', () => {
+    const decl = eventDecl('deploy', { kind: 'marker', color: '#7c3aed' })
+    const ev = eventInstance('deploy', tasks[0].start_ts, { text: 'v2 deployed' })
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: [ev],
+    })
+
+    const line = target.querySelector('.tl-event-line') as HTMLElement
+    expect(line).not.toBeNull()
+    expect(styleNumber(line, 'left')).toBeCloseTo(styleNumber(barFor(target, 'big'), 'left'), 5)
+    expect(line.getAttribute('style')).toContain('#7c3aed')
+  })
+
+  it('draws a translucent range band spanning its geometry', () => {
+    const decl = eventDecl('maintenance', { kind: 'range', color: '#f59e0b' })
+    const ev = eventInstance('maintenance', tasks[0].start_ts, { endTs: tasks[1].start_ts })
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: [ev],
+    })
+
+    const band = target.querySelector('.tl-event-band') as HTMLElement
+    expect(band).not.toBeNull()
+    const expectedWidth =
+      styleNumber(barFor(target, 'empty'), 'left') - styleNumber(barFor(target, 'big'), 'left')
+    expect(styleNumber(band, 'left')).toBeCloseTo(styleNumber(barFor(target, 'big'), 'left'), 5)
+    expect(styleNumber(band, 'width')).toBeCloseTo(expectedWidth, 5)
+    expect(band.getAttribute('style')).toContain('#f59e0b')
+  })
+
+  it('silently skips an event instance whose type has no declaration', () => {
+    const decl = eventDecl('deploy')
+    const ev = eventInstance('unknown_type', tasks[0].start_ts)
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: [ev],
+    })
+
+    expect(target.querySelector('.tl-event-line')).toBeNull()
+    expect(target.querySelector('.event-chip')).toBeNull()
+  })
+
+  it('hides a show:false declared event until enabled via the gear checkbox', () => {
+    const decl = eventDecl('deploy', { show: false })
+    const ev = eventInstance('deploy', tasks[0].start_ts)
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: [ev],
+    })
+    expect(target.querySelector('.event-chip')).toBeNull()
+
+    ;(target.querySelector('button.gear') as HTMLButtonElement).click()
+    flushSync()
+    const checkbox = target.querySelector(
+      'input[type="checkbox"][aria-label="Show deploy timeline events"]',
+    ) as HTMLInputElement
+    expect(checkbox).not.toBeNull()
+    expect(checkbox.checked).toBe(false)
+    checkbox.checked = true
+    checkbox.dispatchEvent(new Event('change', { bubbles: true }))
+    flushSync()
+
+    expect(target.querySelector('.event-chip')).not.toBeNull()
+    expect(JSON.parse(localStorage.getItem('dk.timeline.events.worker-a') ?? '{}')).toEqual({
+      deploy: true,
+    })
+  })
+
+  it('renders a link-action chip as an anchor with the resolved href', () => {
+    const decl = eventDecl('deploy', {
+      action: 'link',
+      link: 'https://grafana.example/d/deploys?ts={ts_ms}',
+      label: 'deploy {text}',
+    })
+    const ev = eventInstance('deploy', tasks[0].start_ts, { text: 'v2.1' })
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: [ev],
+    })
+
+    const chip = target.querySelector('a.event-chip') as HTMLAnchorElement
+    expect(chip).not.toBeNull()
+    expect(chip.getAttribute('target')).toBe('_blank')
+    expect(chip.getAttribute('rel')).toBe('noopener')
+    expect(chip.textContent).toBe('deploy v2.1')
+    expect(chip.getAttribute('href')).toBe(
+      `https://grafana.example/d/deploys?ts=${Math.round(ev.ts * 1000)}`,
+    )
+  })
+
+  it('emphasizes matching bars when a highlight chip is clicked, and clears on a second click', () => {
+    const decl = eventDecl('slow_window', { kind: 'flag', action: 'highlight' })
+    const match: EventMatch = { offsets: [[0, 5]] }
+    const ev = eventInstance('slow_window', tasks[0].start_ts, { match })
+    const matchingTask: TaskView = { ...tasks[1], source_offsets: [5] }
+    const { target } = renderTracked({
+      tasks: [tasks[0], matchingTask],
+      timeline: { ...config, events: [decl] },
+      events: [ev],
+    })
+
+    const chip = target.querySelector('button.event-chip') as HTMLButtonElement
+    expect(chip).not.toBeNull()
+    chip.click()
+    flushSync()
+    expect(barFor(target, 'big').classList.contains('dim')).toBe(true)
+    expect(barFor(target, 'empty').classList.contains('dim')).toBe(false)
+
+    chip.click()
+    flushSync()
+    expect(barFor(target, 'big').classList.contains('dim')).toBe(false)
+    expect(barFor(target, 'empty').classList.contains('dim')).toBe(false)
+  })
+
+  it('renders no event overlay when the config declares no events', () => {
+    const { target } = renderTracked()
+    expect(target.querySelector('.tl-events')).toBeNull()
+    expect(target.querySelector('.tl-event-line')).toBeNull()
+    expect(target.querySelector('.tl-event-band')).toBeNull()
   })
 })
