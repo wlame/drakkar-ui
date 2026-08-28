@@ -175,6 +175,31 @@ describe('downloadUrl', () => {
   })
 })
 
+describe('timelineEvents', () => {
+  it('returns the parsed body on 200, with minutes in the query string', async () => {
+    const body = { events: [{ kind: 'timeline_event' }], unavailable: false }
+    fetchMock.mockResolvedValue(okJson(body))
+    await expect(api.timelineEvents(30)).resolves.toEqual(body)
+    expect(call().url).toBe('/api/v1/timeline/events?minutes=30')
+  })
+
+  it('omits minutes from the query string when not given', async () => {
+    fetchMock.mockResolvedValue(okJson({ events: [], unavailable: false }))
+    await api.timelineEvents()
+    expect(call().url).toBe('/api/v1/timeline/events')
+  })
+
+  it('maps a 404 to null rather than throwing (a backend that predates v1.21)', async () => {
+    fetchMock.mockResolvedValue(httpError(404, '{"error":"not found"}'))
+    await expect(api.timelineEvents()).resolves.toBeNull()
+  })
+
+  it('still throws on a genuine server error', async () => {
+    fetchMock.mockResolvedValue(httpError(500, '{"error":"boom"}'))
+    await expect(api.timelineEvents()).rejects.toThrow('GET /timeline/events → HTTP 500')
+  })
+})
+
 describe('debugArchives', () => {
   it('returns the parsed envelope on 200', async () => {
     const body = {

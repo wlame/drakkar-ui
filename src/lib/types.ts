@@ -126,6 +126,20 @@ export interface TimelineRoleBindings {
   marker?: string
 }
 
+// One operator-declared custom timeline event type (contract v1.21). `line`
+// only applies to `kind: 'marker'` declarations; omitted otherwise. `link`
+// is present iff `action` is `'link'`.
+export interface TimelineEventDecl {
+  name: string
+  kind: 'marker' | 'range' | 'flag'
+  color: string
+  line?: 'solid' | 'bold' | 'dotted'
+  label?: string
+  show: boolean
+  link?: string
+  action: 'none' | 'link' | 'highlight' | 'filter'
+}
+
 // Timeline history depth, bar-color rules, and label-role bindings from
 // ui.timeline (v1.7). See src/lib/timelineRules.ts for the color-rule engine.
 export interface TimelineConfig {
@@ -133,6 +147,10 @@ export interface TimelineConfig {
   max_age_minutes: number
   color_rules: TimelineColorRule[]
   labels: TimelineRoleBindings
+  // Declared custom event types (v1.21). Absent entirely on a backend that
+  // predates the feature, or when the deployment declares none — either way
+  // the UI renders no event overlay.
+  events?: TimelineEventDecl[]
 }
 
 // Worker self-identity from GET /api/v1/identity (v1.1, extended v1.2).

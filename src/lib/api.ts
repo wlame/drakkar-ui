@@ -155,6 +155,19 @@ export const api = {
   task: (id: string) => get<TaskDetailResponse>(`/task/${encodeURIComponent(id)}`),
   recentTasks: (minutes = 2) => get<RecentTasksResponse>(`/recent-tasks${qs({ minutes })}`),
 
+  // Custom timeline events (contract v1.21): history backfill for the
+  // timeline's visible window. 404 is a defined contract answer (a backend
+  // that predates the feature) — mapped to null, not an error, same idiom
+  // as runtimeHealth/debugArchives above. The body shape is vetted by
+  // timelineEvents.ts's eventsFromHistory, not here.
+  timelineEvents: async (minutes?: number): Promise<unknown | null> => {
+    const path = `/timeline/events${qs({ minutes })}`
+    const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders() })
+    if (res.status === 404) return null
+    if (!res.ok) return fail('GET', path, res)
+    return (await res.json()) as unknown
+  },
+
   // Live
   liveOverview: () => get<LiveOverview>('/live/overview'),
   liveTaskResults: (limit = 200) => get<TaskResult[]>(`/live/task-results${qs({ limit })}`),
