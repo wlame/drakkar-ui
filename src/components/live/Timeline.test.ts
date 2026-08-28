@@ -607,6 +607,47 @@ describe('custom timeline events', () => {
     expect(chip.textContent).toBe('deploy v2.1 ($&/$1/$$)')
   })
 
+  // Label resolution order with no declared template: the per-type track's
+  // own left-side label already names the type (see .track-label), so a
+  // bare chip repeating the type name buries the one thing that actually
+  // varies per instance. The type name is only the last resort, for an
+  // instance with no text of its own.
+  it('shows the instance text on the chip when no label template is configured', () => {
+    const decl = eventDecl('deploy') // no `label`
+    const ev = eventInstance('deploy', tasks[0].start_ts, { text: 'v2.1 rollout' })
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: [ev],
+    })
+
+    const chip = target.querySelector('.event-chip') as HTMLElement
+    expect(chip.textContent).toBe('v2.1 rollout')
+  })
+
+  it('falls back to the type name when there is no label template AND no instance text', () => {
+    const decl = eventDecl('deploy') // no `label`
+    const ev = eventInstance('deploy', tasks[0].start_ts) // text: '' by default
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: [ev],
+    })
+
+    const chip = target.querySelector('.event-chip') as HTMLElement
+    expect(chip.textContent).toBe('deploy')
+  })
+
+  it('still prefers a configured label template over the instance text', () => {
+    const decl = eventDecl('deploy', { label: 'deploy {text}' })
+    const ev = eventInstance('deploy', tasks[0].start_ts, { text: 'v2.1' })
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: [ev],
+    })
+
+    const chip = target.querySelector('.event-chip') as HTMLElement
+    expect(chip.textContent).toBe('deploy v2.1')
+  })
+
   it('shows an unresolved-link note in the hover strip when action=link cannot resolve an href', () => {
     // {sha} is never supplied (no `values` on the instance, no matching
     // link_bases entry), so resolveEventLink returns null and the chip
@@ -763,10 +804,13 @@ describe('per-type event tracks', () => {
     const decl = eventDecl('maintenance_window_alert') // 24 chars — needs real room
     const base = tasks[0].start_ts
     const evs = [
-      eventInstance('maintenance_window_alert', base, { text: 'first' }),
+      // No text on either instance: with no label template configured,
+      // each chip's label falls back to the 24-char type name — still
+      // needing real room, same as before text-first fallback existed.
+      eventInstance('maintenance_window_alert', base),
       // +2.5s => 40px at 16px/sec: far enough not to cluster (>12px), but
       // nowhere near enough room for a 24-char label to fit before it.
-      eventInstance('maintenance_window_alert', base + 2.5, { text: 'x' }),
+      eventInstance('maintenance_window_alert', base + 2.5),
     ]
     const { target } = renderTracked({
       timeline: { ...config, events: [decl] },
@@ -791,10 +835,11 @@ describe('per-type event tracks', () => {
     const decl = eventDecl('maintenance_window_alert') // 24 chars — needs real room
     const base = tasks[0].start_ts
     const evs = [
-      eventInstance('maintenance_window_alert', base, { text: 'first' }),
+      // No text on either instance: falls back to the 24-char type name.
+      eventInstance('maintenance_window_alert', base),
       // +2.5s => 40px at 16px/sec: far enough not to cluster (>12px), but
       // nowhere near enough room for a 24-char label to fit before it.
-      eventInstance('maintenance_window_alert', base + 2.5, { text: 'x' }),
+      eventInstance('maintenance_window_alert', base + 2.5),
     ]
     const { target } = renderTracked({
       timeline: { ...config, events: [decl] },
@@ -816,12 +861,38 @@ describe('per-type event tracks', () => {
     expect(chips[1].classList.contains('vertical')).toBe(false)
   })
 
+  // The density ladder (layoutTrack) trims whatever string resolveEventLabel
+  // hands it — it has no idea whether that came from a template, instance
+  // text, or the type-name fallback. Pins that down with a SHORT type name
+  // (would trivially fit on its own) paired with LONG instance text (the
+  // one that actually needs trimming) — the crowding, and the trim, must
+  // track the text, not the type name.
+  it('trims whichever resolved string is crowded, not just a long type name', () => {
+    const decl = eventDecl('a') // 1 char — would never need vertical mode on its own
+    const base = tasks[0].start_ts
+    const evs = [
+      eventInstance('a', base, { text: 'deployment-marker-event' }), // 24 chars
+      // +2.5s => 40px at 16px/sec: not enough room for the 24-char text.
+      eventInstance('a', base + 2.5, { text: 'y' }),
+    ]
+    const { target } = renderTracked({
+      timeline: { ...config, events: [decl] },
+      events: evs,
+    })
+    enableVerticalLabels(target)
+
+    const track = trackFor(target, 'a') as HTMLElement
+    const chips = track.querySelectorAll('.event-chip')
+    expect(chips[0].classList.contains('vertical')).toBe(true)
+    expect(chips[0].textContent).toBe('deplo…')
+  })
+
   it('persists the "Vertical labels" toggle across a remount', () => {
     const decl = eventDecl('maintenance_window_alert')
     const base = tasks[0].start_ts
     const evs = [
-      eventInstance('maintenance_window_alert', base, { text: 'first' }),
-      eventInstance('maintenance_window_alert', base + 2.5, { text: 'x' }),
+      eventInstance('maintenance_window_alert', base),
+      eventInstance('maintenance_window_alert', base + 2.5),
     ]
     const { target: firstTarget } = renderTracked({
       timeline: { ...config, events: [decl] },
@@ -1003,8 +1074,9 @@ describe('per-type event tracks', () => {
     // buffer rather than whatever the current scroll position happens to
     // leave in the culled render window.
     const evs = [
-      eventInstance('maintenance_window_alert', base, { text: 'first' }),
-      eventInstance('maintenance_window_alert', base + 2.5, { text: 'x' }),
+      // No text on either instance: falls back to the 24-char type name.
+      eventInstance('maintenance_window_alert', base),
+      eventInstance('maintenance_window_alert', base + 2.5),
     ]
     const { target } = renderTracked({
       timeline: { ...config, events: [decl] },

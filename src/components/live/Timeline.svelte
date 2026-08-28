@@ -621,14 +621,25 @@
     eventLabelPrefs = loadEventLabelPrefs(workerId)
   }
 
-  // Only `{text}` substitutes in a declared label template (contract v1.21);
-  // with no template the chip falls back to the type name itself. The
-  // replacement is a function, not a string, so a `$` in the handler's
+  // Only `{text}` substitutes in a declared label template (contract v1.21).
+  // The replacement is a function, not a string, so a `$` in the handler's
   // event text (`$&`, `$1`, `$$`, ...) is inserted literally instead of
   // being interpreted as a String.replace substitution pattern.
+  //
+  // With no template configured, the chip shows the instance's own `text`
+  // rather than the type name: the per-type track already labels the row
+  // with its type (see `.track-label`), so repeating the type name on every
+  // chip in that row would bury the one thing that actually varies
+  // per-event. The type name is still the final fallback for an instance
+  // with no text of its own — every chip needs SOME label.
+  //
+  // The single resolution point for a chip's caption: layoutTrack's
+  // displayLabel, the cluster popover's member titles, and the hover strip
+  // all read this same resolved string off EventChip.label / TrackChip
+  // members rather than re-deriving it.
   function resolveEventLabel(decl: TimelineEventDecl, ev: TimelineEventView): string {
-    if (!decl.label) return decl.name
-    return decl.label.replace(/\{text\}/g, () => ev.text)
+    if (decl.label) return decl.label.replace(/\{text\}/g, () => ev.text)
+    return ev.text || decl.name
   }
 
   // Content-based identity, for the hover/active-state EQUALITY comparisons
