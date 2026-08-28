@@ -282,13 +282,24 @@ describe('resolveEventLink', () => {
     values: { sha: 'ab12f' },
   })
 
-  it('substitutes ts_ms, end_ts_ms, text, and values keys', () => {
+  it('substitutes ts_ms, end_ts_ms, and linkBases raw, but percent-encodes text and values keys', () => {
     const link = decl({
       link: '{grafana}/d/deploys?from={ts_ms}&to={end_ts_ms}&text={text}&sha={sha}',
       action: 'link',
     })
     expect(resolveEventLink(link, baseEv, { grafana: 'https://g.example' })).toBe(
-      'https://g.example/d/deploys?from=1000000&to=1005000&text=v2.1 deployed&sha=ab12f',
+      'https://g.example/d/deploys?from=1000000&to=1005000&text=v2.1%20deployed&sha=ab12f',
+    )
+  })
+
+  it('percent-encodes a values entry so it cannot inject query params or break the URL', () => {
+    // A handler-supplied value containing "&", "#", and a space must not be
+    // able to add its own query params, truncate the template into the
+    // fragment, or otherwise corrupt the resolved URL.
+    const ev = eventView({ values: { sha: 'abc&admin=1#frag with space' } })
+    const link = decl({ link: '{grafana}/d/deploys?sha={sha}', action: 'link' })
+    expect(resolveEventLink(link, ev, { grafana: 'https://g.example' })).toBe(
+      'https://g.example/d/deploys?sha=abc%26admin%3D1%23frag%20with%20space',
     )
   })
 

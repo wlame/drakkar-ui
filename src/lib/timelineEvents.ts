@@ -152,16 +152,25 @@ export function eventGeometry(
 // fixed ts_ms/end_ts_ms/text triplet: the event's own `values` map, then
 // the identity's `link_bases` (later entries win on a name collision, per
 // the contract's stated substitution order).
+//
+// ts_ms/end_ts_ms are pure numbers, safe to insert raw; linkBases entries are
+// trusted URL prefixes (operator-configured, not event data), also inserted
+// raw. text and every values entry, by contrast, are attacker/handler-
+// controlled strings landing inside a URL — percent-encoded so a value like
+// `sha: "abc&admin=1#frag"` can't inject query params or truncate the
+// template into the fragment. Same split as src/lib/enrich.ts's
+// resolveTemplate: the base is trusted and raw, {value}/{row.*} substitutions
+// are encoded.
 function linkVariables(
   ev: TimelineEventView,
   linkBases: Record<string, string>,
 ): Record<string, string> {
   const vars: Record<string, string> = {
     ts_ms: String(Math.round(ev.ts * 1000)),
-    text: ev.text,
+    text: encodeURIComponent(ev.text),
   }
   if (ev.endTs != null) vars.end_ts_ms = String(Math.round(ev.endTs * 1000))
-  for (const [k, v] of Object.entries(ev.values)) vars[k] = String(v)
+  for (const [k, v] of Object.entries(ev.values)) vars[k] = encodeURIComponent(String(v))
   for (const [k, v] of Object.entries(linkBases)) vars[k] = v
   return vars
 }
@@ -169,11 +178,12 @@ function linkVariables(
 /**
  * Resolves a declaration's `link` template against one event instance.
  * Substitutes `{ts_ms}`, `{end_ts_ms}`, `{text}`, any `{<values key>}`, and
- * any `{<linkBases name>}`. Any `{var}` left unresolved (including
- * `{end_ts_ms}` on a point event with no end) means "render without a
- * link" — the contract for a template that outran what this instance can
- * fill in — so the whole result is null rather than a partially-substituted
- * URL.
+ * any `{<linkBases name>}`. `text` and `values` substitutions are
+ * percent-encoded (see {@link linkVariables}); `ts_ms`/`end_ts_ms`/linkBases
+ * are inserted raw. Any `{var}` left unresolved (including `{end_ts_ms}` on
+ * a point event with no end) means "render without a link" — the contract
+ * for a template that outran what this instance can fill in — so the whole
+ * result is null rather than a partially-substituted URL.
  */
 export function resolveEventLink(
   decl: TimelineEventDecl,
