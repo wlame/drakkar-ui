@@ -13,7 +13,14 @@ import type { TimelineConfig, TimelineEventDecl } from '../../lib/types'
 import type { EventMatch, TimelineEventView } from '../../lib/timelineEvents'
 import { tagBoxWidth, TAG_EDGE_MARGIN_PX } from '../../lib/timeline'
 
-const NOW = Date.now() / 1000
+// A fixed synthetic epoch (seconds), pinned onto the clock in beforeEach —
+// deliberately NOT Date.now(). Every fixture timestamp below is expressed
+// relative to NOW, while the component derives its own pixel origin from the
+// clock at mount time (originTs = now - maxAge). Under a real clock those two
+// drift apart by however long the file takes to reach a given test, and the
+// drift is worth 16px/sec at the default zoom — enough to slide a chip across
+// a cull boundary and fail the pixel-exact scroll assertions under load.
+const NOW = 1_770_000_000
 
 function task(id: string, startOffset: number, extra: Partial<TaskView> = {}): TaskView {
   return {
@@ -164,6 +171,11 @@ function renderTracked(props: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+  // Only Date is faked: timers and requestAnimationFrame stay real, because
+  // measureViewport() awaits a real rAF frame and the component coalesces its
+  // scroll sync on one.
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(NOW * 1000)
   localStorage.clear()
 })
 
@@ -172,6 +184,7 @@ afterEach(async () => {
     await unmount(component)
     target.remove()
   }
+  vi.useRealTimers()
 })
 
 describe('Timeline', () => {
