@@ -1465,7 +1465,9 @@ configured directory; escapes and missing files are 404 (no SPA shell
 fallback); directory requests serve `index.html`; the mount sits behind the
 same auth gate as the SPA pages (open with no token, token-gated otherwise);
 unconfigured or missing directory → 404 with a short JSON hint naming
-`ui.docs.site_dir`.
+`ui.docs.site_dir`. Backends MUST register `GET /docs/` unconditionally:
+when the feature is unconfigured, or the configured directory is missing,
+the mount still answers and returns that hint-404 — never the SPA shell.
 
 ### Identity: `docs` key (optional)
 
@@ -1483,10 +1485,14 @@ Present only when the feature is enabled:
 ```
 
 `match` carries exactly one of `label` (with optional `value`), `sink`,
-`event`, `page`. `path` is relative into the site, optional `#fragment`, no
-`..`/scheme/leading slash. `title` omitted when empty. Most specific match
-wins (`label`+`value` over key-wide `label`). The UI renders contextual
-anchors from this list and must tolerate the key's absence (older backend).
+`event`, `page`. What each selector names: `label` a task label key, and
+`value` one specific value of that key; `sink` a configured sink instance
+name; `event` a declared timeline event type name (`timeline.events[].name`);
+`page` a declared UI page slug. `path` is relative into the site, optional
+`#fragment`, no `..`/scheme/leading slash. `title` omitted when empty. Most
+specific match wins (`label`+`value` over key-wide `label`). At most 200
+entries. The UI renders contextual anchors from this list and must tolerate
+the key's absence (older backend).
 
 ### Built-in `docs` link base
 

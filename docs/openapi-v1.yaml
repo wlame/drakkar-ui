@@ -1273,6 +1273,7 @@ components:
         title: {type: string, description: Display title of the operator docs site.}
         anchors:
           type: array
+          maxItems: 200
           items: {$ref: '#/components/schemas/DocsAnchor'}
       required: [title, anchors]
 
@@ -1286,8 +1287,7 @@ components:
           type: object
           description: >-
             Exactly one of label (with optional value), sink, event, page —
-            see the contract doc for the shapes.
-          additionalProperties: true
+            see the contract doc for what each selector names.
         path:
           type: string
           description: >-
