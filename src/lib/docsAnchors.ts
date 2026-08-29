@@ -10,6 +10,11 @@
 // renders nothing extra. Malformed entries are skipped rather than thrown on
 // — the same defensive posture as the rest of the identity surface, since one
 // bad operator entry must not break a page.
+//
+// Anchors are validated and indexed once, at ingestion, because the lookups
+// run in render hot paths: a label chip asks per cell, so a big table can ask
+// thousands of times per render. Every anchorFor* is then a Map.get over the
+// prebuilt index instead of a scan over the declared list.
 
 import type { DocsAnchorWire, DocsConfig } from './types'
 
@@ -17,12 +22,19 @@ import type { DocsAnchorWire, DocsConfig } from './types'
 // see the built-in `docs` link base in the contract.
 const DOCS_MOUNT = '/docs/'
 
+// Index keys are `<kind>:<name>`, with a value-narrowed label anchor keyed
+// `label:<key>\0<value>`. NUL cannot occur in a config string, so it can
+// never collide with a label key that happens to contain the separator.
+const VALUE_SEP = '\0'
+
 // Module-level config store: set once from the identity fetch at boot (see
 // setIdentity in config.ts), read by whatever renders a docs affordance.
 let currentDocs: DocsConfig | null = null
+let anchorIndex = new Map<string, DocsAnchorWire>()
 
 export function setDocsConfig(cfg: DocsConfig | null): void {
   currentDocs = cfg ?? null
+  anchorIndex = buildIndex(currentDocs)
 }
 
 export function getDocsConfig(): DocsConfig | null {
@@ -37,29 +49,67 @@ export function docsUrl(path: string): string {
   return DOCS_MOUNT + relative
 }
 
-// An entry is usable when it can actually produce a link: an object `match` to
-// look it up by, and a non-blank `path` to point at. Anything else (a
-// truncated entry, a wrong-typed field) is skipped by the lookups below.
+// A path with a `..` segment is rejected outright: the contract forbids it,
+// and the browser would normalize /docs/../../admin back out of the docs
+// mount into an arbitrary same-origin request.
+function hasTraversalSegment(path: string): boolean {
+  return path.split(/[/\\]/).includes('..')
+}
+
+// An entry is usable when it can actually produce a safe link: an object
+// `match` to look it up by, and a non-blank, non-traversing `path` to point
+// at. Anything else (a truncated entry, a wrong-typed field, an escape
+// attempt) never reaches the index.
 function isUsableAnchor(entry: unknown): entry is DocsAnchorWire {
   if (typeof entry !== 'object' || entry === null) return false
   const anchor = entry as Partial<DocsAnchorWire>
   if (typeof anchor.path !== 'string' || anchor.path.trim() === '') return false
+  if (hasTraversalSegment(anchor.path)) return false
   return typeof anchor.match === 'object' && anchor.match !== null
 }
 
-function usableAnchors(): DocsAnchorWire[] {
-  const declared = currentDocs?.anchors
-  return Array.isArray(declared) ? declared.filter(isUsableAnchor) : []
+// The three single-key match kinds resolve identically — only the `match`
+// field they name differs — so the kinds are data rather than three
+// near-identical lookups.
+type SingleMatchKey = 'sink' | 'event' | 'page'
+const SINGLE_MATCH_KEYS: SingleMatchKey[] = ['sink', 'event', 'page']
+
+function selectorName(match: DocsAnchorWire['match'], key: string): string | null {
+  const name = match[key as keyof DocsAnchorWire['match']]
+  return typeof name === 'string' && name !== '' ? name : null
 }
 
-// The three single-key match kinds resolve identically — only the `match`
-// field they read differs — so they share one lookup keyed by that field
-// rather than three near-identical functions.
-type SingleMatchKey = 'sink' | 'event' | 'page'
+// Every index key one entry answers to. A well-formed entry carries exactly
+// one selector, but a malformed one carrying several is indexed under each of
+// them rather than dropped — the lookups stay the arbiter of what matches.
+function indexKeysFor(anchor: DocsAnchorWire): string[] {
+  const keys: string[] = []
+  const labelKey = selectorName(anchor.match, 'label')
+  if (labelKey !== null) {
+    const value = selectorName(anchor.match, 'value')
+    keys.push(value !== null ? `label:${labelKey}${VALUE_SEP}${value}` : `label:${labelKey}`)
+  }
+  for (const kind of SINGLE_MATCH_KEYS) {
+    const name = selectorName(anchor.match, kind)
+    if (name !== null) keys.push(`${kind}:${name}`)
+  }
+  return keys
+}
 
-function anchorForSingleMatch(key: SingleMatchKey, name: string): DocsAnchorWire | null {
-  if (!name) return null
-  return usableAnchors().find((anchor) => anchor.match[key] === name) ?? null
+// buildIndex validates the declared anchors once and maps each usable one to
+// the keys it answers to. First declaration wins on a duplicate key, which is
+// what a top-to-bottom scan of the list used to do.
+function buildIndex(cfg: DocsConfig | null): Map<string, DocsAnchorWire> {
+  const index = new Map<string, DocsAnchorWire>()
+  const declared = cfg?.anchors
+  if (!Array.isArray(declared)) return index
+  for (const entry of declared) {
+    if (!isUsableAnchor(entry)) continue
+    for (const key of indexKeysFor(entry)) {
+      if (!index.has(key)) index.set(key, entry)
+    }
+  }
+  return index
 }
 
 // anchorForLabel resolves a label chip, most specific match first: an anchor
@@ -67,12 +117,16 @@ function anchorForSingleMatch(key: SingleMatchKey, name: string): DocsAnchorWire
 // without a value it can only answer with the key-wide anchor.
 export function anchorForLabel(key: string, value?: string): DocsAnchorWire | null {
   if (!key) return null
-  const forKey = usableAnchors().filter((anchor) => anchor.match.label === key)
   if (value !== undefined) {
-    const specific = forKey.find((anchor) => anchor.match.value === value)
+    const specific = anchorIndex.get(`label:${key}${VALUE_SEP}${value}`)
     if (specific) return specific
   }
-  return forKey.find((anchor) => anchor.match.value == null) ?? null
+  return anchorIndex.get(`label:${key}`) ?? null
+}
+
+function anchorForSingleMatch(kind: SingleMatchKey, name: string): DocsAnchorWire | null {
+  if (!name) return null
+  return anchorIndex.get(`${kind}:${name}`) ?? null
 }
 
 // anchorForSink resolves a configured sink instance name.

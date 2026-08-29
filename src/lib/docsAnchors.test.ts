@@ -38,6 +38,15 @@ describe('setDocsConfig / getDocsConfig', () => {
     setDocsConfig(null)
     expect(getDocsConfig()).toBeNull()
   })
+
+  it('replaces the previous index when a new config is set', () => {
+    setDocsConfig(config)
+    expect(anchorForSink('primary_results_topic')).not.toBeNull()
+
+    setDocsConfig({ title: 'Other Docs', anchors: [{ match: { sink: 'other' }, path: 'o.html' }] })
+    expect(anchorForSink('primary_results_topic')).toBeNull()
+    expect(anchorForSink('other')?.path).toBe('o.html')
+  })
 })
 
 describe('docsUrl', () => {
@@ -130,6 +139,21 @@ describe('malformed entries', () => {
     expect(anchorForSink('blank_path_sink')).toBeNull()
     expect(anchorForSink('wrong_path_type')).toBeNull()
     expect(anchorForSink('good_sink')?.path).toBe('sinks/good.html')
+  })
+
+  it('skips an anchor whose path escapes the docs mount', () => {
+    setDocsConfig({
+      title: 'Docs',
+      anchors: [
+        { match: { sink: 'escaping_sink' }, path: '../../admin' },
+        { match: { page: 'escaping_page' }, path: 'guide/../../etc/passwd' },
+        { match: { event: 'contained_event' }, path: 'events/#task-failed' },
+      ],
+    })
+
+    expect(anchorForSink('escaping_sink')).toBeNull()
+    expect(anchorForPage('escaping_page')).toBeNull()
+    expect(anchorForEvent('contained_event')?.path).toBe('events/#task-failed')
   })
 
   it('tolerates a missing or non-array anchors list and non-object entries', () => {
