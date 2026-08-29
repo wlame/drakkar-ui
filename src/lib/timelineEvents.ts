@@ -5,6 +5,7 @@
 // component wiring here (see timelineRoles.ts for the sibling pattern this
 // follows).
 
+import { withDocsAuthToken } from './enrich'
 import type { TaskView } from './live'
 import type { TimelineEventDecl, WsEvent } from './types'
 
@@ -184,6 +185,9 @@ function linkVariables(
  * a point event with no end) means "render without a link" — the contract
  * for a template that outran what this instance can fill in — so the whole
  * result is null rather than a partially-substituted URL.
+ *
+ * A link onto the operator docs mount gets the auth token appended, since the
+ * browser opens it without an Authorization header (see withDocsAuthToken).
  */
 export function resolveEventLink(
   decl: TimelineEventDecl,
@@ -199,7 +203,7 @@ export function resolveEventLink(
     unresolved = true
     return ''
   })
-  return unresolved ? null : result
+  return unresolved ? null : withDocsAuthToken(result, linkBases)
 }
 
 /**

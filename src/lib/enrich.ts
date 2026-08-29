@@ -11,12 +11,21 @@
 // inserted raw (it's a trusted URL prefix, not user/row data); resolveText
 // is for plain display text (panel titles, hint tooltips) and never
 // encodes — "o 1" must read as "o 1", not "o%201".
+//
+// One href-only extra: a template that resolves onto the same-origin operator
+// docs mount gets the auth token appended (see withDocsAuthToken, which the
+// timeline's own link resolver shares).
 
+import { withAuthToken } from './api'
 import { fmtTimeFull } from './format'
 
 export type LinkBases = Record<string, string>
 
 const TOKEN_RE = /\{([A-Za-z_][A-Za-z0-9_.]*)\}/g
+
+// The identity link base naming the same-origin operator docs mount
+// (contract v1.22 ships a built-in `"docs": "/docs"`).
+const DOCS_BASE_NAME = 'docs'
 
 // Module-level bases store: set once from the identity fetch at boot, read by
 // whatever renders links (UserDetailsTab, the detail side panel).
@@ -76,9 +85,41 @@ function walkTemplate(
   return failed ? null : out
 }
 
+// isUnderDocsMount reports whether a resolved href lands on the docs mount the
+// backend declared on identity. The character after the mount must be a
+// boundary, so a user base like '/docsearch' is not mistaken for the mount.
+function isUnderDocsMount(url: string, bases: LinkBases): boolean {
+  const mount = bases[DOCS_BASE_NAME]
+  if (!mount || !url.startsWith(mount)) return false
+  const boundary = url.charAt(mount.length)
+  return boundary === '' || boundary === '/' || boundary === '?' || boundary === '#'
+}
+
+/**
+ * Appends the auth token to a fully resolved href that lands on the operator
+ * docs mount, leaving every other URL untouched.
+ *
+ * The docs mount is auth-gated like the SPA, and a template link is opened by
+ * the browser (an `<a>`, an iframe src) — neither can carry the Authorization
+ * header. So a `{docs}` link gets the same `?token=` treatment docsUrl() gives
+ * the contextual anchors.
+ *
+ * It runs on the finished URL and never on the base itself: templates
+ * concatenate path segments after a base (`{docs}/page.html#frag`), so a base
+ * ending in `?token=x` would corrupt every URL built from it. withAuthToken is
+ * fragment-safe and joins onto a query the template already carries.
+ *
+ * Shared by both template resolvers — this one and resolveEventLink in
+ * timelineEvents.ts — so the two cannot disagree about docs links.
+ */
+export function withDocsAuthToken(url: string, bases: LinkBases): string {
+  return isUnderDocsMount(url, bases) ? withAuthToken(url) : url
+}
+
 /** Expands a link template into an href: {value}/{row.*} substitutions are percent-encoded. */
 export function resolveTemplate(tpl: string, ctx: TemplateContext): string | null {
-  return walkTemplate(tpl, ctx, encodeURIComponent)
+  const url = walkTemplate(tpl, ctx, encodeURIComponent)
+  return url === null ? null : withDocsAuthToken(url, ctx.bases)
 }
 
 /** Expands a template into plain display text (panel titles, hint tooltips): substitutions render literally, unencoded. */

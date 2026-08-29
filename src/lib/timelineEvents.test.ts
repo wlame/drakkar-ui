@@ -329,6 +329,36 @@ describe('resolveEventLink', () => {
     const link = decl({ link: 'x?to={end_ts_ms}', action: 'link' })
     expect(resolveEventLink(link, eventView({ endTs: null }), {})).toBeNull()
   })
+
+  // A {docs} link opens the auth-gated docs mount from the browser, which
+  // sends no Authorization header — so the token rides as a query param, the
+  // same rule enrich.ts applies to probe-details and declared-page templates.
+  describe('onto the docs mount', () => {
+    afterEach(() => {
+      localStorage.clear()
+    })
+
+    it('carries no token when auth is disabled', () => {
+      const link = decl({ link: '{docs}/runbook.html#deploys', action: 'link' })
+      expect(resolveEventLink(link, baseEv, { docs: '/docs' })).toBe('/docs/runbook.html#deploys')
+    })
+
+    it('appends the token before the fragment', () => {
+      localStorage.setItem('drakkar_token', 'sekret')
+      const link = decl({ link: '{docs}/runbook.html#deploys', action: 'link' })
+      expect(resolveEventLink(link, baseEv, { docs: '/docs' })).toBe(
+        '/docs/runbook.html?token=sekret#deploys',
+      )
+    })
+
+    it('leaves a non-docs base untouched', () => {
+      localStorage.setItem('drakkar_token', 'sekret')
+      const link = decl({ link: '{grafana}/d/deploys', action: 'link' })
+      expect(resolveEventLink(link, baseEv, { docs: '/docs', grafana: 'https://g.example' })).toBe(
+        'https://g.example/d/deploys',
+      )
+    })
+  })
 })
 
 describe('matchesEventMatch', () => {

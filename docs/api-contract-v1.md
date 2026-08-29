@@ -1464,10 +1464,13 @@ spec's `paths`). Serving rules: paths resolved and contained within the
 configured directory; escapes and missing files are 404 (no SPA shell
 fallback); directory requests serve `index.html`; the mount sits behind the
 same auth gate as the SPA pages (open with no token, token-gated otherwise);
-unconfigured or missing directory → 404 with a short JSON hint naming
-`ui.docs.site_dir`. Backends MUST register `GET /docs/` unconditionally:
-when the feature is unconfigured, or the configured directory is missing,
-the mount still answers and returns that hint-404 — never the SPA shell.
+the token may ride as `?token=` on any `/docs/` request, exactly as on
+`/api/v1/debug/download` and `/ws`, since a browser-issued page load carries
+no `Authorization` header; unconfigured or missing directory → 404 with a
+short JSON hint naming `ui.docs.site_dir`. Backends MUST register
+`GET /docs/` unconditionally: when the feature is unconfigured, or the
+configured directory is missing, the mount still answers and returns that
+hint-404 — never the SPA shell.
 
 ### Identity: `docs` key (optional)
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { badgeColor, formatValue, resolveTemplate, resolveText } from './enrich'
 
@@ -35,6 +35,51 @@ describe('resolveTemplate', () => {
     expect(resolveTemplate('{jira}/browse/{value}', { value: 'DK-1', bases })).toBe(
       'https://jira.internal.example.com/browse/DK-1',
     )
+  })
+})
+
+// A {docs} template link lands on the same-origin, auth-gated docs mount, and
+// the browser opens it without an Authorization header — so the token has to
+// ride as a query param, exactly as docsUrl() does for the contextual anchors.
+describe('resolveTemplate onto the docs mount', () => {
+  const docsBases = { ...bases, docs: '/docs' }
+
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  it('leaves the link alone when auth is disabled', () => {
+    expect(resolveTemplate('{docs}/page.html#frag', { bases: docsBases })).toBe(
+      '/docs/page.html#frag',
+    )
+  })
+
+  it('appends the token before the fragment', () => {
+    localStorage.setItem('drakkar_token', 'sekret')
+    expect(resolveTemplate('{docs}/page.html#frag', { bases: docsBases })).toBe(
+      '/docs/page.html?token=sekret#frag',
+    )
+  })
+
+  it('tokenizes a link that names the mount without the base token', () => {
+    localStorage.setItem('drakkar_token', 'sekret')
+    expect(resolveTemplate('/docs/{value}', { value: 'a.html', bases: docsBases })).toBe(
+      '/docs/a.html?token=sekret',
+    )
+  })
+
+  it('leaves a non-docs base untouched', () => {
+    localStorage.setItem('drakkar_token', 'sekret')
+    expect(resolveTemplate('{jira}/browse/{value}', { value: 'DK-1', bases: docsBases })).toBe(
+      'https://jira.internal.example.com/browse/DK-1',
+    )
+  })
+
+  it('does not mistake a base that merely starts with the mount for the mount', () => {
+    localStorage.setItem('drakkar_token', 'sekret')
+    expect(
+      resolveTemplate('{docsearch}/q', { bases: { ...docsBases, docsearch: '/docsearch' } }),
+    ).toBe('/docsearch/q')
   })
 })
 
