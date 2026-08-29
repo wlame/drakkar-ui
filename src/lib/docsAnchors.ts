@@ -23,8 +23,9 @@ import type { DocsAnchorWire, DocsConfig } from './types'
 const DOCS_MOUNT = '/docs/'
 
 // Index keys are `<kind>:<name>`, with a value-narrowed label anchor keyed
-// `label:<key>\0<value>`. NUL cannot occur in a config string, so it can
-// never collide with a label key that happens to contain the separator.
+// `label:<key>\0<value>`. A NUL is expressible in JSON, so a collision is not
+// strictly impossible — but it needs an operator to put one inside a label
+// key, and the worst case is one chip linking to the wrong docs page.
 const VALUE_SEP = '\0'
 
 // Module-level config store: set once from the identity fetch at boot (see
@@ -51,9 +52,11 @@ export function docsUrl(path: string): string {
 
 // A path with a `..` segment is rejected outright: the contract forbids it,
 // and the browser would normalize /docs/../../admin back out of the docs
-// mount into an arbitrary same-origin request.
+// mount into an arbitrary same-origin request. Percent-encoded dots are
+// decoded first — a URL parser resolves %2e%2e (and the mixed .%2e form) as
+// a dot segment too, so the raw split alone would wave them through.
 function hasTraversalSegment(path: string): boolean {
-  return path.split(/[/\\]/).includes('..')
+  return path.replace(/%2e/gi, '.').split(/[/\\]/).includes('..')
 }
 
 // An entry is usable when it can actually produce a safe link: an object

@@ -156,6 +156,24 @@ describe('malformed entries', () => {
     expect(anchorForEvent('contained_event')?.path).toBe('events/#task-failed')
   })
 
+  it('skips an anchor that hides its traversal in percent-encoded dots', () => {
+    setDocsConfig({
+      title: 'Docs',
+      anchors: [
+        { match: { sink: 'encoded_sink' }, path: '%2e%2e/%2e%2e/admin' },
+        { match: { page: 'mixed_page' }, path: '.%2e/.%2e/admin' },
+        { match: { event: 'upper_event' }, path: '%2E%2E/admin' },
+        { match: { label: 'encoded_label' }, path: 'guide/o%20ne.html#x' },
+      ],
+    })
+
+    expect(anchorForSink('encoded_sink')).toBeNull()
+    expect(anchorForPage('mixed_page')).toBeNull()
+    expect(anchorForEvent('upper_event')).toBeNull()
+    // %20 is just an escaped space in a filename — nothing to reject.
+    expect(anchorForLabel('encoded_label')?.path).toBe('guide/o%20ne.html#x')
+  })
+
   it('tolerates a missing or non-array anchors list and non-object entries', () => {
     setDocsConfig({ title: 'Docs' } as unknown as DocsConfig)
     expect(anchorForSink('any')).toBeNull()
