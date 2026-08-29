@@ -1243,6 +1243,16 @@ describe('event-type docs anchors', () => {
   const GRACE_WAIT_MS = 300
   const waitOutGrace = () => new Promise((resolve) => setTimeout(resolve, GRACE_WAIT_MS))
 
+  // The first chip on one type's track — the tracks render in declaration
+  // order, so a bare '.event-chip' query would always return the first type's.
+  function chipIn(target: HTMLElement, typeName: string) {
+    const chip = target.querySelector(
+      `.event-track[aria-label="${typeName} timeline events"] .event-chip`,
+    )
+    expect(chip).not.toBeNull()
+    return chip as HTMLElement
+  }
+
   function hoverChip(target: HTMLElement) {
     const chip = target.querySelector('.event-chip') as HTMLElement
     chip.dispatchEvent(new Event('mouseenter'))
@@ -1303,6 +1313,65 @@ describe('event-type docs anchors', () => {
 
     expect(strip.querySelector('.docs-icon')).toBeNull()
     expect(strip.textContent).toContain('hover over a task bar to see details')
+  })
+
+  it('hands the hover over to the next chip instead of letting the older timer fire', async () => {
+    // The leaving chip schedules a clear and the entering one must cancel it,
+    // or the handoff would blank the strip mid-hover.
+    setDocsConfig({ title: 'Operator handbook', anchors: [deployAnchor] })
+    const { target } = renderTracked({
+      timeline: { ...config, events: [eventDecl('deploy'), eventDecl('rollback')] },
+      events: [
+        eventInstance('deploy', tasks[0].start_ts),
+        eventInstance('rollback', tasks[0].start_ts),
+      ],
+    })
+    const deployChip = chipIn(target, 'deploy')
+    const rollbackChip = chipIn(target, 'rollback')
+    const strip = target.querySelector('.tl-hover') as HTMLElement
+
+    deployChip.dispatchEvent(new Event('mouseenter'))
+    flushSync()
+    deployChip.dispatchEvent(new Event('mouseleave'))
+    rollbackChip.dispatchEvent(new Event('mouseenter'))
+    flushSync()
+    await waitOutGrace()
+    flushSync()
+
+    expect(strip.textContent).toContain('rollback')
+    expect(strip.querySelector('.docs-icon')).toBeNull()
+  })
+
+  it('drops a pending event hover the moment a cluster glyph takes the pointer', () => {
+    // The strip prefers hoveredEvent over hoveredCluster, so a cluster that
+    // left the pending clear running would show the previous chip's detail
+    // for the whole grace period.
+    setDocsConfig({ title: 'Operator handbook', anchors: [deployAnchor] })
+    const base = tasks[0].start_ts
+    const { target } = renderTracked({
+      timeline: { ...config, events: [eventDecl('deploy'), eventDecl('rollback')] },
+      events: [
+        eventInstance('deploy', base),
+        // 0.2s apart collapses into one "+3" cluster glyph.
+        eventInstance('rollback', base, { text: 'a' }),
+        eventInstance('rollback', base + 0.2, { text: 'b' }),
+        eventInstance('rollback', base + 0.4, { text: 'c' }),
+      ],
+    })
+    const deployChip = chipIn(target, 'deploy')
+    const cluster = chipIn(target, 'rollback')
+    expect(cluster.classList.contains('cluster')).toBe(true)
+    const strip = target.querySelector('.tl-hover') as HTMLElement
+
+    deployChip.dispatchEvent(new Event('mouseenter'))
+    flushSync()
+    deployChip.dispatchEvent(new Event('mouseleave'))
+    cluster.dispatchEvent(new Event('mouseenter'))
+    flushSync()
+
+    expect(strip.textContent).toContain('Members:')
+    expect(strip.textContent).not.toContain('deploy')
+    expect(strip.querySelector('.docs-icon')).toBeNull()
   })
 
   it('trails the type name in the gear row rather than wrapping below it', () => {

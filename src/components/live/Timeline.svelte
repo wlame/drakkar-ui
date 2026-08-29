@@ -211,6 +211,16 @@
     }, EVENT_HOVER_GRACE_MS)
   }
 
+  // A cluster glyph taking the pointer straight off a single-event chip must
+  // also drop that chip's pending clear — the strip prefers hoveredEvent over
+  // hoveredCluster, so the stale event detail would otherwise sit there for
+  // the whole grace period.
+  function holdClusterHover(decl: TimelineEventDecl, members: EventChip[]) {
+    cancelEventHoverClear()
+    hoveredEvent = null
+    hoveredCluster = { decl, members }
+  }
+
   // The pointer (or the keyboard) reached the strip: hold what it describes
   // until it leaves again, which clears at once — there is nowhere further to
   // travel from there.
@@ -1394,9 +1404,9 @@
                       style:border-left-color={t.decl.color}
                       style:color={t.decl.color}
                       aria-label={`${c.members.length} ${t.decl.name} events`}
-                      onmouseenter={() => (hoveredCluster = { decl: t.decl, members: c.members })}
+                      onmouseenter={() => holdClusterHover(t.decl, c.members)}
                       onmouseleave={() => (hoveredCluster = null)}
-                      onfocus={() => (hoveredCluster = { decl: t.decl, members: c.members })}
+                      onfocus={() => holdClusterHover(t.decl, c.members)}
                       onblur={() => (hoveredCluster = null)}
                       onclick={() => toggleClusterPopover(t.decl, c)}
                     >
