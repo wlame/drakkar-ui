@@ -71,6 +71,18 @@ export default defineConfig({
     // understands this config and the Svelte transform).
     environment: 'happy-dom',
     include: ['src/**/*.test.ts'],
+    // happy-dom turns a bubbling MouseEvent('click') on an <a href> into
+    // window.open(href, target) inside HTMLAnchorElement.dispatchEvent, and a
+    // "_blank" target opens a child page whose frame immediately goto()s the
+    // URL — a real DNS lookup and HTTPS request, fire-and-forget. Component
+    // tests that click a rendered link (the enrichment link cells, which
+    // resolve a configured link template into an absolute URL) therefore left
+    // the sandbox. Blocking child-page navigation keeps the click semantics
+    // the tests care about — the component's own handler still runs, the
+    // anchor still carries its href — while nothing reaches the network.
+    environmentOptions: {
+      happyDOM: { settings: { navigation: { disableChildPageNavigation: true } } },
+    },
   },
   server: {
     // The dev server runs inside a container and is reached by container
