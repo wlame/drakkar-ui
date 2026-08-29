@@ -6,6 +6,8 @@
   import { navItems, resolve, type NavItem } from './lib/routes'
   import { resolveRedirect } from './lib/redirects'
   import { loadUiPages, uiPages } from './lib/pages'
+  import { openDocsAnchor } from './lib/docsAnchors'
+  import DocsDrawer from './components/DocsDrawer.svelte'
   import WorkerSwitcher from './components/WorkerSwitcher.svelte'
   import SinkLinks from './components/SinkLinks.svelte'
   import VersionBadge from './components/VersionBadge.svelte'
@@ -113,6 +115,13 @@
             {item.label}{#if item.live}<span class="live-dot" aria-hidden="true">•</span>{/if}
           </a>
         {/each}
+        {#if $identity?.docs}
+          <!-- The operator docs site the backend serves under /docs/. A plain
+               anchor, deliberately not use:link: the docs site is not part of
+               this SPA, and a new tab keeps the operator's live view open
+               (same reasoning as the brand link above). -->
+          <a href="/docs/" target="_blank" rel="noopener">{$identity.docs.title}</a>
+        {/if}
       </nav>
     </div>
     {#if $identity?.cluster}
@@ -141,6 +150,12 @@
     <Current params={match.params} />
   {/if}
 </main>
+
+<!-- One drawer for the whole app: every BookIcon publishes its anchor to the
+     shared store rather than owning a panel of its own. -->
+{#if $openDocsAnchor}
+  <DocsDrawer anchor={$openDocsAnchor} onclose={() => openDocsAnchor.set(null)} />
+{/if}
 
 <style>
   header {

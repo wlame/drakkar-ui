@@ -7,11 +7,13 @@
 // tests stay deterministic.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushSync, mount, unmount } from 'svelte'
+import { get } from 'svelte/store'
 import Timeline from './Timeline.svelte'
 import type { TaskView } from '../../lib/live'
 import type { TimelineConfig, TimelineEventDecl } from '../../lib/types'
 import type { EventMatch, TimelineEventView } from '../../lib/timelineEvents'
 import { tagBoxWidth, TAG_EDGE_MARGIN_PX } from '../../lib/timeline'
+import { openDocsAnchor, setDocsConfig } from '../../lib/docsAnchors'
 
 // A fixed synthetic epoch (seconds), pinned onto the clock in beforeEach —
 // deliberately NOT Date.now(). Every fixture timestamp below is expressed
@@ -1167,5 +1169,85 @@ describe('per-type event tracks', () => {
     }).not.toThrow()
     expect(barFor(target, 'big')).not.toBeNull()
     expect(target.querySelectorAll('.tl-event-band')).toHaveLength(2)
+  })
+})
+
+// Docs anchors (contract v1.22): an operator can bind a docs page to an event
+// type, and the timeline then offers the book icon everywhere it names that
+// type — the gear's per-type row and the hover strip's event detail.
+describe('event-type docs anchors', () => {
+  const deployAnchor = {
+    match: { event: 'deploy' },
+    path: 'events/deploy.html#reading-the-track',
+    title: 'Deploy events',
+  }
+
+  afterEach(() => {
+    setDocsConfig(null)
+    openDocsAnchor.set(null)
+  })
+
+  function openGear(target: HTMLElement) {
+    ;(target.querySelector('button.gear') as HTMLButtonElement).click()
+    flushSync()
+  }
+
+  it('renders no docs icon in the gear list without a docs config', () => {
+    const { target } = renderTracked({
+      timeline: { ...config, events: [eventDecl('deploy')] },
+      events: [eventInstance('deploy', tasks[0].start_ts)],
+    })
+    openGear(target)
+    expect(target.querySelectorAll('.event-row .docs-icon')).toHaveLength(0)
+  })
+
+  it('renders the gear icon only for the anchored event type', () => {
+    setDocsConfig({ title: 'Operator handbook', anchors: [deployAnchor] })
+    const { target } = renderTracked({
+      timeline: { ...config, events: [eventDecl('deploy'), eventDecl('rollback')] },
+      events: [eventInstance('deploy', tasks[0].start_ts)],
+    })
+    openGear(target)
+    const icons = target.querySelectorAll('.event-row .docs-icon')
+    expect(icons).toHaveLength(1)
+    expect(icons[0].closest('.event-row')?.textContent).toContain('deploy')
+    expect(icons[0].getAttribute('aria-label')).toBe('Deploy events')
+  })
+
+  it('publishes the anchor to the drawer store when the gear icon is clicked', () => {
+    setDocsConfig({ title: 'Operator handbook', anchors: [deployAnchor] })
+    const { target } = renderTracked({
+      timeline: { ...config, events: [eventDecl('deploy')] },
+      events: [eventInstance('deploy', tasks[0].start_ts)],
+    })
+    openGear(target)
+    ;(target.querySelector('.event-row .docs-icon') as HTMLButtonElement).click()
+    flushSync()
+    expect(get(openDocsAnchor)).toEqual(deployAnchor)
+  })
+
+  it('offers the icon in the hover strip beside the hovered event type', () => {
+    setDocsConfig({ title: 'Operator handbook', anchors: [deployAnchor] })
+    const { target } = renderTracked({
+      timeline: { ...config, events: [eventDecl('deploy')] },
+      events: [eventInstance('deploy', tasks[0].start_ts)],
+    })
+    const chip = target.querySelector('.event-chip') as HTMLElement
+    chip.dispatchEvent(new Event('mouseenter'))
+    flushSync()
+    expect(target.querySelector('.tl-hover .docs-icon')).not.toBeNull()
+  })
+
+  it('leaves the hover strip plain for an event type with no anchor', () => {
+    setDocsConfig({ title: 'Operator handbook', anchors: [deployAnchor] })
+    const { target } = renderTracked({
+      timeline: { ...config, events: [eventDecl('rollback')] },
+      events: [eventInstance('rollback', tasks[0].start_ts)],
+    })
+    const chip = target.querySelector('.event-chip') as HTMLElement
+    chip.dispatchEvent(new Event('mouseenter'))
+    flushSync()
+    expect(target.querySelector('.tl-hover')?.textContent).toContain('rollback')
+    expect(target.querySelector('.tl-hover .docs-icon')).toBeNull()
   })
 })

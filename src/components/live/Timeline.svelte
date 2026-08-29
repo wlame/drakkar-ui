@@ -97,6 +97,8 @@
     type TrackChip,
   } from '../../lib/timelineEvents'
   import { getLinkBases } from '../../lib/enrich'
+  import { anchorForEvent } from '../../lib/docsAnchors'
+  import BookIcon from '../BookIcon.svelte'
 
   let {
     tasks = [],
@@ -1273,6 +1275,7 @@
             <span>Timeline events</span>
           </div>
           {#each eventDecls as decl (decl.name)}
+            {@const docs = anchorForEvent(decl.name)}
             <div class="role-row event-row">
               <label class="event-check">
                 <input
@@ -1284,6 +1287,9 @@
                 <span class="event-swatch" style:background={decl.color}></span>
                 <span class="event-name">{decl.name}</span>
               </label>
+              <!-- Outside the <label>: a click inside it would also toggle
+                   the visibility checkbox the label is bound to. -->
+              {#if docs}<BookIcon anchor={docs} />{/if}
             </div>
           {/each}
           <div class="role-row event-row">
@@ -1583,7 +1589,10 @@
       <span class="hl">marker:</span><span class="hv">{hoveredMarker.values.join(', ')}</span>
       <span class="hl">at</span><span class="hv">{fmtTimeMs(hoveredMarker.ts)}</span>
     {:else if hoveredEvent}
-      <span class="hl">Type:</span><span class="hv">{hoveredEvent.type}</span>
+      {@const docs = anchorForEvent(hoveredEvent.type)}
+      <span class="hl">Type:</span><span class="hv"
+        >{hoveredEvent.type}{#if docs}<BookIcon anchor={docs} />{/if}</span
+      >
       {#if hoveredEvent.text}
         <span class="hl">Text:</span><span class="hv">{hoveredEvent.text}</span>
       {/if}

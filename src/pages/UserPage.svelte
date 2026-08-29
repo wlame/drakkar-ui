@@ -8,13 +8,17 @@
   import { refreshEventTypes } from '../lib/widgets'
   import { createLiveSocket, type LiveSocket } from '../lib/ws'
   import type { UIPageWidget, WsEvent } from '../lib/types'
+  import { anchorForPage } from '../lib/docsAnchors'
   import WidgetBody from '../components/pages/WidgetBody.svelte'
+  import BookIcon from '../components/BookIcon.svelte'
   import NotFound from './NotFound.svelte'
 
   let { params = {} }: { params?: Record<string, string> } = $props()
 
   const slug = $derived(params.slug ?? '')
   const page = $derived(pageBySlug($uiPages, slug))
+  // Docs anchor bound to this declared page, if the operator declared one.
+  const docs = $derived(anchorForPage(slug))
 
   // A relevant event within this window collapses with any that follow it
   // into a single refetch, rather than one refetch per event — the same
@@ -115,7 +119,7 @@
 {#if !page}
   <NotFound />
 {:else}
-  <h1>{page.title}</h1>
+  <h1>{page.title}{#if docs}<BookIcon anchor={docs} />{/if}</h1>
   <div class="widgets">
     <!-- Keyed on index: the wire contract gives widgets no unique id, and
          title uniqueness within a page isn't enforced by the backend. -->

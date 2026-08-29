@@ -16,7 +16,16 @@
 // thousands of times per render. Every anchorFor* is then a Map.get over the
 // prebuilt index instead of a scan over the declared list.
 
+import { writable } from 'svelte/store'
+
 import type { DocsAnchorWire, DocsConfig } from './types'
+
+// The anchor the docs drawer is currently showing, or null when it is
+// closed. A store rather than a prop chain: the book icon appears in table
+// cells, label chips and popovers all over the app, while the drawer itself
+// is mounted once in App.svelte — threading a callback down every one of
+// those paths would touch a dozen components that have no other stake in it.
+export const openDocsAnchor = writable<DocsAnchorWire | null>(null)
 
 // Where the backend mounts the docs site. Same-origin path, not a base URL —
 // see the built-in `docs` link base in the contract.

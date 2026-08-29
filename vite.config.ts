@@ -80,8 +80,17 @@ export default defineConfig({
     // the sandbox. Blocking child-page navigation keeps the click semantics
     // the tests care about — the component's own handler still runs, the
     // anchor still carries its href — while nothing reaches the network.
+    // Child FRAME navigation is blocked for the same reason: the docs drawer
+    // renders an <iframe src="/docs/..."> and happy-dom would otherwise send
+    // a real request for it when the component mounts (and complain when the
+    // frame is destroyed mid-flight). The element and its src attribute —
+    // all the drawer test asserts on — are unaffected.
     environmentOptions: {
-      happyDOM: { settings: { navigation: { disableChildPageNavigation: true } } },
+      happyDOM: {
+        settings: {
+          navigation: { disableChildPageNavigation: true, disableChildFrameNavigation: true },
+        },
+      },
     },
   },
   server: {

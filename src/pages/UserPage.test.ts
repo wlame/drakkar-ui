@@ -5,9 +5,11 @@
 // error the moment two widgets share one.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushSync, mount, unmount } from 'svelte'
+import { get } from 'svelte/store'
 import UserPage from './UserPage.svelte'
 import { loadUiPages } from '../lib/pages'
 import { setLinkBases } from '../lib/enrich'
+import { openDocsAnchor, setDocsConfig } from '../lib/docsAnchors'
 import type { TaskResult, UIPage } from '../lib/types'
 
 // Stubbed rather than driving a real WebSocket: happy-dom's WebSocket would
@@ -105,6 +107,51 @@ describe('UserPage widget list', () => {
 
     unmount(app)
     target.remove()
+  })
+})
+
+describe('UserPage docs anchor', () => {
+  const page: UIPage = {
+    slug: 'orders',
+    title: 'Orders',
+    widgets: [{ title: 'Summary', view: 'stat', source: { kind: 'field' } }],
+  }
+
+  afterEach(() => {
+    setDocsConfig(null)
+    openDocsAnchor.set(null)
+  })
+
+  async function mountOrders() {
+    fetchMock.mockResolvedValue(okJson([page]))
+    await loadUiPages()
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+    const app = mount(UserPage, { target, props: { params: { slug: 'orders' } } })
+    flushSync()
+    return { target, cleanup: () => (unmount(app), target.remove()) }
+  }
+
+  it('shows no docs icon in the heading without an anchor for the slug', async () => {
+    setDocsConfig({
+      title: 'Operator handbook',
+      anchors: [{ match: { page: 'invoices' }, path: 'pages/invoices.html' }],
+    })
+    const { target, cleanup } = await mountOrders()
+    expect(target.querySelector('h1 .docs-icon')).toBeNull()
+    cleanup()
+  })
+
+  it('opens the anchor declared for the slug from the heading icon', async () => {
+    const anchor = { match: { page: 'orders' }, path: 'pages/orders.html', title: 'Orders page' }
+    setDocsConfig({ title: 'Operator handbook', anchors: [anchor] })
+    const { target, cleanup } = await mountOrders()
+    const icon = target.querySelector('h1 .docs-icon') as HTMLButtonElement
+    expect(icon).not.toBeNull()
+    icon.click()
+    flushSync()
+    expect(get(openDocsAnchor)).toEqual(anchor)
+    cleanup()
   })
 })
 

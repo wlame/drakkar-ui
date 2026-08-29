@@ -11,7 +11,9 @@
   import { link } from '../lib/router'
   import { fmtTime, fmtTimeMs, fmtTimeFull, dur3, fmtBytes, safeJsonParse } from '../lib/format'
   import { eventColor, parseAnnotation, statusColor, type TaskStatus } from '../lib/events'
+  import { anchorForLabel } from '../lib/docsAnchors'
   import Expandable from '../components/Expandable.svelte'
+  import BookIcon from '../components/BookIcon.svelte'
   import KafkaIcon from '../components/KafkaIcon.svelte'
   import CodeBlock from '../components/CodeBlock.svelte'
 
@@ -263,7 +265,10 @@
   {#if Object.keys(vm.labels).length}
     <h2>Labels</h2>
     <div class="chips">
-      {#each Object.entries(vm.labels) as [k, v]}<span class="chip teal">{k}={v}</span>{/each}
+      {#each Object.entries(vm.labels) as [k, v]}
+        {@const docs = anchorForLabel(k, v)}
+        <span class="chip teal">{k}={v}{#if docs}<BookIcon anchor={docs} />{/if}</span>
+      {/each}
     </div>
   {/if}
 

@@ -5,8 +5,10 @@
   import { fmtTime, fmtTimeFull, dur3 } from '../../lib/format'
   import { COLOR } from '../../lib/events'
   import { NO_SORT, sortRows, type SortAccessor } from '../../lib/sort'
+  import { anchorForSink } from '../../lib/docsAnchors'
   import SortableTh from '../SortableTh.svelte'
   import Expandable from '../Expandable.svelte'
+  import BookIcon from '../BookIcon.svelte'
 
   let { rows, error = null }: { rows: SinkStatus[] | null; error?: string | null } = $props()
 
@@ -52,9 +54,12 @@
     </thead>
     <tbody>
       {#each sortRows(rows, sort, ACCESSORS) as s (`${s.sink_type}/${s.name}`)}
+        {@const docs = anchorForSink(s.name)}
         <tr>
           <td class="mono">{s.sink_type}</td>
-          <td class="mono name" style:color={COLOR.teal}>{s.name}</td>
+          <td class="mono name" style:color={COLOR.teal}>
+            {s.name}{#if docs}<BookIcon anchor={docs} />{/if}
+          </td>
           <td class="num mono" style:color={COLOR.emerald}>{s.delivered_count}</td>
           <td class="num mono">{s.delivered_payloads}</td>
           <td class="num mono" style:color={s.error_count > 0 ? COLOR.red : undefined}>{s.error_count}</td>
