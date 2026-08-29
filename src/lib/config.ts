@@ -7,6 +7,7 @@
 // cache tab hides, etc.).
 
 import { writable } from 'svelte/store'
+import { setDocsConfig } from './docsAnchors'
 import { setLinkBases } from './enrich'
 import { loadCustomRenderers } from './renderers'
 import type { Identity, LiveOverview } from './types'
@@ -65,6 +66,9 @@ export function setIdentity(value: Identity): void {
   // fetch (App.svelte) and the version panel's lazy fallback (VersionBadge)
   // cover it from one place.
   setLinkBases(value.link_bases ?? {})
+  // Docs anchors come from the same payload and are read the same way (module
+  // state, not a store) — a backend without a docs site simply clears it.
+  setDocsConfig(value.docs ?? null)
   // Only bother fetching renderers.js when the backend actually has one
   // configured — an unconfigured backend serves a 404, which
   // loadCustomRenderers already tolerates, but the flag avoids a pointless

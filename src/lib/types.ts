@@ -153,6 +153,32 @@ export interface TimelineConfig {
   events?: TimelineEventDecl[]
 }
 
+// One contextual anchor into the operator docs site (contract v1.22).
+// `match` carries exactly one of `label` (with an optional `value` that
+// narrows it to a single label value), `sink`, `event`, or `page`; the most
+// specific match wins. `path` is relative into the site (no leading slash,
+// no scheme, no `..`) and may carry a `#fragment`. `title` is omitted when
+// the operator left it empty — the docs-site title stands in then.
+export interface DocsAnchorWire {
+  match: {
+    label?: string
+    value?: string
+    sink?: string
+    event?: string
+    page?: string
+  }
+  path: string
+  title?: string
+}
+
+// ui.docs config, verbatim (v1.22). Present on identity only when the
+// backend serves an operator docs site under /docs/; see
+// src/lib/docsAnchors.ts for the lookups the UI drives from it.
+export interface DocsConfig {
+  title: string
+  anchors: DocsAnchorWire[]
+}
+
 // Worker self-identity from GET /api/v1/identity (v1.1, extended v1.2).
 // config_summary is the one-line worker config string the reference debug
 // page shows in its banner. The v1.2 fields are optional: older backends
@@ -175,6 +201,10 @@ export interface Identity {
   // ui.timeline config, verbatim. Absent on backends that predate it — the
   // UI keeps its legacy fixed-window, fixed-color timeline behavior then.
   timeline?: TimelineConfig
+  // ui.docs config (v1.22): the operator docs site's title and its contextual
+  // anchors. Absent when the deployment serves no docs site, and on backends
+  // that predate the feature — the UI then renders no docs affordances.
+  docs?: DocsConfig
 }
 
 export interface WorkerPeer {
