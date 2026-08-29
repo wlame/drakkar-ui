@@ -1491,8 +1491,11 @@ name; `event` a declared timeline event type name (`timeline.events[].name`);
 `page` a declared UI page slug. `path` is relative into the site, optional
 `#fragment`, no `..`/scheme/leading slash. `title` omitted when empty. Most
 specific match wins (`label`+`value` over key-wide `label`). At most 200
-entries. The UI renders contextual anchors from this list and must tolerate
-the key's absence (older backend).
+entries, and backends reject exact-duplicate matches at config load — two
+anchors whose `match` objects are identical (same selector, same key, same
+value or value absent on both); `label`+`value` and the key-wide `label`
+are different matches, not duplicates. The UI renders contextual anchors
+from this list and must tolerate the key's absence (older backend).
 
 ### Built-in `docs` link base
 
