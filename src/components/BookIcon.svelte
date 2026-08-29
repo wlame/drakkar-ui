@@ -31,7 +31,7 @@
   }
 </script>
 
-<button class="docs-icon" title={label} aria-label={label} onclick={open}>
+<button class="docs-icon" type="button" title={label} aria-label={label} onclick={open}>
   <svg
     width="18"
     height="18"

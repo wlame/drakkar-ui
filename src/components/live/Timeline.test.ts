@@ -1238,6 +1238,89 @@ describe('event-type docs anchors', () => {
     expect(target.querySelector('.tl-hover .docs-icon')).not.toBeNull()
   })
 
+  // The grace period below is real time: the file fakes only Date, so the
+  // component's setTimeout runs on the real clock.
+  const GRACE_WAIT_MS = 300
+  const waitOutGrace = () => new Promise((resolve) => setTimeout(resolve, GRACE_WAIT_MS))
+
+  function hoverChip(target: HTMLElement) {
+    const chip = target.querySelector('.event-chip') as HTMLElement
+    chip.dispatchEvent(new Event('mouseenter'))
+    flushSync()
+    return { chip, strip: target.querySelector('.tl-hover') as HTMLElement }
+  }
+
+  it('keeps the hovered event alive while the pointer travels onto the strip', async () => {
+    // Without the grace period the chip's own mouseleave would clear the
+    // detail — and destroy the icon — before the pointer could reach it.
+    setDocsConfig({ title: 'Operator handbook', anchors: [deployAnchor] })
+    const { target } = renderTracked({
+      timeline: { ...config, events: [eventDecl('deploy')] },
+      events: [eventInstance('deploy', tasks[0].start_ts)],
+    })
+    const { chip, strip } = hoverChip(target)
+    chip.dispatchEvent(new Event('mouseleave'))
+    strip.dispatchEvent(new Event('mouseenter'))
+    flushSync()
+    await waitOutGrace()
+    flushSync()
+
+    const icon = strip.querySelector('.docs-icon') as HTMLButtonElement
+    expect(icon).not.toBeNull()
+    icon.click()
+    flushSync()
+    expect(get(openDocsAnchor)).toEqual(deployAnchor)
+  })
+
+  it('clears the event detail once the pointer leaves both the chip and the strip', async () => {
+    setDocsConfig({ title: 'Operator handbook', anchors: [deployAnchor] })
+    const { target } = renderTracked({
+      timeline: { ...config, events: [eventDecl('deploy')] },
+      events: [eventInstance('deploy', tasks[0].start_ts)],
+    })
+    const { chip, strip } = hoverChip(target)
+    chip.dispatchEvent(new Event('mouseleave'))
+    strip.dispatchEvent(new Event('mouseenter'))
+    flushSync()
+    strip.dispatchEvent(new Event('mouseleave'))
+    flushSync()
+
+    expect(strip.querySelector('.docs-icon')).toBeNull()
+    expect(strip.textContent).toContain('hover over a task bar to see details')
+  })
+
+  it('clears the event detail after the grace period when the strip is never entered', async () => {
+    setDocsConfig({ title: 'Operator handbook', anchors: [deployAnchor] })
+    const { target } = renderTracked({
+      timeline: { ...config, events: [eventDecl('deploy')] },
+      events: [eventInstance('deploy', tasks[0].start_ts)],
+    })
+    const { chip, strip } = hoverChip(target)
+    chip.dispatchEvent(new Event('mouseleave'))
+    flushSync()
+    await waitOutGrace()
+    flushSync()
+
+    expect(strip.querySelector('.docs-icon')).toBeNull()
+    expect(strip.textContent).toContain('hover over a task bar to see details')
+  })
+
+  it('trails the type name in the gear row rather than wrapping below it', () => {
+    // Layout, asserted structurally: the icon is a sibling of the visibility
+    // label inside one flex row, not a child of it (a click inside the label
+    // would toggle the checkbox) and not a row of its own.
+    setDocsConfig({ title: 'Operator handbook', anchors: [deployAnchor] })
+    const { target } = renderTracked({
+      timeline: { ...config, events: [eventDecl('deploy')] },
+      events: [eventInstance('deploy', tasks[0].start_ts)],
+    })
+    openGear(target)
+    const icon = target.querySelector('.event-row .docs-icon') as HTMLElement
+    expect(icon.parentElement?.classList.contains('event-row')).toBe(true)
+    expect(icon.previousElementSibling?.classList.contains('event-check')).toBe(true)
+    expect(icon.closest('label')).toBeNull()
+  })
+
   it('leaves the hover strip plain for an event type with no anchor', () => {
     setDocsConfig({ title: 'Operator handbook', anchors: [deployAnchor] })
     const { target } = renderTracked({

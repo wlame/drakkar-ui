@@ -181,6 +181,51 @@
   let hovered = $state<TaskView | null>(null)
   let hoveredMarker = $state<MarkerPin | null>(null)
   let hoveredEvent = $state<TimelineEventView | null>(null)
+  // Hovering an event chip fills the detail strip below, and that strip can
+  // now carry the type's docs-anchor icon — something the operator has to be
+  // able to reach with the pointer. Clearing the hover on the chip's own
+  // mouseleave would destroy the icon on the way to it (the pointer crosses
+  // the track and the panel edge to get there), so a leave only SCHEDULES the
+  // clear; entering the strip, or another chip, cancels it. Bars, markers and
+  // cluster glyphs keep clearing immediately — none of them puts anything
+  // clickable in the strip.
+  const EVENT_HOVER_GRACE_MS = 200
+  let eventHoverClearTimer: ReturnType<typeof setTimeout> | undefined
+
+  function cancelEventHoverClear() {
+    if (eventHoverClearTimer === undefined) return
+    clearTimeout(eventHoverClearTimer)
+    eventHoverClearTimer = undefined
+  }
+
+  function holdEventHover(event: TimelineEventView) {
+    cancelEventHoverClear()
+    hoveredEvent = event
+  }
+
+  function releaseEventHover() {
+    cancelEventHoverClear()
+    eventHoverClearTimer = setTimeout(() => {
+      eventHoverClearTimer = undefined
+      hoveredEvent = null
+    }, EVENT_HOVER_GRACE_MS)
+  }
+
+  // The pointer (or the keyboard) reached the strip: hold what it describes
+  // until it leaves again, which clears at once — there is nowhere further to
+  // travel from there.
+  function holdHoverStrip() {
+    cancelEventHoverClear()
+  }
+
+  function leaveHoverStrip() {
+    cancelEventHoverClear()
+    hoveredEvent = null
+  }
+
+  // A pending clear must not outlive the component.
+  $effect(() => () => cancelEventHoverClear())
+
   // Cluster hover/click state for the per-type event tracks below. A hovered
   // cluster feeds the .tl-hover strip like a single event does; a clicked
   // cluster opens the member popover, tracked by key (not object identity —
@@ -1335,7 +1380,7 @@
               aria-label={`${t.decl.name} timeline events`}
               style:height={`${t.height}px`}
               onmouseleave={() => {
-                hoveredEvent = null
+                releaseEventHover()
                 hoveredCluster = null
               }}
             >
@@ -1391,10 +1436,10 @@
                     style:left={`${c.left}px`}
                     style:border-left-color={t.decl.color}
                     style:color={t.decl.color}
-                    onmouseenter={() => (hoveredEvent = c.members[0].event)}
-                    onmouseleave={() => (hoveredEvent = null)}
-                    onfocus={() => (hoveredEvent = c.members[0].event)}
-                    onblur={() => (hoveredEvent = null)}
+                    onmouseenter={() => holdEventHover(c.members[0].event)}
+                    onmouseleave={releaseEventHover}
+                    onfocus={() => holdEventHover(c.members[0].event)}
+                    onblur={releaseEventHover}
                   >{#if c.mode === 'glyph'}<span
                         class="chip-dot"
                         style:background={t.decl.color}
@@ -1410,10 +1455,10 @@
                     style:left={`${c.left}px`}
                     style:border-left-color={t.decl.color}
                     style:color={t.decl.color}
-                    onmouseenter={() => (hoveredEvent = c.members[0].event)}
-                    onmouseleave={() => (hoveredEvent = null)}
-                    onfocus={() => (hoveredEvent = c.members[0].event)}
-                    onblur={() => (hoveredEvent = null)}
+                    onmouseenter={() => holdEventHover(c.members[0].event)}
+                    onmouseleave={releaseEventHover}
+                    onfocus={() => holdEventHover(c.members[0].event)}
+                    onblur={releaseEventHover}
                     onclick={() => onEventChipActivate(c.members[0])}
                   >{#if c.mode === 'glyph'}<span
                         class="chip-dot"
@@ -1522,7 +1567,18 @@
     </div>
   </div>
 
-  <div class="tl-hover">
+  <!-- role/label: the strip takes mouse handlers now (it holds the hover
+       alive while the pointer travels to a docs icon inside it), and a
+       handler-carrying div needs a role — the same role the event tracks
+       above use. -->
+  <div
+    class="tl-hover"
+    role="group"
+    aria-label="Hover detail"
+    onmouseenter={holdHoverStrip}
+    onfocusin={holdHoverStrip}
+    onmouseleave={leaveHoverStrip}
+  >
     <!-- A hovered bar wins: a pin whose element was culled away mid-hover
          never got its mouseleave, and a stale marker must not shadow the
          task detail the operator is actually pointing at. -->
@@ -2155,8 +2211,12 @@
   .event-pop-head {
     margin-top: 0.5rem;
   }
-  .event-row {
-    display: block;
+  /* Flex, not the .role-row grid it also carries and not `block`: the row
+     holds the visibility label plus an optional docs-anchor icon, and a
+     block row would push the icon onto a line of its own. */
+  .role-pop .event-row {
+    display: flex;
+    align-items: center;
   }
   .event-check {
     display: flex;
