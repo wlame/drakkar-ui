@@ -414,10 +414,11 @@ Version visibility and a machine-readable surface description. All additive.
   surface, converted from the canonical `docs/openapi-v1.yaml` in this repo
   (vendored byte-identically into both backends). Protected by the same
   optional bearer token as every other API route.
-- `GET /docs` → human-facing Swagger UI over that document. Self-hosted
-  assets only (no CDN — deployments are often firewalled); token-protected
-  exactly like the other UI pages. Not part of the JSON API, listed here so
-  backends stay drop-in identical.
+- `GET /api-docs` → human-facing Swagger UI over that document (moved from
+  `/docs` in v1.22, which now belongs to the operator docs site).
+  Self-hosted assets only (no CDN — deployments are often firewalled);
+  token-protected exactly like the other UI pages. Not part of the JSON
+  API, listed here so backends stay drop-in identical.
 - **Route-parity rule:** a backend's served route set — every `/api/v1/*`
   route plus `/healthz` and `/readyz` — MUST equal the `paths` of
   `docs/openapi-v1.yaml`. Each backend enforces this with a unit test that
@@ -1444,6 +1445,56 @@ backfill for the timeline's visible window.
 **Live delivery** — instances arrive on the existing `/ws` `annotation`
 frames; the UI filters `metadata.kind == "timeline_event"`. No new WS
 event name.
+
+## v1.22 changes (2026-08-29)
+
+### Swagger relocation
+
+The built-in OpenAPI/Swagger page moves from `GET /docs` to `GET /api-docs`
+(assets: `/api-docs/swagger-ui-bundle.js`, `/api-docs/swagger-ui.css`).
+`GET /docs` is no longer the API docs. Rationale: the path now belongs to
+the operator docs site below. The UI never linked `/docs`, so no UI change
+is required for the relocation itself.
+
+### Operator docs site
+
+Backends MAY serve an operator-supplied prebuilt static site under
+`GET /docs/` (a static mount, NOT part of the JSON API; not listed in this
+spec's `paths`). Serving rules: paths resolved and contained within the
+configured directory; escapes and missing files are 404 (no SPA shell
+fallback); directory requests serve `index.html`; the mount sits behind the
+same auth gate as the SPA pages (open with no token, token-gated otherwise);
+unconfigured or missing directory → 404 with a short JSON hint naming
+`ui.docs.site_dir`.
+
+### Identity: `docs` key (optional)
+
+Present only when the feature is enabled:
+
+```json
+"docs": {
+  "title": "Ranking Pipeline Docs",
+  "anchors": [
+    {"match": {"label": "module", "value": "vendor"},
+     "path": "architecture/scanners/#vendor-scanning",
+     "title": "Vendor scanning"}
+  ]
+}
+```
+
+`match` carries exactly one of `label` (with optional `value`), `sink`,
+`event`, `page`. `path` is relative into the site, optional `#fragment`, no
+`..`/scheme/leading slash. `title` omitted when empty. Most specific match
+wins (`label`+`value` over key-wide `label`). The UI renders contextual
+anchors from this list and must tolerate the key's absence (older backend).
+
+### Built-in `docs` link base
+
+When the feature is enabled, identity `link_bases` includes a built-in
+entry `"docs": "/docs"` (a same-origin path, unlike user bases which are
+absolute URLs). User configs may not define a base named `docs` — backends
+reject it at config load. Link templates may thus use `{docs}/page/#anchor`
+anywhere templates already resolve bases.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 

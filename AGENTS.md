@@ -30,8 +30,8 @@ twin is **`docs/openapi-v1.yaml`** (OpenAPI 3.1): both backends vendor it
 byte-identically (`just sync-openapi` copies it to
 `../drakkar/drakkar/uiserver/openapi.yaml` and
 `../drakkar-go/internal/uiserver/openapi.yaml`), serve it at
-`GET /api/v1/openapi.json` + a self-hosted Swagger page at `GET /docs`, and
-pin their live route tables to its `paths` with a parity unit test — so a
+`GET /api/v1/openapi.json` + a self-hosted Swagger page at `GET /api-docs`,
+and pin their live route tables to its `paths` with a parity unit test — so a
 route added or removed on one backend fails CI there. That test compares
 the path inventory only, not parameters or schemas, so each backend also
 pins the checksum `just sync-openapi` records beside its vendored copy:
