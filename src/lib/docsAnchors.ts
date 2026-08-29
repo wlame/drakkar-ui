@@ -18,6 +18,7 @@
 
 import { writable } from 'svelte/store'
 
+import { withAuthToken } from './api'
 import type { DocsAnchorWire, DocsConfig } from './types'
 
 // The anchor the docs drawer is currently showing, or null when it is
@@ -54,9 +55,16 @@ export function getDocsConfig(): DocsConfig | null {
 // docsUrl turns an anchor's site-relative path into a URL under the docs
 // mount, keeping any `#fragment` and collapsing a leading slash so the result
 // never carries a double slash.
+//
+// The docs site is auth-gated exactly like the SPA, and the surfaces that open
+// these URLs — the drawer's iframe, the nav link, "open in new tab" — are
+// browser-issued requests that cannot carry an Authorization header. So a
+// configured token rides as a query param, the same convention the WS
+// handshake and the DB downloads already use. Single source: every docs link
+// in the UI, the nav entry included, is built here.
 export function docsUrl(path: string): string {
   const relative = typeof path === 'string' ? path.replace(/^\/+/, '') : ''
-  return DOCS_MOUNT + relative
+  return withAuthToken(DOCS_MOUNT + relative)
 }
 
 // A path with a `..` segment is rejected outright: the contract forbids it,

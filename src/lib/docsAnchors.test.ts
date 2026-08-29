@@ -63,6 +63,40 @@ describe('docsUrl', () => {
   })
 })
 
+// /docs/ is auth-gated exactly like the SPA, and neither an <iframe> nor a
+// plain <a> can carry the Authorization header — so a configured token rides
+// as a query param, the same way the WS handshake and DB downloads carry it.
+describe('docsUrl on a token-gated worker', () => {
+  afterEach(() => {
+    localStorage.clear()
+  })
+
+  it('carries no token when auth is disabled', () => {
+    expect(docsUrl('a/b.html')).toBe('/docs/a/b.html')
+  })
+
+  it('appends the stored token', () => {
+    localStorage.setItem('drakkar_token', 'sekret')
+    expect(docsUrl('a/b.html')).toBe('/docs/a/b.html?token=sekret')
+    expect(docsUrl('')).toBe('/docs/?token=sekret')
+  })
+
+  it('puts the token before the fragment, which is never sent to the server', () => {
+    localStorage.setItem('drakkar_token', 'sekret')
+    expect(docsUrl('a/b.html#batching')).toBe('/docs/a/b.html?token=sekret#batching')
+  })
+
+  it('joins onto a path that already carries a query', () => {
+    localStorage.setItem('drakkar_token', 'sekret')
+    expect(docsUrl('search.html?q=sink#hit')).toBe('/docs/search.html?q=sink&token=sekret#hit')
+  })
+
+  it('percent-encodes a token with URL-significant characters', () => {
+    localStorage.setItem('drakkar_token', 'a b&c')
+    expect(docsUrl('a.html')).toBe('/docs/a.html?token=a%20b%26c')
+  })
+})
+
 describe('anchorForLabel', () => {
   it('returns the key-wide anchor when no value is given', () => {
     setDocsConfig(config)

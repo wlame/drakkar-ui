@@ -63,6 +63,16 @@ describe('DocsDrawer', () => {
     expect(target.querySelector('.head .title')?.textContent).toBe('Operator handbook')
   })
 
+  it('carries the auth token into the frame and the external link on a gated worker', () => {
+    // The iframe cannot send an Authorization header, so a gated /docs/ would
+    // answer 401 without the query token.
+    localStorage.setItem('drakkar_token', 'sekret')
+    const target = renderTracked({ anchor, onclose: () => {} })
+    const expected = '/docs/sinks/postgres.html?token=sekret#batching'
+    expect(target.querySelector('iframe')?.getAttribute('src')).toBe(expected)
+    expect(target.querySelector('.docs-bar a')?.getAttribute('href')).toBe(expected)
+  })
+
   it('closes on Escape pressed outside the iframe', () => {
     const onclose = vi.fn()
     renderTracked({ anchor, onclose })

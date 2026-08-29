@@ -6,7 +6,7 @@
   import { navItems, resolve, type NavItem } from './lib/routes'
   import { resolveRedirect } from './lib/redirects'
   import { loadUiPages, uiPages } from './lib/pages'
-  import { openDocsAnchor } from './lib/docsAnchors'
+  import { docsUrl, openDocsAnchor } from './lib/docsAnchors'
   import DocsDrawer from './components/DocsDrawer.svelte'
   import WorkerSwitcher from './components/WorkerSwitcher.svelte'
   import SinkLinks from './components/SinkLinks.svelte'
@@ -119,8 +119,10 @@
           <!-- The operator docs site the backend serves under /docs/. A plain
                anchor, deliberately not use:link: the docs site is not part of
                this SPA, and a new tab keeps the operator's live view open
-               (same reasoning as the brand link above). -->
-          <a href="/docs/" target="_blank" rel="noopener">{$identity.docs.title}</a>
+               (same reasoning as the brand link above). The href comes from
+               docsUrl() like every other docs link, so a gated worker gets its
+               token here too. -->
+          <a href={docsUrl('')} target="_blank" rel="noopener">{$identity.docs.title}</a>
         {/if}
       </nav>
     </div>

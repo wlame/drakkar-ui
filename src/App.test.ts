@@ -56,6 +56,7 @@ afterEach(() => {
     target.remove()
   }
   vi.unstubAllGlobals()
+  localStorage.removeItem('drakkar_token')
   identity.set(null)
   setDocsConfig(null)
   openDocsAnchor.set(null)
@@ -77,6 +78,16 @@ describe('docs nav entry', () => {
     expect(docsLink?.getAttribute('href')).toBe('/docs/')
     expect(docsLink?.getAttribute('target')).toBe('_blank')
     expect(docsLink?.getAttribute('rel')).toBe('noopener')
+  })
+
+  it('carries the auth token on a gated worker', () => {
+    // Same reason as the drawer's iframe: a plain <a> cannot send the
+    // Authorization header, and /docs/ is gated like the SPA.
+    localStorage.setItem('drakkar_token', 'sekret')
+    setIdentity({ ...baseIdentity, docs: { title: 'Operator handbook', anchors: [] } })
+    const target = renderTracked()
+    const docsLink = navLinks(target).find((a) => a.textContent?.trim() === 'Operator handbook')
+    expect(docsLink?.getAttribute('href')).toBe('/docs/?token=sekret')
   })
 
   it('comes after the built-in nav entries', () => {

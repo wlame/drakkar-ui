@@ -122,12 +122,26 @@ export function wsUrl(path = '/ws'): string {
   return wsUrlFor(window.location.origin, path)
 }
 
+// withAuthToken appends `?token=` to a same-origin URL the browser will fetch
+// on its own — a `<a>` navigation, an `<iframe>` src — none of which can carry
+// an Authorization header. Unchanged when auth is disabled. The token goes
+// BEFORE any `#fragment`: a fragment is never sent to the server, so a token
+// placed after it would not reach the backend at all.
+export function withAuthToken(url: string): string {
+  const token = authToken()
+  if (!token) return url
+  const hashAt = url.indexOf('#')
+  const base = hashAt === -1 ? url : url.slice(0, hashAt)
+  const fragment = hashAt === -1 ? '' : url.slice(hashAt)
+  const sep = base.includes('?') ? '&' : '?'
+  return `${base}${sep}token=${encodeURIComponent(token)}${fragment}`
+}
+
 // downloadUrl builds a same-tab navigation URL (e.g. a DB download). Like the WS
 // handshake, a plain `<a>` navigation can't carry an Authorization header, so the
 // token is appended as a query param when set.
 export function downloadUrl(path: string): string {
-  const token = authToken()
-  return `${API_BASE}${path}${token ? `?token=${encodeURIComponent(token)}` : ''}`
+  return withAuthToken(`${API_BASE}${path}`)
 }
 
 export interface EventsQuery {
