@@ -33,6 +33,14 @@ the appendix.
   (dev-trust default). Failure → `401 {"detail":"Invalid or missing auth
   token"}`. `/healthz` + `/readyz` are always public. `/ws` self-manages
   (accept, then close `4401` unauthorized / `4403` forbidden-origin).
+- **`/ws` Origin:** checked on every handshake, with or without a token. An
+  absent `Origin` (non-browser clients) and a same-origin one always pass;
+  a non-empty `ui.allowed_ws_origins` is a strict allowlist. With a token
+  set, every other cross-origin handshake is `4403`. Without one, a
+  cross-origin handshake passes — this is what the cluster view relies on —
+  **unless** the request `Host` is a loopback address and the `Origin` host
+  is not, which no peer worker ever is. A client must treat `4403` as
+  terminal and not reconnect.
 - **Content-Type:** `application/json` (no charset suffix).
 - **Error envelopes:** `{"detail":"..."}` for 401/404/500/503;
   `{"detail":[{"loc":[...],"msg":"..."}]}` for 422; legacy `{"error":"..."}`
@@ -50,7 +58,7 @@ the appendix.
   `{"status":"not_ready","reasons":[...]}`.
 
 ### Stream
-- `GET /ws?events=<csv>` (WebSocket) — accept → token check → origin check.
+- `GET /ws?events=<csv>` (WebSocket) — accept → token check (when configured) → origin check (always).
 
   **Frame shape** — one text frame per *drain pass*, carrying a batch:
 
