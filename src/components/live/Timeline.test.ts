@@ -293,6 +293,48 @@ describe('Timeline', () => {
     expect((target.querySelector('.tl-hover') as HTMLElement).textContent).toContain('0:41')
   })
 
+  it('shows the size alone when the backend sent no line count', () => {
+    // stdin_lines/stdout_lines are WS-only fields the backend computes only
+    // while a client is connected, and /recent-tasks never carries them.
+    // Null must render as the byte size, not as "0 lines".
+    const { target } = renderTracked({
+      tasks: [
+        task('t-null-lines', -3, {
+          status: 'completed',
+          stdin_size: 4096,
+          stdin_lines: null,
+          stdout_size: 2048,
+          stdout_lines: null,
+        }),
+      ],
+    })
+    barFor(target, 't-null-lines').dispatchEvent(new Event('mouseenter'))
+    flushSync()
+    const hover = (target.querySelector('.tl-hover') as HTMLElement).textContent ?? ''
+    expect(hover).not.toContain('0 lines')
+    expect(hover).toContain('4.0 KB')
+    expect(hover).toContain('2.0 KB')
+  })
+
+  it('shows the line count when the backend sent one', () => {
+    const { target } = renderTracked({
+      tasks: [
+        task('t-counted-lines', -3, {
+          status: 'completed',
+          stdin_size: 4096,
+          stdin_lines: 12,
+          stdout_size: 2048,
+          stdout_lines: 7,
+        }),
+      ],
+    })
+    barFor(target, 't-counted-lines').dispatchEvent(new Event('mouseenter'))
+    flushSync()
+    const hover = (target.querySelector('.tl-hover') as HTMLElement).textContent ?? ''
+    expect(hover).toContain('12 lines')
+    expect(hover).toContain('7 lines')
+  })
+
   it('clears the hovered marker when the cursor leaves the rail', () => {
     const { target } = renderTracked()
     ;(target.querySelector('.marker-pin') as HTMLElement).dispatchEvent(new Event('mouseenter'))

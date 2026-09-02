@@ -90,6 +90,17 @@ the appendix.
   `len(output) x connected clients` for data nothing renders. Consumers needing
   the text fetch it from `/api/v1/task/{id}` or `/api/v1/events`.
 
+  **`stdin_lines` / `stdout_lines` are nullable.** They are WS-frame-only
+  fields — never recorder columns, and `/recent-tasks` has never carried them
+  — and the backend counts them only when a live client is attached, because
+  counting means walking the whole of every task's stdin and stdout on the
+  hot path for a value that is otherwise discarded. A client MUST render a
+  null as "size only", never as zero lines. The byte sizes (`stdin_size`,
+  `stdout_size`) are always exact. The one case where a connected client can
+  still see null is a deferred `task_started` whose frame is broadcast after
+  the client attached; the timeline `field` rules on these two names treat a
+  null the same way they treat any absent field.
+
 ### Core
 - `GET /api/v1/dashboard` → `{uptime:float, stats:{<event>:int,...,
   total_events:int}, partition_count:int, partitions:[int...], pool_active:int,

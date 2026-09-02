@@ -1213,7 +1213,12 @@
   }
   function fmtStdin(t: TaskView): string {
     if (!t.stdin_size) return '-'
-    return `${t.stdin_lines ?? 0} lines, ${fmtBytes(t.stdin_size)}`
+    // Null, not zero: the line count is a WS-only field the backend computes
+    // only while a client is connected, and /recent-tasks never carries it.
+    // Rendering "0 lines" for a payload with bytes in it is a lie — show the
+    // size alone, as fmtStdout already does.
+    if (t.stdin_lines == null) return fmtBytes(t.stdin_size)
+    return `${t.stdin_lines} lines, ${fmtBytes(t.stdin_size)}`
   }
   function fmtStdout(t: TaskView): string {
     if (!t.stdout_size) return '-'
