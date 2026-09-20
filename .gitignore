@@ -24,6 +24,7 @@ pydrakkar/
 
 # Claude working files (analysis, plans, notes) — never part of this product
 .claude/
+CLAUDE.local.md
 
 # Agent execution scratch (task ledgers, briefs, review packages)
 .superpowers/
