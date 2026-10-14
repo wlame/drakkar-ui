@@ -1,7 +1,10 @@
 <script lang="ts">
-  // Message Trace tab: trace a message across all cluster workers by
-  // partition:offset or by label key=value (ports debug.html trace). Supports the
-  // #trace/<partition>/<offset> deep-link prefill via the `prefill` prop.
+  // Message Trace tab: trace a message by partition:offset or by label
+  // key=value (ports debug.html trace). The partition:offset search reads the
+  // serving worker's own files and, with "search history", also the sealed
+  // history of its cluster (contract v1.23: a second call with history=1,
+  // merged here). Supports the #trace/<partition>/<offset> deep-link prefill
+  // via the `prefill` prop.
   import { onMount } from 'svelte'
   import { api, type TraceEvent } from '../../lib/api'
   import { link, setHash } from '../../lib/router'
@@ -21,6 +24,7 @@
   let labelKeys = $state<string[]>([])
   let labelVals = $state<Record<string, string>>({})
   let lastRun = $state('')
+  let includeHistory = $state(false)
 
   let sort = $state(NO_SORT)
   const COLUMNS: { key: string; label: string; numeric: boolean }[] = [
@@ -71,13 +75,33 @@
     statusMsg = 'tracing…'
     setHash(`#trace/${p}/${o}`, { replace: true })
     try {
-      const ev = await api.debugTrace(p, o)
+      const [ownRows, historyRows] = await Promise.all([
+        api.debugTrace(p, o),
+        includeHistory ? api.debugTrace(p, o, true) : Promise.resolve([]),
+      ])
+      const ev = mergeTraceRows(ownRows, historyRows)
       results = ev
-      statusMsg = ev.length ? `${ev.length} events` : `No events found for ${p}:${o} in any cluster worker`
+      statusMsg = ev.length
+        ? `${ev.length} events`
+        : `No events found for ${p}:${o}${includeHistory ? '' : ' (search history to look in sealed files too)'}`
     } catch (e) {
       statusMsg = e instanceof Error ? e.message : String(e)
       results = []
     }
+  }
+
+  // A file sealed between the two calls can answer both: keep one row per
+  // (worker, row id, event, time), in time order.
+  function mergeTraceRows(a: TraceEvent[], b: TraceEvent[]): TraceEvent[] {
+    const seen = new Set<string>()
+    const out: TraceEvent[] = []
+    for (const e of [...a, ...b]) {
+      const key = `${e.worker_name}|${e.id}|${e.event}|${e.ts}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(e)
+    }
+    return out.sort((x, y) => x.ts - y.ts)
   }
 
   function onTraceClick() {
@@ -156,6 +180,7 @@
     onkeydown={(e) => e.key === 'Enter' && onTraceClick()}
   />
   <button onclick={onTraceClick}>Trace</button>
+  <label class="muted"><input type="checkbox" bind:checked={includeHistory} /> search history</label>
   <span class="muted">{statusMsg}</span>
 </div>
 

@@ -1,115 +1,84 @@
 <script lang="ts">
-  // Databases tab: list recorder DB files (grouped by cluster), select ≥2 to merge,
-  // and download (ports debug.html databases). Files with zero events are hidden
-  // (count surfaced). Download/merge carry the bearer token where configured.
-  // Archives (below the raw list) are a separate, read-only listing of already
-  // compressed/merged files — they never join `selected` or the merge request.
-  import { onDestroy, onMount } from 'svelte'
-  import { api, type ArchiveEntry, type DbInfo, type MergeResult } from '../../lib/api'
+  // Databases tab (contract v1.23). Two parts:
+  // - this worker's own recorder files in storage.dir: the live file and
+  //   files closed but not sealed yet (statistics measured by the worker);
+  // - the shared history: one foldable block per history/<cluster> folder,
+  //   plus merged. Sealed files get their statistics from their meta file.
+  // Sealed files and merge results can be merged (≥2) and downloaded by
+  // path; archives only downloaded. Own files are neither (the live file is
+  // still being written). A backend older than v1.23 answers the old array:
+  // the tab then says the view is not available there.
+  import { onMount } from 'svelte'
+  import { api, type DatabasesResponse, type HistoryFile, type HistoryFolder, type MergeResult } from '../../lib/api'
   import { fmtBytes, fmtDateTimeMs } from '../../lib/format'
 
-  // How soon to re-poll while some rows are stats_pending (a cold stats
-  // cache on the backend — the warmer fills them in within seconds).
-  const PENDING_REPOLL_MS = 3000
-
-  let all = $state<DbInfo[]>([])
+  let data = $state<DatabasesResponse | null>(null)
+  let unavailable = $state(false)
   let error = $state<string | null>(null)
-  let repollTimer: ReturnType<typeof setTimeout> | undefined
-  let workerFilter = $state('')
   let selected = $state<Set<string>>(new Set())
-  let sortKey = $state<'filename' | 'worker_name' | 'event_count' | 'last_event_ts' | 'size_bytes'>('last_event_ts')
-  let sortDir = $state<'asc' | 'desc'>('desc')
+  let folded = $state<Set<string>>(new Set())
+  let workerFilter = $state('')
   let merge = $state<MergeResult | null>(null)
   let mergeError = $state<string | null>(null)
   let merging = $state(false)
-  let archives = $state<ArchiveEntry[]>([])
 
   async function load() {
     error = null
     try {
-      all = await api.debugDatabases()
+      const res = await api.debugDatabases()
+      unavailable = res === null
+      data = res
     } catch (e) {
       error = e instanceof Error ? e.message : String(e)
     }
-    // Pending rows mean the backend's stats cache is still warming —
-    // re-poll until every row is filled in, then stop (no idle polling).
-    clearTimeout(repollTimer)
-    if (all.some((d) => d.stats_pending)) {
-      repollTimer = setTimeout(() => void load(), PENDING_REPOLL_MS)
-    }
-    await loadArchives()
   }
 
-  // Archives degrade silently: a 404 (old backend, api.debugArchives()
-  // already maps that to null) or any other fetch failure just leaves the
-  // section hidden rather than surfacing a second error banner next to the
-  // raw-databases one above.
-  async function loadArchives() {
-    try {
-      const res = await api.debugArchives()
-      archives = res?.archives ?? []
-    } catch {
-      archives = []
-    }
+  const own = $derived(data?.own ?? [])
+  const folders = $derived(data?.history.folders ?? [])
+
+  function fileWorker(f: HistoryFile): string {
+    return f.meta?.worker ?? ''
+  }
+  const workers = $derived(
+    [...new Set(folders.flatMap((folder) => folder.files.map(fileWorker)).filter(Boolean))].sort(),
+  )
+
+  // With a worker chosen, only that worker's sealed files stay: archives and
+  // merge results belong to no single worker.
+  function visibleFiles(folder: HistoryFolder): HistoryFile[] {
+    if (!workerFilter) return folder.files
+    return folder.files.filter((f) => fileWorker(f) === workerFilter)
   }
 
-  const workers = $derived([...new Set(all.map((d) => d.worker_name))].sort())
-
-  // The zero-events filter hides only settled, empty RECORDER files —
-  // cache DBs (no events by nature) and pending rows (stats unknown yet)
-  // must stay visible.
-  function isHiddenEmpty(d: DbInfo): boolean {
-    return d.event_count === 0 && !d.stats_pending && d.kind !== 'cache'
+  function isMergeable(f: HistoryFile): boolean {
+    return f.kind === 'sealed' || f.kind === 'merged'
   }
-  const emptyHidden = $derived(all.filter(isHiddenEmpty).length)
 
-  const visible = $derived.by<DbInfo[]>(() => {
-    let rows = all.filter((d) => !isHiddenEmpty(d))
-    if (workerFilter) rows = rows.filter((d) => d.worker_name === workerFilter)
-    const dir = sortDir === 'asc' ? 1 : -1
-    return [...rows].sort((a, b) => {
-      const av = a[sortKey]
-      const bv = b[sortKey]
-      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir
-      return String(av).localeCompare(String(bv)) * dir
-    })
-  })
-
-  interface ClusterGroup {
-    cluster: string
-    rows: DbInfo[]
+  function eventCount(f: HistoryFile): number | null {
+    const types = f.meta?.event_types
+    return types ? Object.values(types).reduce((sum, n) => sum + n, 0) : null
   }
-  const groups = $derived.by<ClusterGroup[]>(() => {
-    const map = new Map<string, DbInfo[]>()
-    for (const d of visible) {
-      const c = d.cluster_name || 'Unclustered'
-      if (!map.has(c)) map.set(c, [])
-      map.get(c)!.push(d)
-    }
-    return [...map.entries()].map(([cluster, rows]) => ({ cluster, rows }))
-  })
+  function eventTypesTitle(types: Record<string, number> | undefined): string {
+    return Object.entries(types ?? {})
+      .map(([k, v]) => `${k}: ${v}`)
+      .join('\n')
+  }
 
-  function toggle(filename: string) {
+  function folderLabel(folder: HistoryFolder): string {
+    return folder.kind === 'merged' ? 'merged' : (folder.cluster ?? folder.folder)
+  }
+
+  function toggle(path: string) {
     const next = new Set(selected)
-    if (next.has(filename)) next.delete(filename)
-    else next.add(filename)
+    if (next.has(path)) next.delete(path)
+    else next.add(path)
     selected = next
   }
-  function toggleGroup(rows: DbInfo[], on: boolean) {
-    const next = new Set(selected)
-    for (const r of rows) {
-      if (r.kind === 'cache') continue // cache DBs are never mergeable
-      if (on) next.add(r.filename)
-      else next.delete(r.filename)
-    }
-    selected = next
-  }
-  function setSort(key: typeof sortKey) {
-    if (sortKey === key) sortDir = sortDir === 'asc' ? 'desc' : 'asc'
-    else {
-      sortKey = key
-      sortDir = 'asc'
-    }
+  function toggleFold(folder: string) {
+    const next = new Set(folded)
+    if (next.has(folder)) next.delete(folder)
+    else next.add(folder)
+    folded = next
   }
 
   async function doMerge() {
@@ -128,17 +97,14 @@
     }
   }
 
-  function fmtTs(ts: number | null): string {
+  function fmtEpoch(ts: number | null): string {
     return ts != null ? fmtDateTimeMs(ts * 1000) : '-'
   }
-  function eventCountsTitle(d: DbInfo): string {
-    return Object.entries(d.event_counts)
-      .map(([k, v]) => `${k}: ${v}`)
-      .join('\n')
+  function fmtIso(ts: string | null | undefined): string {
+    return ts ? fmtDateTimeMs(Date.parse(ts)) : '-'
   }
 
   onMount(load)
-  onDestroy(() => clearTimeout(repollTimer))
 </script>
 
 <div class="bar">
@@ -146,17 +112,18 @@
     {merging ? 'Merging…' : `Merge${selected.size >= 2 ? ` (${selected.size})` : ''}`}
   </button>
   <button onclick={load}>Refresh</button>
-  <select bind:value={workerFilter}>
+  <select value={workerFilter} onchange={(e) => (workerFilter = e.currentTarget.value)} aria-label="worker filter">
     <option value="">All workers</option>
     {#each workers as w}<option value={w}>{w}</option>{/each}
   </select>
-  <span class="muted">{visible.length} files{emptyHidden ? ` (${emptyHidden} empty hidden)` : ''}</span>
 </div>
 
 {#if merge}
   <div class="banner">
-    Merged {merge.event_count.toLocaleString()} events from {merge.worker_count} workers{merge.cluster_name ? ` (${merge.cluster_name})` : ''}.
-    <a href={api.debugDownloadUrl(merge.filename)}>Download {merge.filename}</a>
+    Merged {merge.event_count.toLocaleString()} events from {merge.worker_count} workers{merge.cluster_name
+      ? ` (${merge.cluster_name})`
+      : ''}.
+    <a href={api.debugDownloadUrl(merge.path ?? `merged/${merge.filename}`)}>Download {merge.filename}</a>
   </div>
 {/if}
 {#if mergeError}
@@ -166,98 +133,95 @@
 {#if error}
   <p class="error">Failed to load databases: <code>{error}</code></p>
   <button onclick={load}>Retry</button>
-{:else if visible.length === 0}
-  <p class="muted">{all.length === 0 ? 'No database files found' : 'No databases match filters'}</p>
-{:else}
-  {#each groups as g}
-    {@const allSel = g.rows.filter((r) => r.kind !== 'cache').every((r) => selected.has(r.filename))}
-    <h2>
-      <input type="checkbox" checked={allSel} onchange={(e) => toggleGroup(g.rows, e.currentTarget.checked)} />
-      {g.cluster} ({g.rows.length})
-    </h2>
+{:else if unavailable}
+  <p class="muted">The databases view is not available on this worker: it runs an older release.</p>
+{:else if data}
+  <h2>This worker's files ({own.length})</h2>
+  {#if own.length === 0}
+    <p class="muted">No own files (this worker keeps its event history in memory only).</p>
+  {:else}
     <table>
       <thead>
         <tr>
-          <th></th>
-          <th class="sortable" onclick={() => setSort('filename')}>File</th>
-          <th class="sortable" onclick={() => setSort('worker_name')}>Worker</th>
-          <th class="num sortable" onclick={() => setSort('event_count')}>Events</th>
+          <th>File</th>
+          <th class="num">Events</th>
           <th>First</th>
-          <th class="sortable" onclick={() => setSort('last_event_ts')}>Last</th>
-          <th class="num sortable" onclick={() => setSort('size_bytes')}>Size</th>
-          <th></th>
+          <th>Last</th>
+          <th class="num">Size</th>
         </tr>
       </thead>
       <tbody>
-        {#each g.rows as d (d.filename)}
-          <tr class:in-use={!!d.live_for}>
-            <td>
-              <!-- Cache DBs never join a merge: the merge tool combines
-                   recorder event logs, and a cache file has no events. -->
-              {#if d.kind !== 'cache'}
-                <input type="checkbox" checked={selected.has(d.filename)} onchange={() => toggle(d.filename)} />
-              {/if}
-            </td>
+        {#each own as d (d.filename)}
+          <tr class:in-use={d.kind === 'live'}>
             <td class="mono">
               {d.filename}
-              {#if d.live_for}
-                <span class="chip live" title="Currently written by {d.live_for} — contents still growing"
-                  >in use · {d.live_for}</span>
-              {/if}
-              {#if d.kind === 'cache'}
-                <span class="chip kind" title="Handler cache database (cache_entries), not an event log">cache</span>
-              {:else if d.kind === 'merged'}
-                <span class="chip kind" title="drakkar-merge output combining several workers">merged</span>
-              {/if}
+              <span
+                class="chip kind"
+                title={d.kind === 'live' ? 'Being written now' : 'Closed; waiting to be sealed into the history folder'}
+                >{d.kind}</span
+              >
             </td>
-            <td class="mono">{d.worker_name}</td>
-            {#if d.stats_pending}
-              <td class="num muted" title="Statistics are being computed in the background — this fills in shortly"
-                >scanning…</td>
-            {:else if d.kind === 'cache'}
-              <td class="num mono" title="Rows in cache_entries">{(d.cache_entry_count ?? 0).toLocaleString()} entries</td>
-            {:else}
-              <td class="num mono" title={eventCountsTitle(d)}>{d.event_count.toLocaleString()}</td>
-            {/if}
-            <td class="muted nowrap">{d.stats_pending ? '…' : fmtTs(d.first_event_ts)}</td>
-            <td class="muted nowrap">{d.stats_pending ? '…' : fmtTs(d.last_event_ts)}</td>
+            <td class="num mono" title={eventTypesTitle(d.event_counts)}>{d.event_count.toLocaleString()}</td>
+            <td class="muted nowrap">{fmtEpoch(d.first_event_ts)}</td>
+            <td class="muted nowrap">{fmtEpoch(d.last_event_ts)}</td>
             <td class="num mono">{fmtBytes(d.size_bytes)}</td>
-            <td>
-              {#if d.kind !== 'cache'}
-                <a href={api.debugDownloadUrl(d.filename)} title="Download">↓</a>
-              {/if}
-            </td>
           </tr>
         {/each}
       </tbody>
     </table>
-  {/each}
-{/if}
+  {/if}
 
-{#if archives.length > 0}
-  <h2>Archives ({archives.length})</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Name</th>
-        <th>Cluster</th>
-        <th>Window</th>
-        <th class="num">Size</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {#each archives as a (a.name)}
-        <tr>
-          <td class="mono">{a.name}</td>
-          <td class="mono">{a.cluster}</td>
-          <td class="muted nowrap">{fmtTs(a.from_ts)} → {fmtTs(a.to_ts)}</td>
-          <td class="num mono">{fmtBytes(a.size_bytes)}</td>
-          <td><a href={api.debugArchiveDownloadUrl(a.name)} title="Download">↓</a></td>
-        </tr>
-      {/each}
-    </tbody>
-  </table>
+  <h2>History</h2>
+  {#if folders.length === 0}
+    <p class="muted">No sealed history yet.</p>
+  {/if}
+  {#each folders as folder (folder.folder)}
+    {@const files = visibleFiles(folder)}
+    <button class="fold" onclick={() => toggleFold(folder.folder)} title={folder.folder}>
+      {folded.has(folder.folder) ? '▸' : '▾'}
+      {folderLabel(folder)} ({files.length})
+    </button>
+    {#if !folded.has(folder.folder) && files.length > 0}
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th>File</th>
+            <th>Worker</th>
+            <th class="num">Events</th>
+            <th>First</th>
+            <th>Last</th>
+            <th class="num">Size</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each files as f (f.path)}
+            {@const count = eventCount(f)}
+            <tr>
+              <td>
+                {#if isMergeable(f)}
+                  <input type="checkbox" checked={selected.has(f.path)} onchange={() => toggle(f.path)} />
+                {/if}
+              </td>
+              <td class="mono">
+                {f.name}
+                {#if f.kind !== 'sealed'}<span class="chip kind">{f.kind}</span>{/if}
+              </td>
+              <td class="mono">{fileWorker(f) || '-'}</td>
+              <td class="num mono events" title={eventTypesTitle(f.meta?.event_types)}
+                >{count != null ? count.toLocaleString() : '-'}</td
+              >
+              <td class="muted nowrap">{fmtIso(f.meta?.first_event_ts)}</td>
+              <td class="muted nowrap">{fmtIso(f.meta?.last_event_ts)}</td>
+              <td class="num mono">{fmtBytes(f.size_bytes)}</td>
+              <td><a href={api.debugDownloadUrl(f.path)} title="Download">↓</a></td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
+  {/each}
 {/if}
 
 <style>
@@ -296,23 +260,20 @@
   .banner a {
     margin-left: 0.5rem;
   }
-  h2 {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .sortable {
-    cursor: pointer;
-    user-select: none;
-  }
-  .sortable:hover {
+  .fold {
+    display: block;
+    margin: 0.9rem 0 0.4rem;
+    font-weight: 600;
+    background: none;
+    border: none;
+    padding: 0;
     color: var(--text);
+    cursor: pointer;
   }
   .nowrap {
     white-space: nowrap;
   }
-  /* In-use rows: the file a worker is writing RIGHT NOW. Accent border +
-     faint tint — visible without shouting over the selection checkboxes. */
+  /* The live file: being written right now. Accent border + faint tint. */
   tr.in-use td {
     background: rgba(13, 148, 136, 0.07);
   }
@@ -327,11 +288,6 @@
     margin-left: 0.4rem;
     vertical-align: middle;
     white-space: nowrap;
-  }
-  .chip.live {
-    background: rgba(13, 148, 136, 0.15);
-    color: #0d9488;
-    border: 1px solid rgba(13, 148, 136, 0.4);
   }
   .chip.kind {
     background: var(--panel-2);

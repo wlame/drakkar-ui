@@ -168,9 +168,9 @@ describe('downloadUrl', () => {
     expect(api.debugDownloadUrl('a b.db')).toBe('/api/v1/debug/download/a%20b.db')
   })
 
-  it('encodes archive names in the debug archive download helper', () => {
-    expect(api.debugArchiveDownloadUrl('cluster a-2026-08-09_00-00__2026-08-10_00-00.db.gz')).toBe(
-      '/api/v1/debug/archives/cluster%20a-2026-08-09_00-00__2026-08-10_00-00.db.gz',
+  it('keeps the path separators of a history path and encodes each segment (v1.23)', () => {
+    expect(api.debugDownloadUrl('history/a b/w-1-2026-10-14__00_00_00.db')).toBe(
+      '/api/v1/debug/download/history/a%20b/w-1-2026-10-14__00_00_00.db',
     )
   })
 })
@@ -200,23 +200,45 @@ describe('timelineEvents', () => {
   })
 })
 
-describe('debugArchives', () => {
-  it('returns the parsed envelope on 200', async () => {
-    const body = {
-      archives: [{ name: 'a.db.gz', cluster: 'c1', from_ts: 1, to_ts: 2, size_bytes: 3 }],
-    }
+describe('debugDatabases', () => {
+  it('returns the own/history object of a v1.23 backend', async () => {
+    const body = { own: [], history: { folders: [] } }
     fetchMock.mockResolvedValue(okJson(body))
-    await expect(api.debugArchives()).resolves.toEqual(body)
-    expect(call().url).toBe('/api/v1/debug/archives')
+    await expect(api.debugDatabases()).resolves.toEqual(body)
+    expect(call().url).toBe('/api/v1/debug/databases')
   })
 
-  it('maps a 404 to null rather than throwing (a backend that predates archiving)', async () => {
-    fetchMock.mockResolvedValue(httpError(404, '{"error":"not found"}'))
-    await expect(api.debugArchives()).resolves.toBeNull()
+  it('maps the array of a pre-v1.23 backend to null (the view is not available there)', async () => {
+    fetchMock.mockResolvedValue(okJson([{ filename: 'w.db' }]))
+    await expect(api.debugDatabases()).resolves.toBeNull()
   })
 
-  it('still throws on a genuine server error', async () => {
+  it('still throws on a server error', async () => {
     fetchMock.mockResolvedValue(httpError(500, '{"error":"boom"}'))
-    await expect(api.debugArchives()).rejects.toThrow('GET /debug/archives → HTTP 500')
+    await expect(api.debugDatabases()).rejects.toThrow('GET /debug/databases → HTTP 500')
+  })
+})
+
+describe('debugTrace', () => {
+  it('searches the own files by default', async () => {
+    fetchMock.mockResolvedValue(okJson([]))
+    await api.debugTrace(3, 42)
+    expect(call().url).toBe('/api/v1/debug/trace?partition=3&offset=42')
+  })
+
+  it('asks for sealed history with history=1', async () => {
+    fetchMock.mockResolvedValue(okJson([]))
+    await api.debugTrace(3, 42, true)
+    expect(call().url).toBe('/api/v1/debug/trace?partition=3&offset=42&history=1')
+  })
+})
+
+describe('debugMerge', () => {
+  it('posts the history paths as filenames', async () => {
+    fetchMock.mockResolvedValue(okJson({ filename: 'm.db', path: 'merged/m.db' }))
+    await api.debugMerge(['history/c/a.db', 'history/c/b.db'])
+    expect(JSON.parse(String(call().init?.body))).toEqual({
+      filenames: ['history/c/a.db', 'history/c/b.db'],
+    })
   })
 })
