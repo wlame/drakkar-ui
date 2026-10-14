@@ -39,8 +39,18 @@
     return out
   })
 
-  function peerHref(w: WorkerPeer): string {
+  // A peer's url comes from its registry card, which anyone who can write
+  // the shared card folder can plant: only http(s) becomes a link, so a
+  // javascript: or data: url can never run in this page.
+  function peerHref(w: WorkerPeer): string | null {
     const base = w.url || `http://${w.ip_address}:${w.debug_port}/`
+    let protocol: string
+    try {
+      protocol = new URL(base).protocol
+    } catch {
+      return null
+    }
+    if (protocol !== 'http:' && protocol !== 'https:') return null
     return base.replace(/\/+$/, '') + suffix
   }
 
@@ -54,6 +64,24 @@
     return w.last_seen_ts != null
       ? `offline — last seen ${fmtAgo(w.last_seen_ts)}`
       : 'offline — last seen unknown'
+  }
+
+  // v1.23: online=null means the registry knows no age for this peer (a fixed
+  // peer list) — say so instead of guessing either way.
+  function rowTitle(w: WorkerPeer): string | undefined {
+    if (isOffline(w)) return offlineTitle(w)
+    if (w.online === null) return 'liveness unknown'
+    return undefined
+  }
+
+  // v1.23 card chips: a state other than the normal "running", and the
+  // implementation with its version. Each is shown only when present, so a
+  // pre-v1.23 row renders exactly as before.
+  function metaChips(w: WorkerPeer): string[] {
+    const chips: string[] = []
+    if (w.state && w.state !== 'running') chips.push(w.state)
+    if (w.backend) chips.push(w.version ? `${w.backend} ${w.version}` : w.backend)
+    return chips
   }
 
   async function load() {
@@ -99,16 +127,24 @@
                 <span class="mono">{w.worker_name || '?'}</span>
                 <span class="tag">current</span>
               </div>
+            {:else if peerHref(w) === null}
+              <div class="item" title="This worker's url is not an http or https address">
+                <span class="mono">{w.worker_name || '?'}</span>
+                <span class="tag">invalid url</span>
+              </div>
             {:else}
               <!-- Offline peers stay clickable — visually dead, but still plain links. -->
               <a
                 class="item"
                 class:offline={isOffline(w)}
-                href={peerHref(w)}
-                title={isOffline(w) ? offlineTitle(w) : undefined}
+                href={peerHref(w) ?? undefined}
+                title={rowTitle(w)}
               >
                 <span class="mono">{w.worker_name || '?'}</span>
-                {#if !w.debug_url}
+                {#each metaChips(w) as chip}
+                  <span class="meta">{chip}</span>
+                {/each}
+                {#if !w.debug_url && w.ip_address && w.debug_port}
                   <span class="addr">{w.ip_address}:{w.debug_port}</span>
                 {/if}
                 {#if isOffline(w)}
@@ -183,7 +219,8 @@
     color: #fff;
   }
   .tag,
-  .addr {
+  .addr,
+  .meta {
     font-size: 0.7rem;
     color: #9ca3af;
   }
@@ -193,7 +230,8 @@
     opacity: 0.5;
   }
   a.item.offline .tag,
-  a.item.offline .addr {
+  a.item.offline .addr,
+  a.item.offline .meta {
     color: #6b7280;
   }
   .empty {

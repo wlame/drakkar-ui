@@ -39,6 +39,14 @@ describe('sameClusterPeers', () => {
     expect(peers.map((w) => w.worker_name)).toEqual(['worker-a'])
   })
 
+  it('keeps peers whose liveness is unknown (v1.23 online=null)', () => {
+    const peers = sameClusterPeers([
+      worker({ worker_name: 'worker-b', is_current: true }),
+      worker({ worker_name: 'worker-a', online: null }),
+    ])
+    expect(peers.map((w) => w.worker_name)).toEqual(['worker-a'])
+  })
+
   it('keeps peers without the v1.18 online field (pre-v1.18 backend)', () => {
     const peers = sameClusterPeers([
       worker({ worker_name: 'worker-b', is_current: true }),

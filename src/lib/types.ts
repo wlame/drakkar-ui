@@ -209,18 +209,27 @@ export interface Identity {
 
 export interface WorkerPeer {
   worker_name: string
+  cluster_name?: string | null
   cluster: string
   url: string
   is_current: boolean
+  // v1.23: null for registry peers (a card carries a URL only) — use url.
   ip_address: string | null
   debug_port: number | null
   debug_url: string | null
   // v1.18 liveness — both absent on older backends, which means "treat as
-  // online". last_seen_ts is the newest recorder heartbeat (epoch seconds,
-  // null = unknown); online means it is fresher than the backend's
-  // ui.workers_offline_after_seconds. The current worker is always online.
+  // online". last_seen_ts is epoch seconds (null = unknown); online compares
+  // the peer's age with the backend's offline threshold. Since v1.23 online
+  // may be null: the registry knows no age (a fixed peer list) — unknown,
+  // not offline. The current worker is always online.
   last_seen_ts?: number | null
-  online?: boolean
+  online?: boolean | null
+  // v1.23, from the peer's registry card; absent on older backends.
+  backend?: 'python' | 'go'
+  version?: string
+  state?: 'starting' | 'running' | 'draining'
+  started_at?: string
+  instance?: string
 }
 
 // --- Events (recorder rows) ---

@@ -138,9 +138,11 @@ the appendix.
 - `GET /api/v1/sinks` → array of `{sink_type, name, ui_url, delivered_count,
   delivered_payloads, error_count, retry_count, last_delivery_ts:float|null,
   last_delivery_duration:float|null, last_error:str|null, last_error_ts:float|null}`.
-- `GET /api/v1/workers` → array of worker objects (peers via shared db_dir +
-  current), each `{worker_name, cluster_name|null, ip_address|null, debug_port,
-  debug_url|null, url, cluster, is_current}`; sorted clustered-first then by name.
+- `GET /api/v1/workers` → array of worker objects (peers from the worker
+  registry + current), each `{worker_name, cluster_name|null, ip_address|null,
+  debug_port|null, debug_url|null, url, cluster, is_current}` plus the v1.18
+  liveness fields and the v1.23 registry fields; sorted clustered-first then by
+  name.
 - `GET /api/v1/debug/processors` → `{processors:{"<pid>":{queue_size,
   inflight_count, arranging:bool, arrange:null|{duration:float(2dp),
   message_count, labels:[...]}, pending_count, completed_count, total_tracked,
@@ -206,7 +208,8 @@ the appendix.
 - `POST /api/v1/debug/merge` body `{filenames:[str] (≥2)}` → `{filename,
   worker_count, event_count, state_count, cluster_name, source_files:[str]}`.
   400 on malformed JSON body; filename hardening rejects `/ \` leading-`.` `"`
-  `;` and control chars; 404 for missing files; errors via `{"error":...}`.
+  `;` and control chars; 404 for missing files; 500 when the merge itself
+  fails (v1.23); errors via `{"error":...}`.
 - `GET /api/v1/debug/download/{filename}` → file attachment; `Content-Type:
   application/x-sqlite3`, `Content-Disposition: attachment; filename="..."`,
   `Cache-Control: no-store, private`. Filename hardening as merge. Token may
@@ -1526,6 +1529,52 @@ entry `"docs": "/docs"` (a same-origin path, unlike user bases which are
 absolute URLs). User configs may not define a base named `docs` — backends
 reject it at config load. Link templates may thus use `{docs}/page/#anchor`
 anywhere templates already resolve bases.
+
+## v1.23 changes (2026-10-14)
+
+### Workers list from the worker registry
+
+`GET /api/v1/workers` keeps its array shape, its fields and its
+clustered-first sort order (shape pinned in `docs/openapi-v1.yaml`:
+`Worker`). Peers now come from the backend's worker registry (cards
+published by each worker) instead of a scan of a shared database folder.
+
+Peer rows:
+
+- **`worker_name`, `cluster`, `url`** — from the peer's card.
+  `cluster_name` is the card's cluster, or `null` when that is `""`.
+  `debug_url` equals `url`.
+- **`ip_address: null`, `debug_port: null`** — a card carries a URL, not an
+  address and a port. Clients MUST use `url` (or `debug_url`).
+- **`online: boolean | null`** — `true`/`false` from the card's age on the
+  registry's own clock against `fleet.registry.offline_after_seconds`;
+  **`null`** when the registry knows no age (a fixed peer list). Clients MUST
+  treat `null` as "unknown", not as offline.
+- **`last_seen_ts: number | null`** — epoch seconds on the serving worker's
+  clock: `now − age` when the age is known, else `null`.
+- **New optional fields**, present when the card carries them:
+  `backend` (`"python"` | `"go"`), `version` (string), `state`
+  (`"starting"` | `"running"` | `"draining"`), `started_at` (RFC 3339
+  micro), `instance` (16 lowercase hex, new at every process start).
+
+Current worker row (normative): `is_current: true`, `online: true`,
+`ip_address: null`, `debug_port` = the UI port, `debug_url` =
+`ui.public_url` or `null`, and `url` = `ui.public_url` when set, else
+`http://<detected ip>:<port>/`. It carries its own `backend`, `version`,
+`state`, `started_at` and `instance`.
+
+Absence (normative): pre-v1.23 backends omit the five new fields and send
+`ip_address`/`debug_port` values from their database scan. Clients MUST
+render a row without the new fields exactly as before, and MUST NOT require
+`ip_address` or `debug_port`.
+
+### Merge failure answer
+
+`POST /api/v1/debug/merge` answers **500** `{"error": "Merge failed:
+<reason>"}` when the merge itself fails (a source cannot be read, the
+output cannot be written). It uses the legacy `{"error"}` envelope of the
+merge route's 400 and 404 answers, not the `{"detail"}` envelope of the
+Conventions section. A failed merge leaves no output file.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 
