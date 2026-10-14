@@ -1,18 +1,39 @@
 <script lang="ts">
   // Databases tab (contract v1.23). Two parts:
-  // - this worker's own recorder files in storage.dir: the live file and
-  //   files closed but not sealed yet (statistics measured by the worker);
-  // - the shared history: one foldable block per history/<cluster> folder,
-  //   plus merged. Sealed files get their statistics from their meta file.
+  // - the own recorder files in storage.dir of every worker of this
+  //   worker's cluster (fan-out, one section per worker): the live file and
+  //   files closed but not sealed yet (statistics measured by that worker).
+  //   The live file downloads as a consistent snapshot from its worker;
+  //   workers that did not answer are listed;
+  // - the shared history, read from this worker: one foldable block per
+  //   history/<cluster> folder, plus merged. Sealed files get their
+  //   statistics from their meta file.
   // Sealed files and merge results can be merged (≥2) and downloaded by
-  // path; archives only downloaded. Own files are neither (the live file is
-  // still being written). A backend older than v1.23 answers the old array:
-  // the tab then says the view is not available there.
+  // path; archives only downloaded. A backend older than v1.23 answers the
+  // old array: the tab then says the view is not available there.
   import { onMount } from 'svelte'
-  import { api, type DatabasesResponse, type HistoryFile, type HistoryFolder, type MergeResult } from '../../lib/api'
+  import {
+    api,
+    type DatabasesResponse,
+    type HistoryFile,
+    type HistoryFolder,
+    type MergeResult,
+    type OwnDb,
+  } from '../../lib/api'
+  import { fanOut, fanOutTargets, type FanOutTarget, type Unreachable } from '../../lib/fanout'
   import { fmtBytes, fmtDateTimeMs } from '../../lib/format'
 
+  // One section of own files per worker that answered; base '' is this worker.
+  interface OwnSection {
+    worker: string
+    base: string
+    own: OwnDb[]
+  }
+
   let data = $state<DatabasesResponse | null>(null)
+  let peerSections = $state<OwnSection[]>([])
+  let currentWorker = $state('')
+  let unreachable = $state<Unreachable[]>([])
   let unavailable = $state(false)
   let error = $state<string | null>(null)
   let selected = $state<Set<string>>(new Set())
@@ -25,7 +46,7 @@
   async function load() {
     error = null
     try {
-      const res = await api.debugDatabases()
+      const [res] = await Promise.all([api.debugDatabases(), loadPeers()])
       unavailable = res === null
       data = res
     } catch (e) {
@@ -33,7 +54,35 @@
     }
   }
 
-  const own = $derived(data?.own ?? [])
+  // The own files of this worker's cluster peers, each read from the peer.
+  // A peer that answers the pre-v1.23 array is listed as not available.
+  async function loadPeers() {
+    let targets: FanOutTarget[] = [{ worker: '', base: '' }]
+    let missing: Unreachable[] = []
+    try {
+      ;({ targets, unreachable: missing } = fanOutTargets(await api.workers()))
+    } catch {
+      // An older backend without a usable workers list: this worker alone.
+    }
+    currentWorker = targets[0].worker
+    const answer = await fanOut(
+      targets.filter((t) => t.base !== ''),
+      (t, signal) => api.debugDatabasesAt(t.base, signal),
+    )
+    const old = answer.results.filter((r) => r.value === null)
+    peerSections = answer.results
+      .filter((r) => r.value !== null)
+      .map((r) => ({ worker: r.worker, base: r.base, own: r.value?.own ?? [] }))
+    unreachable = [
+      ...missing,
+      ...answer.unreachable,
+      ...old.map((r) => ({ worker: r.worker, reason: 'not available on this worker' })),
+    ]
+  }
+
+  const ownSections = $derived<OwnSection[]>(
+    data ? [{ worker: currentWorker, base: '', own: data.own }, ...peerSections] : [],
+  )
   const folders = $derived(data?.history.folders ?? [])
 
   function fileWorker(f: HistoryFile): string {
@@ -52,6 +101,19 @@
 
   function isMergeable(f: HistoryFile): boolean {
     return f.kind === 'sealed' || f.kind === 'merged'
+  }
+
+  // The selected files the worker filter shows: a selection hidden by the
+  // filter is never merged.
+  const mergeSelection = $derived.by(() => {
+    const shown = new Set(
+      folders.flatMap((folder) => visibleFiles(folder).filter(isMergeable).map((f) => f.path)),
+    )
+    return [...selected].filter((path) => shown.has(path))
+  })
+
+  function sectionTitle(section: OwnSection): string {
+    return section.worker ? `Own files of ${section.worker}` : "This worker's files"
   }
 
   function eventCount(f: HistoryFile): number | null {
@@ -82,12 +144,12 @@
   }
 
   async function doMerge() {
-    if (selected.size < 2) return
+    if (mergeSelection.length < 2) return
     merging = true
     merge = null
     mergeError = null
     try {
-      merge = await api.debugMerge([...selected])
+      merge = await api.debugMerge(mergeSelection)
       selected = new Set()
       await load()
     } catch (e) {
@@ -108,8 +170,8 @@
 </script>
 
 <div class="bar">
-  <button class="primary" onclick={doMerge} disabled={selected.size < 2 || merging}>
-    {merging ? 'Merging…' : `Merge${selected.size >= 2 ? ` (${selected.size})` : ''}`}
+  <button class="primary" onclick={doMerge} disabled={mergeSelection.length < 2 || merging}>
+    {merging ? 'Merging…' : `Merge${mergeSelection.length >= 2 ? ` (${mergeSelection.length})` : ''}`}
   </button>
   <button onclick={load}>Refresh</button>
   <select value={workerFilter} onchange={(e) => (workerFilter = e.currentTarget.value)} aria-label="worker filter">
@@ -136,39 +198,53 @@
 {:else if unavailable}
   <p class="muted">The databases view is not available on this worker: it runs an older release.</p>
 {:else if data}
-  <h2>This worker's files ({own.length})</h2>
-  {#if own.length === 0}
-    <p class="muted">No own files (this worker keeps its event history in memory only).</p>
-  {:else}
-    <table>
-      <thead>
-        <tr>
-          <th>File</th>
-          <th class="num">Events</th>
-          <th>First</th>
-          <th>Last</th>
-          <th class="num">Size</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each own as d (d.filename)}
-          <tr class:in-use={d.kind === 'live'}>
-            <td class="mono">
-              {d.filename}
-              <span
-                class="chip kind"
-                title={d.kind === 'live' ? 'Being written now' : 'Closed; waiting to be sealed into the history folder'}
-                >{d.kind}</span
-              >
-            </td>
-            <td class="num mono" title={eventTypesTitle(d.event_counts)}>{d.event_count.toLocaleString()}</td>
-            <td class="muted nowrap">{fmtEpoch(d.first_event_ts)}</td>
-            <td class="muted nowrap">{fmtEpoch(d.last_event_ts)}</td>
-            <td class="num mono">{fmtBytes(d.size_bytes)}</td>
+  <!-- Keyed by position: two workers can share one address (a load balancer). -->
+  {#each ownSections as section, index (`${index}:${section.worker}`)}
+    <h2>{sectionTitle(section)} ({section.own.length})</h2>
+    {#if section.own.length === 0}
+      <p class="muted">No own files (this worker keeps its event history in memory only).</p>
+    {:else}
+      <table>
+        <thead>
+          <tr>
+            <th>File</th>
+            <th class="num">Events</th>
+            <th>First</th>
+            <th>Last</th>
+            <th class="num">Size</th>
+            <th></th>
           </tr>
-        {/each}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {#each section.own as d (d.filename)}
+            <tr class:in-use={d.kind === 'live'}>
+              <td class="mono">
+                {d.filename}
+                <span
+                  class="chip kind"
+                  title={d.kind === 'live' ? 'Being written now' : 'Closed; waiting to be sealed into the history folder'}
+                  >{d.kind}</span
+                >
+              </td>
+              <td class="num mono" title={eventTypesTitle(d.event_counts)}>{d.event_count.toLocaleString()}</td>
+              <td class="muted nowrap">{fmtEpoch(d.first_event_ts)}</td>
+              <td class="muted nowrap">{fmtEpoch(d.last_event_ts)}</td>
+              <td class="num mono">{fmtBytes(d.size_bytes)}</td>
+              <td>
+                {#if d.kind === 'live'}
+                  <a href={api.debugDownloadLiveUrl(section.base)} title="Download a snapshot of the live file">↓</a>
+                {/if}
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
+  {/each}
+  {#if unreachable.length}
+    <p class="muted unreachable">
+      Not answered: {unreachable.map((u) => `${u.worker} (${u.reason})`).join(', ')}
+    </p>
   {/if}
 
   <h2>History</h2>
