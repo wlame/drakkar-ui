@@ -1,10 +1,12 @@
 <script lang="ts">
   // Message Trace tab: trace a message by partition:offset or by label
-  // key=value (ports debug.html trace). The partition:offset search reads the
-  // serving worker's own files and, with "search history", also the sealed
-  // history of its cluster (contract v1.23: a second call with history=1,
-  // merged here). Supports the #trace/<partition>/<offset> deep-link prefill
-  // via the `prefill` prop.
+  // key=value (ports debug.html trace). Both searches read the own files of
+  // every worker of the current worker's cluster (contract v1.23 fan-out;
+  // rows carry worker_name), and the partition:offset search with "search
+  // history" also reads the sealed history of the cluster once, on this
+  // worker (history=1). The answers are merged here; workers that did not
+  // answer are listed. Supports the #trace/<partition>/<offset> deep-link
+  // prefill via the `prefill` prop.
   import { onMount } from 'svelte'
   import { api, type TraceEvent } from '../../lib/api'
   import { link, setHash } from '../../lib/router'
@@ -15,6 +17,7 @@
   import Expandable from '../Expandable.svelte'
   import SortableTh from '../SortableTh.svelte'
   import { NO_SORT, sortRows, type SortAccessor } from '../../lib/sort'
+  import { fanOut, fanOutTargets, type FanOutTarget, type Unreachable } from '../../lib/fanout'
 
   let { prefill = null }: { prefill?: { partition: number; offset: number } | null } = $props()
 
@@ -25,6 +28,11 @@
   let labelVals = $state<Record<string, string>>({})
   let lastRun = $state('')
   let includeHistory = $state(false)
+  // Workers that did not answer the last search, with the reason.
+  let unreachable = $state<Unreachable[]>([])
+  // The number of the newest search: a slower answer to an older search
+  // (the fan-out waits up to its timeout) must not replace a newer one.
+  let searchSeq = 0
 
   let sort = $state(NO_SORT)
   const COLUMNS: { key: string; label: string; numeric: boolean }[] = [
@@ -41,14 +49,20 @@
   // the pipeline stage where the seconds went (slow arrange, heavy hooks,
   // sink delivery, executor queueing).
   const gaps = $derived.by(() => {
-    const map = new Map<number, number>()
+    const map = new Map<string, number>()
     if (!results) return map
     const byTime = [...results].sort((a, b) => a.ts - b.ts)
     for (let i = 1; i < byTime.length; i++) {
-      map.set(byTime[i].id, (byTime[i].ts - byTime[i - 1].ts) * 1000)
+      map.set(rowKey(byTime[i]), (byTime[i].ts - byTime[i - 1].ts) * 1000)
     }
     return map
   })
+
+  // Row ids are per file: the same id appears in several workers' files and
+  // in several sealed files. One row is (worker, id, event, time).
+  function rowKey(e: TraceEvent): string {
+    return `${e.worker_name}|${e.id}|${e.event}|${e.ts}`
+  }
 
   function fmtGap(ms: number): string {
     return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`
@@ -56,7 +70,7 @@
 
   const ACCESSORS: Record<string, SortAccessor<TraceEvent>> = {
     ts: (e) => e.ts,
-    gap: (e) => gaps.get(e.id) ?? -1,
+    gap: (e) => gaps.get(rowKey(e)) ?? -1,
     worker_name: (e) => e.worker_name,
     event: (e) => e.event,
     task_id: (e) => e.task_id,
@@ -70,33 +84,68 @@
     return [Number(m[1]), Number(m[2])]
   }
 
+  // The workers to ask: this worker and its cluster peers that are not
+  // offline. Without a workers list (an older backend), this worker alone.
+  async function clusterTargets(): Promise<{ targets: FanOutTarget[]; missing: Unreachable[] }> {
+    try {
+      const { targets, unreachable: missing } = fanOutTargets(await api.workers())
+      return { targets, missing }
+    } catch {
+      return { targets: [{ worker: '', base: '' }], missing: [] }
+    }
+  }
+
+  // Ask every worker with read; the rows of the workers that answered are
+  // merged, the others listed. Throws only when no worker answered.
+  async function fanOutRows(
+    read: (target: FanOutTarget, signal: AbortSignal) => Promise<TraceEvent[]>,
+    seq: number,
+  ): Promise<TraceEvent[]> {
+    const { targets, missing } = await clusterTargets()
+    const answer = await fanOut(targets, read)
+    if (seq === searchSeq) unreachable = [...missing, ...answer.unreachable]
+    if (answer.results.length === 0 && answer.unreachable.length > 0) {
+      throw new Error('no worker answered')
+    }
+    return mergeTraceRows(answer.results.flatMap((r) => r.value))
+  }
+
   async function runTrace(p: number, o: number) {
     inputVal = `${p}:${o}`
     statusMsg = 'tracing…'
     setHash(`#trace/${p}/${o}`, { replace: true })
+    const seq = ++searchSeq
     try {
-      const [ownRows, historyRows] = await Promise.all([
-        api.debugTrace(p, o),
-        includeHistory ? api.debugTrace(p, o, true) : Promise.resolve([]),
+      // allSettled: a failed history read keeps the own rows.
+      const [ownRows, historyRows] = await Promise.allSettled([
+        fanOutRows((t, signal) => api.debugTraceAt(t.base, p, o, signal), seq),
+        includeHistory ? api.debugTrace(p, o, true) : Promise.resolve([] as TraceEvent[]),
       ])
-      const ev = mergeTraceRows(ownRows, historyRows)
+      if (seq !== searchSeq) return
+      if (ownRows.status === 'rejected' && historyRows.status === 'rejected') throw ownRows.reason
+      const ev = mergeTraceRows([
+        ...(ownRows.status === 'fulfilled' ? ownRows.value : []),
+        ...(historyRows.status === 'fulfilled' ? historyRows.value : []),
+      ])
       results = ev
+      const historyNote = historyRows.status === 'rejected' ? ' (the history search failed)' : ''
       statusMsg = ev.length
-        ? `${ev.length} events`
-        : `No events found for ${p}:${o}${includeHistory ? '' : ' (search history to look in sealed files too)'}`
+        ? `${ev.length} events${historyNote}`
+        : `No events found for ${p}:${o}${includeHistory ? historyNote : ' (search history to look in sealed files too)'}`
     } catch (e) {
+      if (seq !== searchSeq) return
       statusMsg = e instanceof Error ? e.message : String(e)
       results = []
     }
   }
 
-  // A file sealed between the two calls can answer both: keep one row per
+  // A file sealed between two reads can answer both: keep one row per
   // (worker, row id, event, time), in time order.
-  function mergeTraceRows(a: TraceEvent[], b: TraceEvent[]): TraceEvent[] {
+  function mergeTraceRows(rows: TraceEvent[]): TraceEvent[] {
     const seen = new Set<string>()
     const out: TraceEvent[] = []
-    for (const e of [...a, ...b]) {
-      const key = `${e.worker_name}|${e.id}|${e.event}|${e.ts}`
+    for (const e of rows) {
+      const key = rowKey(e)
       if (seen.has(key)) continue
       seen.add(key)
       out.push(e)
@@ -116,11 +165,14 @@
   async function runLabelTrace(key: string, value: string) {
     if (!value) return
     statusMsg = `tracing ${key}=${value}…`
+    const seq = ++searchSeq
     try {
-      const ev = await api.debugTraceByLabel(key, value)
+      const ev = await fanOutRows((t, signal) => api.debugTraceByLabelAt(t.base, key, value, signal), seq)
+      if (seq !== searchSeq) return
       results = ev
       statusMsg = ev.length ? `${ev.length} events` : `No events found for ${key}=${value}`
     } catch (e) {
+      if (seq !== searchSeq) return
       statusMsg = e instanceof Error ? e.message : String(e)
       results = []
     }
@@ -183,6 +235,11 @@
   <label class="muted"><input type="checkbox" bind:checked={includeHistory} /> search history</label>
   <span class="muted">{statusMsg}</span>
 </div>
+{#if unreachable.length}
+  <p class="muted unreachable">
+    Not answered: {unreachable.map((u) => `${u.worker || 'this worker'} (${u.reason})`).join(', ')}
+  </p>
+{/if}
 
 {#if labelKeys.length}
   <div class="labels">
@@ -213,9 +270,9 @@
         </tr>
       </thead>
       <tbody>
-        {#each sortRows(results, sort, ACCESSORS) as e (e.id)}
+        {#each sortRows(results, sort, ACCESSORS) as e (rowKey(e))}
           {@const ann = annotationOf(e)}
-          {@const gap = gaps.get(e.id)}
+          {@const gap = gaps.get(rowKey(e))}
           <tr>
             <td class="muted nowrap" title={fmtTimeMs(e.ts)}>{fmtTimeMs(e.ts)}</td>
             <td class="num mono" style:color={gap != null && gap > 1000 ? '#dc2626' : undefined}>

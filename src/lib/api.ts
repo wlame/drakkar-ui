@@ -61,9 +61,20 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
-// On a failed response, surface the status AND the body text — the message probe
-// and database merge both return their error detail in the body (422 validation,
-// 400/404 {error:...}), which the UI renders verbatim.
+// HttpError is a failed response: the message carries the status AND the
+// body text — the message probe and database merge both return their error
+// detail in the body (422 validation, 400/404 {error:...}), which the UI
+// renders verbatim. `status` lets a caller tell "not there" (404) apart.
+export class HttpError extends Error {
+  readonly status: number
+
+  constructor(method: string, path: string, status: number, body: string) {
+    super(`${method} ${path} → HTTP ${status}${body ? `: ${body}` : ''}`)
+    this.name = 'HttpError'
+    this.status = status
+  }
+}
+
 async function fail(method: string, path: string, res: Response): Promise<never> {
   let body = ''
   try {
@@ -71,11 +82,21 @@ async function fail(method: string, path: string, res: Response): Promise<never>
   } catch {
     // ignore — body may be unavailable
   }
-  throw new Error(`${method} ${path} → HTTP ${res.status}${body ? `: ${body}` : ''}`)
+  throw new HttpError(method, path, res.status, body)
 }
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders() })
+  if (!res.ok) return fail('GET', path, res)
+  return (await res.json()) as T
+}
+
+// getFrom reads a route from another worker of the cluster (the fan-out).
+// base is that worker's http(s) origin without a trailing slash, '' for the
+// page's own worker. The same token goes to every worker, as on the Live
+// page's sockets; the read is cross-origin, so the worker answers CORS.
+async function getFrom<T>(base: string, path: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(`${base}${API_BASE}${path}`, { headers: authHeaders(), signal })
   if (!res.ok) return fail('GET', path, res)
   return (await res.json()) as T
 }
@@ -212,6 +233,13 @@ export const api = {
   debugLabelKeys: () => get<string[]>('/debug/label-keys'),
   debugTraceByLabel: (key: string, value: string) =>
     get<TraceEvent[]>(`/debug/trace-by-label${qs({ key, value })}`),
+  // The same two reads on another worker of the cluster (v1.23 fan-out);
+  // base '' is the page's own worker. Own files only: the sealed history
+  // is read once, on the page's own worker, with debugTrace(..., true).
+  debugTraceAt: (base: string, partition: number, offset: number, signal?: AbortSignal) =>
+    getFrom<TraceEvent[]>(base, `/debug/trace${qs({ partition, offset })}`, signal),
+  debugTraceByLabelAt: (base: string, key: string, value: string, signal?: AbortSignal) =>
+    getFrom<TraceEvent[]>(base, `/debug/trace-by-label${qs({ key, value })}`, signal),
 
   // Debug: message probe
   debugProbe: (req: ProbeRequest) => post<DebugReport>('/debug/probe', req),
@@ -223,6 +251,18 @@ export const api = {
     const body = await get<DatabasesResponse | unknown[]>('/debug/databases')
     return Array.isArray(body) ? null : body
   },
+  // The databases answer of another worker of the cluster (v1.23 fan-out);
+  // null for a pre-v1.23 array answer, as above.
+  debugDatabasesAt: async (
+    base: string,
+    signal?: AbortSignal,
+  ): Promise<DatabasesResponse | null> => {
+    const body = await getFrom<DatabasesResponse | unknown[]>(base, '/debug/databases', signal)
+    return Array.isArray(body) ? null : body
+  },
+  // A snapshot of a worker's live recorder file (v1.23): a plain <a>
+  // navigation, so the token rides as ?token=.
+  debugDownloadLiveUrl: (base: string) => withAuthToken(`${base}${API_BASE}/debug/download-live`),
   // paths are relative to shared.dir: history/<cluster>/<name>.db or merged/<name>.db.
   debugMerge: (paths: string[]) => post<MergeResult>('/debug/merge', { filenames: paths }),
   // Each segment is encoded; the / separators stay (the route takes a path).

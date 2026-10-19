@@ -77,9 +77,15 @@ downloads can't set headers, so the token rides as `?token=` there
 - **Cluster view** (Executors tab, `c` key, not persisted): stacks a
   timeline per same-cluster worker under ONE toolbar (`SharedTimelineControls`
   in `src/lib/cluster.ts`). Peers are fed by direct cross-origin WebSockets
-  only — their REST API is unreachable from the browser (no CORS headers on
-  backends), so peer strips have no history backfill and no resync
-  (`src/components/live/PeerTimeline.svelte`).
+  (`src/components/live/PeerTimeline.svelte`); peer strips have no history
+  backfill and no resync.
+- **Cluster fan-out reads** (contract v1.23): the Trace and Databases tabs
+  read `/debug/trace`, `/debug/trace-by-label` and `/debug/databases` from
+  every same-cluster worker that is not offline (`src/lib/fanout.ts`; one
+  timeout per worker; workers that do not answer are listed, never fatal).
+  Only these three paths answer CORS on the backends, with the `/ws` origin
+  rule. The sealed history and merges stay on the page's own worker. Trace
+  rows are keyed by (worker, id, event, ts): row ids repeat across files.
 - **The bundle knows its version**: `__APP_VERSION__` is injected via Vite
   `define` from `DRAKKAR_UI_VERSION` (set by `build.sh bundle` and
   release.yml) and shown in the header — operators can always tell which
@@ -160,6 +166,8 @@ build.sh, justfile        dockerized toolchain + release recipes
   one-line ignore change + one `bun run format`. eslint (eslint-plugin-svelte)
   still lints all .svelte sources.
 - The SPA is served same-origin by backends; `API_BASE` is a relative
-  `/api/v1` on purpose. Don't introduce absolute backend URLs.
+  `/api/v1` on purpose. Don't introduce absolute backend URLs, except a
+  peer's own origin from the workers list in the cluster fan-out
+  (`api.debugTraceAt` and friends).
 - Bundle assets use absolute `/assets/...` URLs so deep routes load them;
   backends must (and do) serve the SPA from the site root.

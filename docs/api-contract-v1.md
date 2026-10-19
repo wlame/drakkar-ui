@@ -33,6 +33,8 @@ the appendix.
   (dev-trust default). Failure → `401 {"detail":"Invalid or missing auth
   token"}`. `/healthz` + `/readyz` are always public. `/ws` self-manages
   (accept, then close `4401` unauthorized / `4403` forbidden-origin).
+  Routes under `/api/v1/peer/` are always public too: workers call them on
+  each other for the cache exchange and send no token (v1.23).
 - **`/ws` Origin:** checked on every handshake, with or without a token. An
   absent `Origin` (non-browser clients) and a same-origin one always pass;
   a non-empty `ui.allowed_ws_origins` is a strict allowlist. With a token
@@ -41,10 +43,26 @@ the appendix.
   **unless** the request `Host` is a loopback address and the `Origin` host
   is not, which no peer worker ever is. A client must treat `4403` as
   terminal and not reconnect.
+- **Cross-origin reads (CORS, v1.23):** the browser fans three reads out to
+  every worker of the cluster: `GET /api/v1/debug/trace`,
+  `/api/v1/debug/trace-by-label` and `/api/v1/debug/databases`. These paths
+  answer cross-origin requests with the same origin rule as `/ws` (same
+  table, same `ui.allowed_ws_origins` key). An `OPTIONS` preflight on them
+  needs no token. Allowed: `204` with `Access-Control-Allow-Origin:
+  <origin>`, `Access-Control-Allow-Methods: GET`,
+  `Access-Control-Allow-Headers: Authorization`,
+  `Access-Control-Max-Age: 600` and `Vary: Origin`. Refused: `403
+  {"error":"Origin not allowed"}`. A `GET` from an allowed cross origin
+  carries `Access-Control-Allow-Origin: <origin>` and `Vary: Origin`; a
+  `GET` from a refused origin carries no CORS header (the browser then
+  blocks the answer), and auth applies as usual. No other path sends CORS
+  headers. With a token set, every worker origin must be listed in
+  `ui.allowed_ws_origins` for the fan-out to work.
 - **Content-Type:** `application/json` (no charset suffix).
 - **Error envelopes:** `{"detail":"..."}` for 401/404/500/503;
   `{"detail":[{"loc":[...],"msg":"..."}]}` for 422; legacy `{"error":"..."}`
-  for merge/download 400/404. The 422 shape is pinned **minimal** (`loc`+`msg`);
+  for merge/download 400/404, merge 500, `download-live` 404/500, the
+  `/api/v1/peer/` routes and the CORS preflight 403. The 422 shape is pinned **minimal** (`loc`+`msg`);
   the UI relies only on the HTTP status and `detail[].msg`, never on
   framework-specific extras (`type`/`input`/`ctx`/`url`).
 - **Numbers:** whole-valued floats may render `100` or `100.0` depending on the
@@ -215,6 +233,12 @@ the appendix.
   `Content-Disposition: attachment; filename="..."`, `Cache-Control:
   no-store, private`. `path` relative to `shared.dir` (v1.23). Token may
   ride as `?token=` (plain `<a>` downloads cannot set headers).
+- `GET /api/v1/debug/download-live` → a consistent snapshot of the serving
+  worker's live recorder file (SQLite backup API), as an attachment with
+  the live file's name, `Content-Type: application/x-sqlite3`,
+  `Cache-Control: no-store, private`. 404 `{"error":...}` in memory-only
+  mode or when no live file is open; 500 `{"error": "Snapshot failed:
+  <reason>"}` when the copy fails. Token may ride as `?token=` (v1.23).
 - `GET /api/v1/debug/archives` → `{archives:[{name, cluster, folder, path,
   from_ts, to_ts, size_bytes}]}`, newest-first by `to_ts`, from every
   `history/<cluster>/` folder. See v1.8 and v1.23 below.
@@ -274,6 +298,12 @@ the appendix.
   500 read-fail.
 - `GET /api/v1/debug/cache/stats` → `{entries_in_memory, bytes_in_memory,
   entries_in_db, bytes_in_db}`.
+
+### Peer API (worker to worker; public, v1.23)
+- `GET /api/v1/peer/cache/changes?scopes=&after_ms=&after_key=&limit=` →
+  `{rows:[PeerCacheRow], more:bool}`. Workers pull each other's cache rows
+  with it; the UI never calls it. See "Cache exchange over HTTP" under
+  v1.23 below for the parameters, the rule and the error answers.
 
 ## Probe `DebugReport`
 
@@ -1643,6 +1673,66 @@ are relative to `shared.dir` and use `/` separators.
 Absence (normative): pre-v1.23 backends answer `/debug/databases` with an
 array. Clients MUST detect the array and show that the databases view is
 not available on that worker, rather than rendering it with the new layout.
+
+### Cache exchange over HTTP
+
+Workers exchange `cluster` and `global` cache rows over HTTP instead of
+reading each other's cache files. The cache file is now private to its
+worker.
+
+**`GET /api/v1/peer/cache/changes`** — public (no token), JSON.
+
+| Parameter | Rule |
+|---|---|
+| `scopes` | `cluster`, `global` or `cluster,global`. Required. |
+| `after_ms`, `after_key` | The cursor: both or neither. Absent = from the start. `after_ms` is an integer. |
+| `limit` | Integer from 1 to 1000. Default 500. |
+
+A repeated parameter: the last value wins. The checks run in the order of
+the table, before the 404 check below, and the first failure answers
+**400** `{"error": <message>}`:
+
+| Failure | `error` |
+|---|---|
+| `scopes` missing, empty, unknown, or with an empty item | `scopes must be cluster, global or both` |
+| only one of `after_ms`, `after_key` | `after_ms and after_key must be given together` |
+| `after_ms` not an integer | `after_ms must be an integer` |
+| `limit` not an integer, or outside 1..1000 | `limit must be an integer from 1 to 1000` |
+
+**200** `{"rows": [PeerCacheRow], "more": bool}`. `PeerCacheRow` is
+`{key, scope, value, size_bytes, created_at_ms, updated_at_ms,
+expires_at_ms: int|null, origin_worker_id}` — `value` is the stored JSON
+text, unparsed. Rule (normative): only rows whose `origin_worker_id` is the
+serving worker's own name, whose `scope` is in `scopes`, and that are not
+expired on the serving worker's clock, with `(updated_at_ms, key)` greater
+than `(after_ms, after_key)`, ordered by `(updated_at_ms, key)`, at most
+`limit` rows. `more` is true when more such rows exist. The `local` scope
+is never served, and no worker relays another worker's rows.
+
+**404** `{"error": "The cache exchange is off on this worker"}` when the
+cache or `fleet.cache_exchange` is off or the cache engine has stopped.
+**503** `{"error": "The cache did not answer in time"}` when the read does
+not finish within 5 seconds or fails.
+
+The worker card's `features.cache` tells peers whether a pull is worth
+making: per scope, `{"ms": <updated_at_ms>, "key": <key>}` of the newest
+row this worker originated, the key cut to its first 128 characters so the
+card stays under its 4096-byte limit (a scope with no rows is absent). It is
+absent when the cache or the exchange is off. A card with no `features`
+object at all (the `static` registry provider) is pulled every cycle.
+
+**`GET /api/v1/debug/download-live`** — see "Debug tools". The UI shows a
+download button on the `live` row of each worker's own files.
+
+**Cross-origin reads** — see "Conventions". The UI fans `trace`,
+`trace-by-label` and `databases` out to every same-cluster worker that is
+not offline, and shows the workers that did not answer.
+
+Absence (normative): a pre-v1.23 worker answers the fan-out reads without
+CORS headers, so the browser reports a network error for it; clients MUST
+list such a worker as unreachable and keep the other workers' rows. A
+worker without a `live` row in its own files (memory-only mode) gets no
+download button.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 

@@ -169,7 +169,7 @@ describe('DatabasesTab (v1.23)', () => {
     localStorage.clear()
   })
 
-  it('lists the own files with their kind, without download or merge controls', async () => {
+  it('lists the own files with their kind; only the live file downloads, as a snapshot', async () => {
     vi.stubGlobal('fetch', stubFetch())
     const { target, cleanup } = renderMounted()
     await settled()
@@ -177,9 +177,11 @@ describe('DatabasesTab (v1.23)', () => {
     const live = row(target, 'w-1-2026-10-14__09_00_00.db')
     expect(live.textContent).toContain('live')
     expect(live.textContent).toContain('12')
-    expect(live.querySelector('a')).toBeNull()
+    expect(live.querySelector('a')?.getAttribute('href')).toBe('/api/v1/debug/download-live')
     expect(live.querySelector('input[type=checkbox]')).toBeNull()
-    expect(row(target, 'w-1-2026-10-14__08_00_00.db').textContent).toContain('backlog')
+    const backlog = row(target, 'w-1-2026-10-14__08_00_00.db')
+    expect(backlog.textContent).toContain('backlog')
+    expect(backlog.querySelector('a')).toBeNull()
     cleanup()
   })
 
@@ -279,6 +281,28 @@ describe('DatabasesTab (v1.23)', () => {
     cleanup()
   })
 
+  it('merges only the selected files the worker filter shows', async () => {
+    vi.stubGlobal('fetch', stubFetch())
+    const { target, cleanup } = renderMounted()
+    await settled()
+    for (const name of ['w-1-2026-10-14__07_00_00.db', 'w-2-2026-10-14__07_00_00.db']) {
+      row(target, name).querySelector<HTMLInputElement>('input[type=checkbox]')!.click()
+    }
+    flushSync()
+
+    const select = target.querySelector<HTMLSelectElement>('select')!
+    select.value = 'w-2'
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+    await settled()
+
+    const mergeButton = [...target.querySelectorAll('button')].find((b) =>
+      b.textContent?.startsWith('Merge'),
+    )!
+    expect(mergeButton.textContent).toBe('Merge')
+    expect(mergeButton.disabled).toBe(true)
+    cleanup()
+  })
+
   it('says the view is not available on a backend that answers the old array', async () => {
     vi.stubGlobal('fetch', stubFetch([{ filename: 'w.db' }]))
     const { target, cleanup } = renderMounted()
@@ -286,6 +310,152 @@ describe('DatabasesTab (v1.23)', () => {
 
     expect(target.textContent).toContain('not available on this worker')
     expect(target.querySelectorAll('tbody tr')).toHaveLength(0)
+    cleanup()
+  })
+})
+
+// The cluster fan-out (v1.23 part 3): the own files of every same-cluster
+// worker, each from that worker; the history from this worker only.
+const peerOwn: DatabasesResponse = {
+  own: [
+    {
+      filename: 'w-2-2026-10-14__09_00_00.db',
+      worker_name: 'w-2',
+      cluster_name: 'search',
+      kind: 'live',
+      event_count: 5,
+      event_counts: { consumed: 5 },
+      first_event_ts: 1760432400,
+      last_event_ts: 1760432460,
+      size_bytes: 4096,
+    },
+  ],
+  history: { folders: [] },
+}
+
+const clusterWorkers = [
+  {
+    worker_name: 'w-1',
+    cluster: 'search',
+    url: 'http://w-1:8080/',
+    is_current: true,
+    online: true,
+  },
+  {
+    worker_name: 'w-2',
+    cluster: 'search',
+    url: 'http://w-2:8080/',
+    is_current: false,
+    online: true,
+  },
+  {
+    worker_name: 'w-3',
+    cluster: 'search',
+    url: 'http://w-3:8080/',
+    is_current: false,
+    online: true,
+  },
+]
+
+function stubClusterFetch() {
+  const urls: string[] = []
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input)
+    urls.push(url)
+    if (url.endsWith('/api/v1/workers'))
+      return new Response(JSON.stringify(clusterWorkers), { status: 200 })
+    if (url.startsWith('http://w-3:8080/')) return new Response('{"error":"gone"}', { status: 404 })
+    if (url.startsWith('http://w-2:8080/') && url.includes('/debug/databases')) {
+      return new Response(JSON.stringify(peerOwn), { status: 200 })
+    }
+    if (url.includes('/debug/databases')) return new Response(JSON.stringify(body), { status: 200 })
+    return new Response('[]', { status: 200 })
+  })
+  return { fetchMock, urls }
+}
+
+describe('DatabasesTab cluster fan-out (v1.23)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('shows the own files of every same-cluster worker, each with its live snapshot link', async () => {
+    const { fetchMock, urls } = stubClusterFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(urls.filter((u) => u.includes('/debug/databases')).sort()).toEqual([
+      '/api/v1/debug/databases',
+      'http://w-2:8080/api/v1/debug/databases',
+      'http://w-3:8080/api/v1/debug/databases',
+    ])
+    const headings = [...target.querySelectorAll('h2')].map((h) => h.textContent?.trim())
+    expect(headings).toEqual(['Own files of w-1 (2)', 'Own files of w-2 (1)', 'History'])
+    expect(
+      row(target, 'w-2-2026-10-14__09_00_00.db').querySelector('a')?.getAttribute('href'),
+    ).toBe('http://w-2:8080/api/v1/debug/download-live')
+    expect(target.querySelector('.unreachable')?.textContent).toContain(
+      'w-3 (not available on this worker)',
+    )
+    // The history comes from this worker alone.
+    expect(folderButton(target, 'search').textContent).toContain('4')
+    cleanup()
+  })
+})
+
+describe('DatabasesTab with workers behind one address', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('renders a section per worker even when two workers share one URL', async () => {
+    const shared = [
+      {
+        worker_name: 'w-1',
+        cluster: 'search',
+        url: 'http://w-1:8080/',
+        is_current: true,
+        online: true,
+      },
+      {
+        worker_name: 'w-2',
+        cluster: 'search',
+        url: 'http://lb:8080/',
+        is_current: false,
+        online: true,
+      },
+      {
+        worker_name: 'w-3',
+        cluster: 'search',
+        url: 'http://lb:8080/',
+        is_current: false,
+        online: true,
+      },
+    ]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        if (url.endsWith('/api/v1/workers'))
+          return new Response(JSON.stringify(shared), { status: 200 })
+        if (url.startsWith('http://lb:8080/'))
+          return new Response(JSON.stringify(peerOwn), { status: 200 })
+        if (url.includes('/debug/databases'))
+          return new Response(JSON.stringify(body), { status: 200 })
+        return new Response('[]', { status: 200 })
+      }),
+    )
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    const headings = [...target.querySelectorAll('h2')].map((h) => h.textContent?.trim())
+    expect(headings).toEqual([
+      'Own files of w-1 (2)',
+      'Own files of w-2 (1)',
+      'Own files of w-3 (1)',
+      'History',
+    ])
     cleanup()
   })
 })
