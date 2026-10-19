@@ -593,14 +593,16 @@ export interface PeriodicTask {
 
 // --- Debug: databases (v1.23: own files + sealed history) ---
 
-// One of the serving worker's own recorder files in storage.dir: the live
-// file, or a file closed but not sealed into the history folder yet.
-// Statistics are measured on request; timestamps are epoch seconds.
+// One of the serving worker's own recorder stores: the live file, a file
+// closed but not sealed into the history folder yet, or (v1.25) the memory
+// store, which is not a file. Statistics are measured on request; timestamps
+// are epoch seconds. For the memory row, size_bytes is the data in use, not
+// the RAM the store holds.
 export interface OwnDb {
   filename: string
   worker_name: string
   cluster_name: string | null
-  kind: 'live' | 'backlog' | string
+  kind: 'memory' | 'live' | 'backlog' | string
   event_count: number
   event_counts: Record<string, number>
   first_event_ts: number | null

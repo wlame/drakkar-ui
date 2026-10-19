@@ -1640,7 +1640,9 @@ are relative to `shared.dir` and use `/` separators.
   `null` — `size_bytes`, `tables`, `event_types`) and `null` for archives,
   merge results and a sealed file whose meta file is missing or unreadable.
   A meta file without its database is not listed. Files are sorted by name.
-  Memory-only workers answer `{"own": [], "history": {"folders": []}}`.
+  A worker with neither a memory store nor a recorder file answers
+  `own: []`; its `history.folders` follow the shared-folder rule: they are
+  listed whenever a shared folder resolves, in every recorder mode (v1.25).
 
 - **`GET /api/v1/debug/download/{path}`** — `path` is
   `history/<cluster>/<name>.db`, `history/<cluster>/<archive>.db.gz` or
@@ -1776,6 +1778,76 @@ that task was a cluster-scope slot run, else `"worker"`. A backend older than
 v1.24 omits it; clients MUST then treat the group as `"worker"`. The group
 `system` flag is unchanged: the history archive pass is a system task with
 scope `"cluster"`.
+
+## v1.25 changes (2026-11-01)
+
+The recorder keeps recent events in a memory store, with or without a
+recorder file. Two shapes change; nothing else in `/api/v1` does.
+
+### `GET /api/v1/debug/databases`: the memory row
+
+`own[].kind` gains **`"memory"`** (the other values are `"live"` and
+`"backlog"`). A worker with an open memory store answers one memory row,
+first in `own`, before the `live` and `backlog` rows:
+
+```json
+{"filename": "w-1-memory", "worker_name": "w-1", "cluster_name": "search",
+ "kind": "memory", "event_count": 40, "event_counts": {"task_started": 20},
+ "first_event_ts": 1760432400.0, "last_event_ts": 1760432460.0,
+ "size_bytes": 65536}
+```
+
+- `size_bytes` is the data in use, `(page_count - freelist_count) *
+  page_size`. It is not the RAM that the store holds.
+- `event_count` comes from the id range, `first_event_ts` and
+  `last_event_ts` from the smallest and largest `ts`. `event_counts` is one
+  count per event type. If the count does not finish within 2 seconds, the
+  row answers `event_counts: {}`.
+- `cluster_name` is the cluster stored with the memory events, else the
+  worker's own cluster.
+- The memory row is not a file. `filename` is a label only, and
+  `GET /api/v1/debug/download/{path}` does not serve it. Use
+  `download-live` with `source=memory`.
+- A worker that keeps no memory store (`store_events: false`) has no memory
+  row; its file rows are as before.
+- `history.folders` is listed whenever a shared folder resolves, in every
+  recorder mode.
+
+### `GET /api/v1/debug/download-live`: the `source` parameter
+
+New optional query parameter **`source`**: `memory` or `file`. When absent,
+the default is `file` if a live recorder file is open, else `memory`.
+
+| Case | Answer |
+|---|---|
+| `source=file`, no live file | 404 `{"error": "No live recorder file on this worker"}` |
+| `source=memory`, no open memory store | 404 `{"error": "No memory store on this worker"}` |
+| any other value | 400 `{"error": "source must be memory or file"}` |
+| the copy failed | 500 `{"error": "Snapshot failed: <reason>"}` |
+
+The memory snapshot is one consistent SQLite database with the recorder
+tables. It is an attachment named
+`<worker>-memory-<YYYY-MM-DD__HH_MM_SS>.db` (UTC time of the snapshot). The
+`Content-Type` and `Cache-Control: no-store` are the same as for the file
+snapshot. A copy that does not finish within 30 seconds fails with 500.
+
+### Event row `id`
+
+The `id` of an event row is unique and increasing within one worker process.
+It continues across recorder file rotations and starts again at 1 after a
+restart. (Before v1.25 each file started at 1, so a poll with `after_id`
+could see nothing after a rotation until the new ids passed the old ones.)
+The bundled UI polls with `after_id: 0`; the note serves other clients.
+
+### Absence (normative)
+
+- A backend older than v1.25 sends no memory row. Clients MUST then show
+  none. A client sends `source=file` only from the `live` row; an older
+  backend ignores the parameter and serves the live file, which is the right
+  answer.
+- A client older than v1.25 on a newer backend shows the memory row without
+  a download button and with the title of a `backlog` row. This is wrong but
+  harmless; its `live` button calls without `source` and gets the live file.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 

@@ -177,11 +177,52 @@ describe('DatabasesTab (v1.23)', () => {
     const live = row(target, 'w-1-2026-10-14__09_00_00.db')
     expect(live.textContent).toContain('live')
     expect(live.textContent).toContain('12')
-    expect(live.querySelector('a')?.getAttribute('href')).toBe('/api/v1/debug/download-live')
+    expect(live.querySelector('a')?.getAttribute('href')).toBe(
+      '/api/v1/debug/download-live?source=file',
+    )
     expect(live.querySelector('input[type=checkbox]')).toBeNull()
     const backlog = row(target, 'w-1-2026-10-14__08_00_00.db')
     expect(backlog.textContent).toContain('backlog')
     expect(backlog.querySelector('a')).toBeNull()
+    cleanup()
+  })
+
+  it('draws the memory row first with its title and a memory download link', async () => {
+    const memory = {
+      filename: 'w-1-memory',
+      worker_name: 'w-1',
+      cluster_name: 'search',
+      kind: 'memory',
+      event_count: 40,
+      event_counts: { task_started: 20, task_completed: 20 },
+      first_event_ts: 1760432400,
+      last_event_ts: 1760432460,
+      size_bytes: 65536,
+    }
+    vi.stubGlobal('fetch', stubFetch({ ...body, own: [memory, ...body.own] }))
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    const rows = [...target.querySelectorAll<HTMLTableRowElement>('tbody tr')]
+    expect(rows[0].textContent).toContain('w-1-memory')
+    const chip = rows[0].querySelector('.chip.kind')
+    expect(chip?.textContent).toBe('memory')
+    expect(chip?.getAttribute('title')).toBe('Recent events in memory; not a file')
+    expect(rows[0].querySelector('a')?.getAttribute('href')).toBe(
+      '/api/v1/debug/download-live?source=memory',
+    )
+    cleanup()
+  })
+
+  it('draws an answer without a memory row exactly as before', async () => {
+    vi.stubGlobal('fetch', stubFetch())
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(target.textContent).not.toContain('memory')
+    const ownTable = target.querySelector('table')!
+    const chips = [...ownTable.querySelectorAll('.chip.kind')].map((c) => c.textContent)
+    expect(chips).toEqual(['live', 'backlog'])
     cleanup()
   })
 
@@ -394,7 +435,7 @@ describe('DatabasesTab cluster fan-out (v1.23)', () => {
     expect(headings).toEqual(['Own files of w-1 (2)', 'Own files of w-2 (1)', 'History'])
     expect(
       row(target, 'w-2-2026-10-14__09_00_00.db').querySelector('a')?.getAttribute('href'),
-    ).toBe('http://w-2:8080/api/v1/debug/download-live')
+    ).toBe('http://w-2:8080/api/v1/debug/download-live?source=file')
     expect(target.querySelector('.unreachable')?.textContent).toContain(
       'w-3 (not available on this worker)',
     )

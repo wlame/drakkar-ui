@@ -164,6 +164,17 @@ describe('downloadUrl', () => {
     expect(downloadUrl('/debug/download/w1.db')).toBe('/api/v1/debug/download/w1.db?token=t%26k')
   })
 
+  it('builds the download-live url with the source and appends the token with &', () => {
+    expect(api.debugDownloadLiveUrl('', 'file')).toBe('/api/v1/debug/download-live?source=file')
+    localStorage.setItem('drakkar_token', 't')
+    expect(api.debugDownloadLiveUrl('', 'memory')).toBe(
+      '/api/v1/debug/download-live?source=memory&token=t',
+    )
+    expect(api.debugDownloadLiveUrl('http://w-2:8080', 'file')).toBe(
+      'http://w-2:8080/api/v1/debug/download-live?source=file&token=t',
+    )
+  })
+
   it('encodes filenames in the debug download helper', () => {
     expect(api.debugDownloadUrl('a b.db')).toBe('/api/v1/debug/download/a%20b.db')
   })

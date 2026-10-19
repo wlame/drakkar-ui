@@ -120,6 +120,13 @@
     const types = f.meta?.event_types
     return types ? Object.values(types).reduce((sum, n) => sum + n, 0) : null
   }
+  const KIND_TITLES: Record<string, string> = {
+    memory: 'Recent events in memory; not a file',
+    live: 'Being written now',
+  }
+  function kindTitle(kind: string): string {
+    return KIND_TITLES[kind] ?? 'Closed; waiting to be sealed into the history folder'
+  }
   function eventTypesTitle(types: Record<string, number> | undefined): string {
     return Object.entries(types ?? {})
       .map(([k, v]) => `${k}: ${v}`)
@@ -222,7 +229,7 @@
                 {d.filename}
                 <span
                   class="chip kind"
-                  title={d.kind === 'live' ? 'Being written now' : 'Closed; waiting to be sealed into the history folder'}
+                  title={kindTitle(d.kind)}
                   >{d.kind}</span
                 >
               </td>
@@ -232,7 +239,9 @@
               <td class="num mono">{fmtBytes(d.size_bytes)}</td>
               <td>
                 {#if d.kind === 'live'}
-                  <a href={api.debugDownloadLiveUrl(section.base)} title="Download a snapshot of the live file">↓</a>
+                  <a href={api.debugDownloadLiveUrl(section.base, 'file')} title="Download a snapshot of the live file">↓</a>
+                {:else if d.kind === 'memory'}
+                  <a href={api.debugDownloadLiveUrl(section.base, 'memory')} title="Download a snapshot of the memory store">↓</a>
                 {/if}
               </td>
             </tr>

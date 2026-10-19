@@ -260,9 +260,10 @@ export const api = {
     const body = await getFrom<DatabasesResponse | unknown[]>(base, '/debug/databases', signal)
     return Array.isArray(body) ? null : body
   },
-  // A snapshot of a worker's live recorder file (v1.23): a plain <a>
-  // navigation, so the token rides as ?token=.
-  debugDownloadLiveUrl: (base: string) => withAuthToken(`${base}${API_BASE}/debug/download-live`),
+  // A snapshot of a worker's live recorder file (v1.23) or, since v1.25, of its
+  // memory store: a plain <a> navigation, so the token rides as ?token=.
+  debugDownloadLiveUrl: (base: string, source: 'memory' | 'file'): string =>
+    withAuthToken(`${base}${API_BASE}/debug/download-live?source=${source}`),
   // paths are relative to shared.dir: history/<cluster>/<name>.db or merged/<name>.db.
   debugMerge: (paths: string[]) => post<MergeResult>('/debug/merge', { filenames: paths }),
   // Each segment is encoded; the / separators stay (the route takes a path).
