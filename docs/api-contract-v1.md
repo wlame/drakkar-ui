@@ -202,26 +202,25 @@ the appendix.
   empty → `{}`. Missing `partition` → 422.
 
 ### Debug tools
-- `GET /api/v1/debug/databases` → array of `{filename, path, worker_name,
-  cluster_name, event_count, event_counts:{<type>:int}, first_event_ts:float|null,
-  last_event_ts:float|null, has_events, has_config, has_state, size_bytes}`.
-- `POST /api/v1/debug/merge` body `{filenames:[str] (≥2)}` → `{filename,
-  worker_count, event_count, state_count, cluster_name, source_files:[str]}`.
-  400 on malformed JSON body; filename hardening rejects `/ \` leading-`.` `"`
-  `;` and control chars; 404 for missing files; 500 when the merge itself
-  fails (v1.23); errors via `{"error":...}`.
-- `GET /api/v1/debug/download/{filename}` → file attachment; `Content-Type:
-  application/x-sqlite3`, `Content-Disposition: attachment; filename="..."`,
-  `Cache-Control: no-store, private`. Filename hardening as merge. Token may
+- `GET /api/v1/debug/databases` → `{own:[...], history:{folders:[...]}}`
+  (v1.23; see "Sealed history" below).
+- `POST /api/v1/debug/merge` body `{filenames:[path] (≥2)}` → `{filename,
+  path, worker_count, event_count, state_count, cluster_name,
+  source_files:[str]}`. Paths are relative to `shared.dir` (v1.23). 400 on
+  malformed JSON body; segment hardening rejects `/ \` leading-`.` `"` `;`
+  and control chars; 404 for missing files; 500 when the merge itself
+  fails; errors via `{"error":...}`.
+- `GET /api/v1/debug/download/{path}` → file attachment; `Content-Type:
+  application/x-sqlite3` (`.db`) or `application/gzip` (`.db.gz`),
+  `Content-Disposition: attachment; filename="..."`, `Cache-Control:
+  no-store, private`. `path` relative to `shared.dir` (v1.23). Token may
   ride as `?token=` (plain `<a>` downloads cannot set headers).
-- `GET /api/v1/debug/archives` → `{archives:[{name, cluster, from_ts, to_ts,
-  size_bytes}]}`, newest-first by `to_ts`. See v1.8 below.
-- `GET /api/v1/debug/archives/{name}` → gzip file attachment; `Content-Type:
-  application/gzip`, `Cache-Control: no-store, private`. 404 for a name that
-  fails the archive naming pattern or does not exist. Token may ride as
-  `?token=`, same as `/debug/download`.
-- `GET /api/v1/debug/trace?partition=&offset=` (both required int) → array of
-  event rows. `partition` must fit int32 → 422 otherwise.
+- `GET /api/v1/debug/archives` → `{archives:[{name, cluster, folder, path,
+  from_ts, to_ts, size_bytes}]}`, newest-first by `to_ts`, from every
+  `history/<cluster>/` folder. See v1.8 and v1.23 below.
+- `GET /api/v1/debug/trace?partition=&offset=[&history=1]` (partition and
+  offset required int) → array of event rows. `partition` must fit int32 →
+  422 otherwise. `history=1` searches sealed history only (v1.23).
 - `GET /api/v1/debug/label-keys` → sorted array of distinct label-key strings.
 - `GET /api/v1/debug/trace-by-label?key=&value=` (both required, non-empty →
   422) → array of event rows.
@@ -889,7 +888,7 @@ the raw-databases list above it is unaffected.
   bounds always land on a multiple of the configured window width, so
   seconds carry no information. `name` is opaque to the UI: it is passed
   straight through to the download endpoint and never parsed client-side.
-- `GET /api/v1/debug/archives/{name}` → the archive file as an attachment:
+- `GET /api/v1/debug/archives/{name}` (removed in v1.23; archives download through `/debug/download/{path}`) → the archive file as an attachment:
   `Content-Type: application/gzip`, `Content-Disposition: attachment;
   filename="..."`, `Cache-Control: no-store, private`. `name` must match
   the naming grammar above and resolve inside the backend's `db_dir`; a
@@ -1575,6 +1574,75 @@ render a row without the new fields exactly as before, and MUST NOT require
 output cannot be written). It uses the legacy `{"error"}` envelope of the
 merge route's 400 and 404 answers, not the `{"detail"}` envelope of the
 Conventions section. A failed merge leaves no output file.
+
+### Sealed history: databases, downloads, merge, archives, trace
+
+A worker now writes its recorder file only while it is live. At rotation
+and at a clean stop it **seals** the file (rollback journal, closed) and
+moves it into `<shared.dir>/history/<cluster>/`, with a meta file
+`<name>.db.meta.json` beside it. Merge results go to `<shared.dir>/merged/`.
+The debug routes below read those folders. Paths in requests and answers
+are relative to `shared.dir` and use `/` separators.
+
+- **`GET /api/v1/debug/databases`** → an object, no longer an array:
+
+  ```
+  {"own": [OwnDb], "history": {"folders": [HistoryFolder]}}
+  ```
+
+  `OwnDb` is one of the serving worker's own files in `storage.dir`: the
+  live file (`kind: "live"`) and files closed but not sealed yet
+  (`kind: "backlog"`), with statistics measured on request:
+  `{filename, worker_name, cluster_name: str|null, kind, event_count,
+  event_counts: {<type>: int}, first_event_ts: float|null,
+  last_event_ts: float|null, size_bytes}` (timestamps in epoch seconds, as
+  before). Own files are not downloadable through `/debug/download`.
+
+  `HistoryFolder` is `{folder, kind: "history"|"merged", cluster: str|null,
+  files: [HistoryFile]}` — one per `history/<cluster>` folder (sorted by
+  cluster), then `merged`. `HistoryFile` is `{path, name, kind:
+  "sealed"|"archive"|"merged", size_bytes, modified_at, meta}`:
+  `modified_at` is RFC 3339 micro; `meta` is the meta file object for a
+  sealed file (keys `schema`, `worker`, `instance`, `cluster`,
+  `first_event_ts`, `last_event_ts`, `sealed_at` — RFC 3339 micro or
+  `null` — `size_bytes`, `tables`, `event_types`) and `null` for archives,
+  merge results and a sealed file whose meta file is missing or unreadable.
+  A meta file without its database is not listed. Files are sorted by name.
+  Memory-only workers answer `{"own": [], "history": {"folders": []}}`.
+
+- **`GET /api/v1/debug/download/{path}`** — `path` is
+  `history/<cluster>/<name>.db`, `history/<cluster>/<archive>.db.gz` or
+  `merged/<name>.db`. Every segment follows the old filename hardening (no
+  `/ \`, no leading `.`, no `"` `;` or control characters); the resolved
+  file must stay inside `shared.dir`. `Content-Type` is
+  `application/x-sqlite3` for `.db` and `application/gzip` for `.db.gz`.
+  404 for any other path or a missing file. Token may ride as `?token=`.
+
+- **`POST /api/v1/debug/merge`** — `filenames` holds paths as above, `.db`
+  only (sealed files and merge results; at least 2). The output is written
+  to `merged/merged-<YYYY-MM-DD__HH_MM_SS>-<token>.db` (temp file plus
+  rename). The answer gains `path` (the output's path, for
+  `/debug/download`); `filename` is its name. Errors as before (400, 404,
+  500 with `{"error"}`).
+
+- **`GET /api/v1/debug/archives`** → archives of **every**
+  `history/<cluster>/` folder; each entry gains `folder`
+  (`history/<cluster>`) and `path`.
+  **`GET /api/v1/debug/archives/{name}` is removed**: archives download
+  through `/debug/download/{path}`.
+
+- **`GET /api/v1/debug/trace`** — without `history`, it searches the serving
+  worker's own live file and own unsealed files only. With **`history=1`**
+  it searches **only** the sealed files of `history/<own cluster>/`, newest
+  first, within the backend's `ui.trace.history_max_files` /
+  `history_max_seconds` budget. Rows keep `worker_name`. A client that wants
+  both calls both and merges the rows.
+- **`GET /api/v1/debug/trace-by-label`** searches the serving worker's own
+  live file only.
+
+Absence (normative): pre-v1.23 backends answer `/debug/databases` with an
+array. Clients MUST detect the array and show that the databases view is
+not available on that worker, rather than rendering it with the new layout.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 

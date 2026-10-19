@@ -5,14 +5,13 @@
 // docs/api-contract-v1.md; the shapes live in ./types.
 
 import type {
-  ArchivesResponse,
   ArrangeTaskState,
   CacheEntriesResponse,
   CacheEntryDetail,
   CacheStats,
   ConfigReferenceResponse,
   Dashboard,
-  DbInfo,
+  DatabasesResponse,
   DebugReport,
   EventRow,
   Identity,
@@ -206,8 +205,10 @@ export const api = {
   // Debug: metrics / periodic / trace
   debugMetrics: () => get<MetricFamily[]>('/debug/metrics'),
   debugPeriodic: () => get<PeriodicTask[]>('/debug/periodic'),
-  debugTrace: (partition: number, offset: number) =>
-    get<TraceEvent[]>(`/debug/trace${qs({ partition, offset })}`),
+  // history=true searches only the sealed history of the serving worker's
+  // cluster (v1.23); without it, only that worker's own files.
+  debugTrace: (partition: number, offset: number, history = false) =>
+    get<TraceEvent[]>(`/debug/trace${qs({ partition, offset, history: history ? 1 : undefined })}`),
   debugLabelKeys: () => get<string[]>('/debug/label-keys'),
   debugTraceByLabel: (key: string, value: string) =>
     get<TraceEvent[]>(`/debug/trace-by-label${qs({ key, value })}`),
@@ -215,24 +216,18 @@ export const api = {
   // Debug: message probe
   debugProbe: (req: ProbeRequest) => post<DebugReport>('/debug/probe', req),
 
-  // Debug: databases
-  debugDatabases: () => get<DbInfo[]>('/debug/databases'),
-  debugMerge: (filenames: string[]) => post<MergeResult>('/debug/merge', { filenames }),
-  debugDownloadUrl: (filename: string) =>
-    downloadUrl(`/debug/download/${encodeURIComponent(filename)}`),
-
-  // Debug: archives (v1.8). 404 is a defined contract answer (a backend
-  // that predates archiving) — mapped to null, not an error, so the
-  // Archives section can hide itself rather than showing a banner (same
-  // idiom as runtimeHealth above).
-  debugArchives: async (): Promise<ArchivesResponse | null> => {
-    const res = await fetch(`${API_BASE}/debug/archives`, { headers: authHeaders() })
-    if (res.status === 404) return null
-    if (!res.ok) return fail('GET', '/debug/archives', res)
-    return (await res.json()) as ArchivesResponse
+  // Debug: databases (v1.23). A pre-v1.23 backend answers an array; that
+  // maps to null so the tab can say the view is not available there instead
+  // of rendering the old layout.
+  debugDatabases: async (): Promise<DatabasesResponse | null> => {
+    const body = await get<DatabasesResponse | unknown[]>('/debug/databases')
+    return Array.isArray(body) ? null : body
   },
-  debugArchiveDownloadUrl: (name: string) =>
-    downloadUrl(`/debug/archives/${encodeURIComponent(name)}`),
+  // paths are relative to shared.dir: history/<cluster>/<name>.db or merged/<name>.db.
+  debugMerge: (paths: string[]) => post<MergeResult>('/debug/merge', { filenames: paths }),
+  // Each segment is encoded; the / separators stay (the route takes a path).
+  debugDownloadUrl: (path: string) =>
+    downloadUrl(`/debug/download/${path.split('/').map(encodeURIComponent).join('/')}`),
 
   // Debug: consume pause (contract v1.14). Timed pause of the pipeline
   // consumer — never leaves the consumer group, auto-resumes at the

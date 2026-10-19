@@ -583,62 +583,70 @@ export interface PeriodicTask {
   recent: PeriodicRecent[]
 }
 
-// --- Debug: databases ---
+// --- Debug: databases (v1.23: own files + sealed history) ---
 
-export interface DbInfo {
+// One of the serving worker's own recorder files in storage.dir: the live
+// file, or a file closed but not sealed into the history folder yet.
+// Statistics are measured on request; timestamps are epoch seconds.
+export interface OwnDb {
   filename: string
-  path: string
   worker_name: string
-  cluster_name: string
+  cluster_name: string | null
+  kind: 'live' | 'backlog' | string
   event_count: number
   event_counts: Record<string, number>
   first_event_ts: number | null
   last_event_ts: number | null
-  has_events: boolean
-  has_config: boolean
-  has_state: boolean
   size_bytes: number
-  // v1.12 additions, optional → older backends stay compatible.
-  // kind: recorder event log / drakkar-merge output / handler cache /
-  // foreign schema. live_for: worker currently writing this file ('' if
-  // none) — the in-use highlight. stats_pending: file listed but its
-  // statistics not computed yet (cold cache); re-poll fills it in.
-  kind?: 'recorder' | 'merged' | 'cache' | 'unknown' | string
-  live_for?: string
-  stats_pending?: boolean
-  cache_entry_count?: number | null
+}
+
+// The meta file written next to a sealed recorder file (schema 1).
+// Timestamps are RFC 3339 micro strings, null when the file has no events.
+export interface HistoryMeta {
+  schema: number
+  worker: string
+  instance?: string
+  cluster: string
+  first_event_ts: string | null
+  last_event_ts: string | null
+  sealed_at: string
+  size_bytes: number
+  tables: Record<string, number>
+  event_types: Record<string, number>
+}
+
+// One file of a history/<cluster> or merged folder. path is relative to
+// shared.dir — the argument of /debug/download/{path} and /debug/merge.
+export interface HistoryFile {
+  path: string
+  name: string
+  kind: 'sealed' | 'archive' | 'merged' | string
+  size_bytes: number
+  modified_at: string
+  meta: HistoryMeta | null
+}
+
+export interface HistoryFolder {
+  folder: string
+  kind: 'history' | 'merged' | string
+  cluster: string | null
+  files: HistoryFile[]
+}
+
+export interface DatabasesResponse {
+  own: OwnDb[]
+  history: { folders: HistoryFolder[] }
 }
 
 export interface MergeResult {
   filename: string
+  // v1.23: the output's path relative to shared.dir (merged/...).
+  path?: string
   worker_count: number
   event_count: number
   state_count: number
   cluster_name: string
   source_files: string[]
-}
-
-// --- Debug: archives ---
-
-// One compressed recorder archive (GET /api/v1/debug/archives, v1.8): a
-// merged, gzip-compressed sqlite db that a periodic archive pass folded a
-// finished time window into and removed the raw files for. Parsed entirely
-// from the file name `<cluster>-<from>__<to>.db.gz` on the backend, so
-// from_ts/to_ts are epoch-seconds window bounds, not per-event timestamps.
-// Archives are terminal — never candidates for /debug/merge, so this type
-// deliberately has no filename-selection counterpart in the UI.
-export interface ArchiveEntry {
-  name: string
-  cluster: string
-  from_ts: number
-  to_ts: number
-  size_bytes: number
-}
-
-// GET /api/v1/debug/archives response envelope. archives is newest-first by
-// to_ts, already sorted server-side — the UI renders it as received.
-export interface ArchivesResponse {
-  archives: ArchiveEntry[]
 }
 
 // --- Debug: consume pause (contract v1.14) ---

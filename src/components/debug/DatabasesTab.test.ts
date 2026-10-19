@@ -1,70 +1,131 @@
-// Archives section of the Databases tab: a read-only listing of compressed
-// recorder archives (v1.8), rendered against a stubbed fetch. Covers
-// rendering, graceful absence (404 / empty list), the download href's
-// token + encoded-name shape, the lack of a merge checkbox on archive rows,
-// and that payload order is preserved rather than client re-sorted.
+// Databases tab (contract v1.23): this worker's own files and the shared
+// history folders, rendered against a stubbed fetch. Covers the own table,
+// one foldable block per history folder, meta-based statistics, downloads
+// and merge by path, the worker filter, and the "not available" answer for
+// a backend that predates v1.23.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushSync, mount, unmount } from 'svelte'
 import DatabasesTab from './DatabasesTab.svelte'
-import type { ArchiveEntry, DbInfo } from '../../lib/types'
+import type { DatabasesResponse, HistoryFile } from '../../lib/types'
 
-const oneDb: DbInfo = {
-  filename: 'workerA-2026-08-09__00_00_00.db',
-  path: '/var/db/workerA-2026-08-09__00_00_00.db',
-  worker_name: 'workerA',
-  cluster_name: 'clusterA',
-  event_count: 5,
-  event_counts: { task_completed: 5 },
-  first_event_ts: 1754697600,
-  last_event_ts: 1754701200,
-  has_events: true,
-  has_config: false,
-  has_state: false,
-  size_bytes: 2048,
+function sealed(name: string, worker: string, events: Record<string, number> | null): HistoryFile {
+  return {
+    path: `history/search/${name}`,
+    name,
+    kind: 'sealed',
+    size_bytes: 4096,
+    modified_at: '2026-10-14T09:00:02.410000Z',
+    meta:
+      events === null
+        ? null
+        : {
+            schema: 1,
+            worker,
+            instance: '9c41e0b27fd34a1e',
+            cluster: 'search',
+            first_event_ts: '2026-10-14T08:00:00.000000Z',
+            last_event_ts: '2026-10-14T08:59:59.871000Z',
+            sealed_at: '2026-10-14T09:00:02.410000Z',
+            size_bytes: 4096,
+            tables: { events: 7 },
+            event_types: events,
+          },
+  }
 }
 
-// Deliberately NOT in to_ts-descending order: the older window (lower
-// to_ts) comes first in the payload. If the component re-sorted client-side
-// it would put clusterB-archive above clusterA-archive; it must not.
-const archives: ArchiveEntry[] = [
-  {
-    name: 'clusterA-2026-08-08_00-00__2026-08-09_00-00.db.gz',
-    cluster: 'clusterA',
-    from_ts: 1754611200,
-    to_ts: 1754697600,
-    size_bytes: 1536,
+const body: DatabasesResponse = {
+  own: [
+    {
+      filename: 'w-1-2026-10-14__09_00_00.db',
+      worker_name: 'w-1',
+      cluster_name: 'search',
+      kind: 'live',
+      event_count: 12,
+      event_counts: { task_started: 6, task_completed: 6 },
+      first_event_ts: 1760432400,
+      last_event_ts: 1760432460,
+      size_bytes: 8192,
+    },
+    {
+      filename: 'w-1-2026-10-14__08_00_00.db',
+      worker_name: 'w-1',
+      cluster_name: 'search',
+      kind: 'backlog',
+      event_count: 3,
+      event_counts: { consumed: 3 },
+      first_event_ts: 1760428800,
+      last_event_ts: 1760428900,
+      size_bytes: 2048,
+    },
+  ],
+  history: {
+    folders: [
+      {
+        folder: 'history/search',
+        kind: 'history',
+        cluster: 'search',
+        files: [
+          sealed('w-1-2026-10-14__07_00_00.db', 'w-1', { task_started: 4, task_completed: 3 }),
+          sealed('w-2-2026-10-14__07_00_00.db', 'w-2', { consumed: 5 }),
+          sealed('w-3-2026-10-14__07_00_00.db', 'w-3', null),
+          {
+            path: 'history/search/search-2026-10-12_00-00__2026-10-13_00-00.db.gz',
+            name: 'search-2026-10-12_00-00__2026-10-13_00-00.db.gz',
+            kind: 'archive',
+            size_bytes: 3 * 1024 * 1024,
+            modified_at: '2026-10-13T02:00:00.000000Z',
+            meta: null,
+          },
+        ],
+      },
+      {
+        folder: 'merged',
+        kind: 'merged',
+        cluster: null,
+        files: [
+          {
+            path: 'merged/merged-2026-10-14__10_00_00-0123456789abcdef.db',
+            name: 'merged-2026-10-14__10_00_00-0123456789abcdef.db',
+            kind: 'merged',
+            size_bytes: 1024,
+            modified_at: '2026-10-14T10:00:00.000000Z',
+            meta: null,
+          },
+        ],
+      },
+    ],
   },
-  {
-    name: 'clusterB-2026-08-09_00-00__2026-08-10_00-00.db.gz',
-    cluster: 'clusterB',
-    from_ts: 1754697600,
-    to_ts: 1754784000,
-    size_bytes: 3 * 1024 * 1024,
-  },
-]
+}
 
-function stubFetch(
-  archivesStatus: number,
-  archivesBody: unknown = { archives: [] },
-  dbBody: DbInfo[] = [oneDb],
-) {
-  return vi.fn(async (input: RequestInfo | URL) => {
+let lastMergeBody: unknown = null
+
+function stubFetch(databases: unknown = body) {
+  lastMergeBody = null
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
-    if (url.includes('/debug/archives')) {
-      return new Response(archivesStatus === 200 ? JSON.stringify(archivesBody) : '{}', {
-        status: archivesStatus,
-      })
+    if (url.includes('/debug/merge')) {
+      lastMergeBody = JSON.parse(String(init?.body))
+      return new Response(
+        JSON.stringify({
+          filename: 'merged-2026-10-14__11_00_00-fedcba9876543210.db',
+          path: 'merged/merged-2026-10-14__11_00_00-fedcba9876543210.db',
+          worker_count: 2,
+          event_count: 12,
+          state_count: 0,
+          cluster_name: 'search',
+          source_files: [],
+        }),
+        { status: 200 },
+      )
     }
     if (url.includes('/debug/databases')) {
-      return new Response(JSON.stringify(dbBody), { status: 200 })
+      return new Response(JSON.stringify(databases), { status: 200 })
     }
     return new Response('[]', { status: 200 })
   })
 }
 
-// Drains the load()/loadArchives() async chain (each behind an awaited
-// fetch + json()), same pattern RuntimeTab.test.ts uses for its own
-// onMount-driven async reload.
+// Drains the onMount load() chain (an awaited fetch + json()).
 async function settled() {
   for (let i = 0; i < 4; i++) {
     flushSync()
@@ -86,202 +147,145 @@ function renderMounted() {
   }
 }
 
-function archivesTable(target: HTMLElement): HTMLTableElement | undefined {
-  const heading = [...target.querySelectorAll('h2')].find((h) =>
-    h.textContent?.startsWith('Archives'),
+function row(target: HTMLElement, name: string): HTMLTableRowElement {
+  const found = [...target.querySelectorAll<HTMLTableRowElement>('tbody tr')].find((r) =>
+    r.textContent?.includes(name),
   )
-  return heading?.nextElementSibling as HTMLTableElement | undefined
+  if (!found) throw new Error(`no row for ${name}`)
+  return found
 }
 
-describe('DatabasesTab archives section', () => {
+function folderButton(target: HTMLElement, label: string): HTMLButtonElement {
+  const found = [...target.querySelectorAll<HTMLButtonElement>('button.fold')].find((b) =>
+    b.textContent?.includes(label),
+  )
+  if (!found) throw new Error(`no folder button ${label}`)
+  return found
+}
+
+describe('DatabasesTab (v1.23)', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     localStorage.clear()
   })
 
-  it('renders one row per archive: name, cluster, formatted window, human size', async () => {
-    vi.stubGlobal('fetch', stubFetch(200, { archives }))
+  it('lists the own files with their kind, without download or merge controls', async () => {
+    vi.stubGlobal('fetch', stubFetch())
     const { target, cleanup } = renderMounted()
     await settled()
 
-    const table = archivesTable(target)
-    expect(table).not.toBeUndefined()
-    const rows = [...table!.querySelectorAll('tbody tr')]
-    expect(rows).toHaveLength(2)
-
-    const first = rows[0].textContent ?? ''
-    expect(first).toContain('clusterA-2026-08-08_00-00__2026-08-09_00-00.db.gz')
-    expect(first).toContain('clusterA')
-    expect(first).toContain('2025-08-08 00:00:00')
-    expect(first).toContain('2025-08-09 00:00:00')
-    expect(first).toContain('1.5 KB')
-
-    const second = rows[1].textContent ?? ''
-    expect(second).toContain('3.0 MB')
-
+    const live = row(target, 'w-1-2026-10-14__09_00_00.db')
+    expect(live.textContent).toContain('live')
+    expect(live.textContent).toContain('12')
+    expect(live.querySelector('a')).toBeNull()
+    expect(live.querySelector('input[type=checkbox]')).toBeNull()
+    expect(row(target, 'w-1-2026-10-14__08_00_00.db').textContent).toContain('backlog')
     cleanup()
   })
 
-  it('preserves payload order (newest-first from the server) without a client re-sort', async () => {
-    vi.stubGlobal('fetch', stubFetch(200, { archives }))
+  it('shows one foldable block per history folder, with statistics from the meta file', async () => {
+    vi.stubGlobal('fetch', stubFetch())
     const { target, cleanup } = renderMounted()
     await settled()
 
-    const rows = [...archivesTable(target)!.querySelectorAll('tbody tr')]
-    expect(rows[0].textContent).toContain('clusterA-2026-08-08')
-    expect(rows[1].textContent).toContain('clusterB-2026-08-09')
-
-    cleanup()
-  })
-
-  it('builds the download href with the token and the URL-encoded archive name', async () => {
-    localStorage.setItem('drakkar_token', 'tok en')
-    vi.stubGlobal('fetch', stubFetch(200, { archives }))
-    const { target, cleanup } = renderMounted()
-    await settled()
-
-    const link = archivesTable(target)!.querySelector('tbody tr a') as HTMLAnchorElement
-    expect(link.getAttribute('href')).toBe(
-      '/api/v1/debug/archives/clusterA-2026-08-08_00-00__2026-08-09_00-00.db.gz?token=tok%20en',
+    expect(folderButton(target, 'search').textContent).toContain('4')
+    expect(folderButton(target, 'merged').textContent).toContain('1')
+    const w1 = row(target, 'w-1-2026-10-14__07_00_00.db')
+    expect(w1.textContent).toContain('w-1')
+    expect(w1.textContent).toContain('7')
+    expect(w1.querySelector('a')?.getAttribute('href')).toBe(
+      '/api/v1/debug/download/history/search/w-1-2026-10-14__07_00_00.db',
     )
-
+    // A sealed file without its meta file shows its size only.
+    const w3 = row(target, 'w-3-2026-10-14__07_00_00.db')
+    expect(w3.querySelector('td.events')?.textContent?.trim()).toBe('-')
+    expect(w3.textContent).toContain('4.0 KB')
     cleanup()
   })
 
-  it('renders no merge checkbox on archive rows', async () => {
-    vi.stubGlobal('fetch', stubFetch(200, { archives }))
+  it('downloads an archive by path but never offers it for a merge', async () => {
+    vi.stubGlobal('fetch', stubFetch())
+    localStorage.setItem('drakkar_token', 'tok')
     const { target, cleanup } = renderMounted()
     await settled()
 
-    const table = archivesTable(target)!
-    expect(table.querySelectorAll('input[type="checkbox"]')).toHaveLength(0)
-
-    cleanup()
-  })
-
-  it('hides the section entirely when the archive list is empty', async () => {
-    vi.stubGlobal('fetch', stubFetch(200, { archives: [] }))
-    const { target, cleanup } = renderMounted()
-    await settled()
-
-    expect(archivesTable(target)).toBeUndefined()
-
-    cleanup()
-  })
-
-  it('hides the section on a 404 (old backend) without showing an error banner', async () => {
-    vi.stubGlobal('fetch', stubFetch(404))
-    const { target, cleanup } = renderMounted()
-    await settled()
-
-    expect(archivesTable(target)).toBeUndefined()
-    expect(target.querySelector('.error')).toBeNull()
-
-    cleanup()
-  })
-})
-
-describe('DatabasesTab v1.12 rows', () => {
-  const liveDb: DbInfo = {
-    ...oneDb,
-    filename: 'workerA-2026-08-14__10_00_00.db',
-    path: '/var/db/workerA-2026-08-14__10_00_00.db',
-    live_for: 'workerA',
-    kind: 'recorder',
-    stats_pending: false,
-    cache_entry_count: null,
-  }
-  const cacheDb: DbInfo = {
-    filename: 'workerA-cache.db',
-    path: '/var/db/workerA-cache.db.actual',
-    worker_name: 'workerA',
-    cluster_name: 'clusterA',
-    event_count: 0,
-    event_counts: {},
-    first_event_ts: null,
-    last_event_ts: null,
-    has_events: false,
-    has_config: false,
-    has_state: false,
-    size_bytes: 4096,
-    kind: 'cache',
-    live_for: 'workerA',
-    stats_pending: false,
-    cache_entry_count: 42,
-  }
-  const pendingDb: DbInfo = {
-    ...oneDb,
-    filename: 'workerA-2026-08-01__00_00_00.db',
-    path: '/var/db/workerA-2026-08-01__00_00_00.db',
-    event_count: 0,
-    event_counts: {},
-    first_event_ts: null,
-    last_event_ts: null,
-    kind: 'unknown',
-    live_for: '',
-    stats_pending: true,
-    cache_entry_count: null,
-  }
-
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    vi.restoreAllMocks()
-  })
-
-  it('highlights the in-use row with a chip naming the worker', async () => {
-    vi.stubGlobal('fetch', stubFetch(200, { archives: [] }, [oneDb, liveDb]))
-    const { target, cleanup } = renderMounted()
-    await settled()
-
-    const inUse = target.querySelectorAll('tr.in-use')
-    expect(inUse.length).toBe(1)
-    expect(inUse[0].textContent).toContain(liveDb.filename)
-    expect(inUse[0].textContent).toContain('in use · workerA')
-    cleanup()
-  })
-
-  it('shows a cache DB as a typed row: entries count, no merge checkbox, no download', async () => {
-    vi.stubGlobal('fetch', stubFetch(200, { archives: [] }, [oneDb, cacheDb]))
-    const { target, cleanup } = renderMounted()
-    await settled()
-
-    const row = [...target.querySelectorAll('tbody tr')].find((tr) =>
-      tr.textContent?.includes('workerA-cache.db'),
+    const archive = row(target, 'search-2026-10-12_00-00__2026-10-13_00-00.db.gz')
+    expect(archive.querySelector('input[type=checkbox]')).toBeNull()
+    expect(archive.querySelector('a')?.getAttribute('href')).toBe(
+      '/api/v1/debug/download/history/search/search-2026-10-12_00-00__2026-10-13_00-00.db.gz?token=tok',
     )
-    expect(row).toBeTruthy()
-    expect(row!.textContent).toContain('42 entries')
-    expect(row!.textContent).toContain('cache')
-    expect(row!.querySelector('input[type=checkbox]')).toBeNull()
-    expect(row!.querySelector('a[title=Download]')).toBeNull()
+    expect(archive.textContent).toContain('3.0 MB')
     cleanup()
   })
 
-  it('shows pending rows with a scanning marker instead of hiding them as empty', async () => {
-    vi.stubGlobal('fetch', stubFetch(200, { archives: [] }, [oneDb, pendingDb]))
+  it('folds and unfolds a history folder', async () => {
+    vi.stubGlobal('fetch', stubFetch())
     const { target, cleanup } = renderMounted()
     await settled()
 
-    const row = [...target.querySelectorAll('tbody tr')].find((tr) =>
-      tr.textContent?.includes(pendingDb.filename),
-    )
-    expect(row).toBeTruthy()
-    expect(row!.textContent).toContain('scanning…')
+    folderButton(target, 'search').click()
+    flushSync()
+    expect(() => row(target, 'w-2-2026-10-14__07_00_00.db')).toThrow()
+    folderButton(target, 'search').click()
+    flushSync()
+    expect(row(target, 'w-2-2026-10-14__07_00_00.db')).toBeTruthy()
     cleanup()
   })
 
-  it('still hides settled empty recorder files', async () => {
-    const emptyDb: DbInfo = {
-      ...oneDb,
-      filename: 'workerA-empty.db',
-      event_count: 0,
-      stats_pending: false,
+  it('merges the selected history files by path and links the result', async () => {
+    vi.stubGlobal('fetch', stubFetch())
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    for (const name of [
+      'w-1-2026-10-14__07_00_00.db',
+      'merged-2026-10-14__10_00_00-0123456789abcdef.db',
+    ]) {
+      row(target, name).querySelector<HTMLInputElement>('input[type=checkbox]')!.click()
     }
-    vi.stubGlobal('fetch', stubFetch(200, { archives: [] }, [oneDb, emptyDb]))
+    flushSync()
+    const mergeButton = [...target.querySelectorAll('button')].find((b) =>
+      b.textContent?.startsWith('Merge'),
+    )!
+    expect(mergeButton.textContent).toContain('(2)')
+    mergeButton.click()
+    await settled()
+
+    expect(lastMergeBody).toEqual({
+      filenames: [
+        'history/search/w-1-2026-10-14__07_00_00.db',
+        'merged/merged-2026-10-14__10_00_00-0123456789abcdef.db',
+      ],
+    })
+    const banner = target.querySelector('.banner a')
+    expect(banner?.getAttribute('href')).toBe(
+      '/api/v1/debug/download/merged/merged-2026-10-14__11_00_00-fedcba9876543210.db',
+    )
+    cleanup()
+  })
+
+  it('filters history files by worker', async () => {
+    vi.stubGlobal('fetch', stubFetch())
     const { target, cleanup } = renderMounted()
     await settled()
 
-    expect(target.textContent).not.toContain('workerA-empty.db')
-    expect(target.textContent).toContain('1 empty hidden')
+    const select = target.querySelector<HTMLSelectElement>('select')!
+    select.value = 'w-2'
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+    await settled()
+
+    expect(row(target, 'w-2-2026-10-14__07_00_00.db')).toBeTruthy()
+    expect(() => row(target, 'w-1-2026-10-14__07_00_00.db')).toThrow()
+    cleanup()
+  })
+
+  it('says the view is not available on a backend that answers the old array', async () => {
+    vi.stubGlobal('fetch', stubFetch([{ filename: 'w.db' }]))
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(target.textContent).toContain('not available on this worker')
+    expect(target.querySelectorAll('tbody tr')).toHaveLength(0)
     cleanup()
   })
 })
