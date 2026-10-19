@@ -1734,6 +1734,47 @@ list such a worker as unreachable and keep the other workers' rows. A
 worker without a `live` row in its own files (memory-only mode) gets no
 download button.
 
+## v1.24 additions (2026-11-01)
+
+### Cluster task hash on the workers list
+
+A periodic task with `scope: cluster` runs on one worker of a cluster per
+slot. Every worker in a cluster must declare the same cluster tasks, so each
+worker publishes a hash of its cluster task definitions in its registry card
+(`features.periodic.cluster_hash`: 16 lowercase hex characters). Two fields
+on the rows of `GET /api/v1/workers` show the result of comparing it:
+
+- **`cluster_tasks_hash: string | null`** — the worker's cluster task hash:
+  16 lowercase hex characters. On the current worker's row it is the hash of
+  its own definitions. On a peer's row it is the hash in the peer's card, or
+  `null` when the card carries none in that form (no `features`, no
+  `periodic` object, a value that is not 16 lowercase hex characters).
+- **`cluster_tasks_match: boolean | null`** — whether the peer declares the
+  same cluster tasks as the serving worker. `true` on the current worker's
+  row. On a peer's row: `null` when either hash is unknown or the peer is in
+  another cluster (cluster names compare as exact strings); otherwise `true`
+  when the two hashes are equal and `false` when they differ. A peer that is
+  offline still gets a verdict; the backend's mismatch warning and gauge
+  count online peers only.
+
+`false` means the two workers disagree about which cluster tasks exist or how
+they are scheduled, so a slot may be run by a worker that does not know the
+task. `null` means unknown and is not a warning.
+
+Absence (normative): backends older than v1.24 omit both fields. Clients MUST
+treat an absent field as unknown, exactly like `null`, and MUST render the
+row as before. In this release the UI draws nothing from these fields; the
+types carry them for a later view.
+
+### Scope of a periodic task
+
+Each group of `GET /api/v1/debug/periodic` gains an optional **`scope`**:
+`"worker"` or `"cluster"`. It is `"cluster"` when the latest run recorded of
+that task was a cluster-scope slot run, else `"worker"`. A backend older than
+v1.24 omits it; clients MUST then treat the group as `"worker"`. The group
+`system` flag is unchanged: the history archive pass is a system task with
+scope `"cluster"`.
+
 ## Appendix: divergence resolutions from the 2026-06 audit
 
 Canonical choices where the two reference backends disagreed; each backend

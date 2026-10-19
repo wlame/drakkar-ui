@@ -230,6 +230,12 @@ export interface WorkerPeer {
   state?: 'starting' | 'running' | 'draining'
   started_at?: string
   instance?: string
+  // v1.24: hash of the worker's cluster periodic task definitions (null =
+  // the peer's card carries none) and whether it equals the serving
+  // worker's (null = unknown, or another cluster). Absent on older
+  // backends: treat as unknown.
+  cluster_tasks_hash?: string | null
+  cluster_tasks_match?: boolean | null
 }
 
 // --- Events (recorder rows) ---
@@ -578,6 +584,8 @@ export interface PeriodicTask {
   last_status: string
   last_error: string
   system: boolean
+  // v1.24: absent on older backends, which means 'worker'.
+  scope?: 'worker' | 'cluster'
   total_ok: number
   total_error: number
   recent: PeriodicRecent[]
