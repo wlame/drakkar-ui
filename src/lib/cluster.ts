@@ -42,7 +42,8 @@ export interface SharedTimelineControls {
  * Offline peers (v1.18 `online: false` — a dead worker whose live-db symlink
  * lingers) are excluded here, before any PeerTimeline mounts, so no WebSocket
  * client ever starts (or retries) against a dead address. Absent `online`
- * means a pre-v1.18 backend: treat as online and keep the peer.
+ * means a pre-v1.18 backend, and `online: null` (v1.23) means the registry
+ * knows no age: both keep the peer.
  */
 export function sameClusterPeers(workers: WorkerPeer[]): WorkerPeer[] {
   const current = workers.find((w) => w.is_current)

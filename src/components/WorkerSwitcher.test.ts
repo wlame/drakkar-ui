@@ -158,3 +158,95 @@ describe('WorkerSwitcher liveness', () => {
     cleanup()
   })
 })
+
+// Contract v1.23: peers come from the worker registry. Cards carry state,
+// backend and version; a fixed peer list reports online=null (unknown), and
+// registry rows have no ip_address/debug_port.
+describe('WorkerSwitcher registry fields (v1.23)', () => {
+  it('shows backend, version and a non-running state as meta chips', async () => {
+    workersPayload = [
+      worker({ worker_name: 'worker-a', is_current: true, online: true }),
+      worker({
+        worker_name: 'worker-b',
+        url: 'http://worker-b:8080/',
+        online: true,
+        backend: 'go',
+        version: '1.7.0',
+        state: 'draining',
+      }),
+    ]
+    const { target, cleanup } = await openMenu()
+
+    const chips = [...item(target, 'worker-b').querySelectorAll('.meta')].map((c) => c.textContent)
+    expect(chips).toEqual(['draining', 'go 1.7.0'])
+    cleanup()
+  })
+
+  it('does not show a chip for the running state', async () => {
+    workersPayload = [
+      worker({ worker_name: 'worker-a', is_current: true, online: true }),
+      worker({
+        worker_name: 'worker-b',
+        url: 'http://worker-b:8080/',
+        online: true,
+        state: 'running',
+      }),
+    ]
+    const { target, cleanup } = await openMenu()
+
+    expect([...item(target, 'worker-b').querySelectorAll('.meta')]).toHaveLength(0)
+    cleanup()
+  })
+
+  it('treats online=null as unknown, not offline', async () => {
+    workersPayload = [
+      worker({ worker_name: 'worker-a', is_current: true, online: true }),
+      worker({
+        worker_name: 'worker-b',
+        url: 'http://worker-b:8080/',
+        online: null,
+        last_seen_ts: null,
+      }),
+    ]
+    const { target, cleanup } = await openMenu()
+
+    const peer = item(target, 'worker-b')
+    expect(peer.classList.contains('offline')).toBe(false)
+    expect(peer.getAttribute('title')).toBe('liveness unknown')
+    cleanup()
+  })
+
+  it('renders no address for a registry peer without ip_address and debug_port', async () => {
+    workersPayload = [
+      worker({ worker_name: 'worker-a', is_current: true, online: true }),
+      worker({
+        worker_name: 'worker-b',
+        url: 'http://worker-b:8080/',
+        debug_url: null,
+        online: true,
+      }),
+    ]
+    const { target, cleanup } = await openMenu()
+
+    const peer = item(target, 'worker-b')
+    expect(peer.querySelector('.addr')).toBeNull()
+    expect(peer.getAttribute('href')).toBe('http://worker-b:8080/')
+    cleanup()
+  })
+
+  it('does not link a peer whose url is not http or https', async () => {
+    workersPayload = [
+      worker({ worker_name: 'worker-a', is_current: true, online: true }),
+      worker({ worker_name: 'worker-evil', url: 'javascript:alert(1)//', online: true }),
+      worker({ worker_name: 'worker-ok', url: 'https://worker-ok:8443/', online: true }),
+    ]
+    const { target, cleanup } = await openMenu()
+
+    const evil = item(target, 'worker-evil')
+    expect(evil.tagName).not.toBe('A')
+    expect(evil.getAttribute('href')).toBeNull()
+    expect(evil.textContent).toContain('invalid url')
+    expect(item(target, 'worker-ok').getAttribute('href')).toMatch(/^https:\/\/worker-ok:8443/)
+    cleanup()
+  })
+})
