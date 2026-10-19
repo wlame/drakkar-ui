@@ -159,8 +159,9 @@ the appendix.
 - `GET /api/v1/workers` → array of worker objects (peers from the worker
   registry + current), each `{worker_name, cluster_name|null, ip_address|null,
   debug_port|null, debug_url|null, url, cluster, is_current}` plus the v1.18
-  liveness fields and the v1.23 registry fields; sorted clustered-first then by
-  name.
+  liveness fields, the v1.23 registry fields and the v1.24 fields
+  `cluster_tasks_hash:str|null` and `cluster_tasks_match:bool|null` (see
+  "v1.24 additions"); sorted clustered-first then by name.
 - `GET /api/v1/debug/processors` → `{processors:{"<pid>":{queue_size,
   inflight_count, arranging:bool, arrange:null|{duration:float(2dp),
   message_count, labels:[...]}, pending_count, completed_count, total_tracked,
@@ -254,7 +255,8 @@ the appendix.
   suffix in `samples[].name`.
 - `GET /api/v1/debug/periodic` → array grouped by name (sorted), each `{name,
   last_run_ts, last_duration, last_status, last_error, system:bool, total_ok,
-  total_error, recent:[{ts,duration,status,error}]≤20}`.
+  total_error, recent:[{ts,duration,status,error}]≤20}`, plus the v1.24
+  `scope:"worker"|"cluster"` (absent before v1.24: read as `"worker"`).
 - `POST /api/v1/debug/probe` body `ProbeInput` → `DebugReport` (below). 200 even
   on timeout (`truncated:true`); 503 `{"detail":"executor pool not ready"}` when
   the probe is unavailable; 422 on invalid input; **429
