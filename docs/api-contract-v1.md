@@ -237,9 +237,11 @@ the appendix.
 - `GET /api/v1/debug/download-live` → a consistent snapshot of the serving
   worker's live recorder file (SQLite backup API), as an attachment with
   the live file's name, `Content-Type: application/x-sqlite3`,
-  `Cache-Control: no-store, private`. 404 `{"error":...}` in memory-only
-  mode or when no live file is open; 500 `{"error": "Snapshot failed:
-  <reason>"}` when the copy fails. Token may ride as `?token=` (v1.23).
+  `Cache-Control: no-store, private`. 404 `{"error":...}` when no live file
+  is open; 500 `{"error": "Snapshot failed: <reason>"}` when the copy
+  fails. Token may ride as `?token=` (v1.23). Since v1.25 it takes
+  `source=memory|file` and serves the memory store of a memory-only worker;
+  see [v1.25 changes](#v125-changes-2026-11-01).
 - `GET /api/v1/debug/archives` → `{archives:[{name, cluster, folder, path,
   from_ts, to_ts, size_bytes}]}`, newest-first by `to_ts`, from every
   `history/<cluster>/` folder. See v1.8 and v1.23 below.
@@ -1736,7 +1738,8 @@ Absence (normative): a pre-v1.23 worker answers the fan-out reads without
 CORS headers, so the browser reports a network error for it; clients MUST
 list such a worker as unreachable and keep the other workers' rows. A
 worker without a `live` row in its own files (memory-only mode) gets no
-download button.
+download button for a file. Since v1.25 its `memory` row has its own
+download button; see [v1.25 changes](#v125-changes-2026-11-01).
 
 ## v1.24 additions (2026-11-01)
 
