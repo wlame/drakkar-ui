@@ -335,7 +335,7 @@ truncated:bool}`.
   it only when present.
 - `ProbeCacheCall`: `{op(get|set|peek|delete|contains), key, scope,
   outcome(hit|miss|suppressed), value_preview, origin_stage, ms_since_start}`.
-- `PlannedSinkRecord`: `{sink_type(kafka|postgres|mongo|http|redis|files|custom),
+- `PlannedSinkRecord`: `{sink_type(kafka|postgres|mongo|http|redis|files),
   destination, origin_stage, payload, extras}`.
 - `CollectResult` (in `arrange.collect_result` and
   `tasks[].on_task_complete_result`): per-sink arrays **may be absent; absent ⇒
@@ -1988,8 +1988,10 @@ worker's URL from `api.public_url`, else `http://<outbound ip>:<api.port>/`.
 ```
 
 - `recorder.enabled`: the recorder runs. `recorder.provider`: the recorder
-  persistence (`none`, `sqlite` or `postgres`). `recorder.history_search`
-  is true when `recorder.enabled` is true.
+  persistence: `none`, `sqlite` or `postgres`. It is `none` when the recorder
+  is off (`recorder.enabled` is false), and also when the recorder keeps its
+  events in memory only. `recorder.history_search` is true when
+  `recorder.enabled` is true.
 - `memory`: the in-memory event store. `window_seconds` and `max_rows` are
   its limits.
 - `autodiscover.enabled`: the worker registers itself and lists peers.
@@ -2012,7 +2014,22 @@ capability as on. The UI with `capabilities`:
 ### `ui_enabled` on `Worker` rows
 
 Rows of `GET /api/v1/workers` gain optional `ui_enabled` (boolean or null),
-taken from the card's `features.ui`. A missing key or null means on.
+taken from the card's `features.ui`, a boolean that the worker publishes in
+its registry card. A missing key or null means on.
+
+### Removal of `custom` sinks
+
+`custom` is no longer a value of `PlannedSinkRecord.sink_type`, and
+`CollectResult` has no `custom` array. Plugin sinks are named by their own
+type and are not a probe sink type. A client keeps `sink_type` a string and
+MUST tolerate `custom` from an older backend.
+
+### Config reference entry types
+
+`ConfigReferenceEntry.type` is a free string. Two values are added:
+`duration` (a time span, for example `30s`) and `size` (a byte count, for
+example `64MiB`). No schema change; a client that does not know a type shows
+the raw value.
 
 ### Removal of throughput
 
@@ -2048,7 +2065,7 @@ reconciles its side.
 | 6 | events malformed `partitions` | 422 (not 500) | Python |
 | 7 | probe `traceback` | omitted | Python |
 | 8 | probe `CollectResult` empty sink arrays | absent ⇒ empty; UI defensive | UI |
-| 9 | probe `sink_type` enum | includes `"custom"` | Python |
+| 9 | probe `sink_type` enum | `kafka`, `postgres`, `mongo`, `http`, `redis`, `files` (`custom` removed in v1.28) | Python |
 | 10 | merge/download/trace input hardening | Go's stricter validation | Python |
 | 11 | metrics untyped family / counter sample name | `"unknown"` / keep `_total` | Go |
 | 12 | 422 envelope richness | minimal `{loc,msg}`; UI reads msg only | UI |

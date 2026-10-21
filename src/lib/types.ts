@@ -832,7 +832,8 @@ export interface CollectResult {
   http: unknown[]
   redis: unknown[]
   files: unknown[]
-  custom: unknown[]
+  /** Absent on v1.28 and newer; an older backend may still send it. */
+  custom?: unknown[]
 }
 
 export interface ProbeStageResult {
