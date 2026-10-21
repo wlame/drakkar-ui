@@ -12,6 +12,7 @@
   import { api, type EventRow } from '../lib/api'
   import { link } from '../lib/router'
   import { runtimeConfig } from '../lib/config'
+  import { memoryNote } from '../lib/capabilities'
   import { fmtTime, fmtTimeMs, dur2 } from '../lib/format'
   import { eventColor, EVENT_TYPES } from '../lib/events'
   import KafkaIcon from '../components/KafkaIcon.svelte'
@@ -112,7 +113,7 @@
   })
 </script>
 
-<h1>Event History</h1>
+<h1>Event History{#if $memoryNote} <span class="memory-note">({$memoryNote})</span>{/if}</h1>
 
 <!-- Partition filter -->
 <div class="filter">
@@ -201,6 +202,12 @@
 {/if}
 
 <style>
+  /* With the recorder off the feed reads only the memory window; say so. */
+  .memory-note {
+    font-size: 0.8rem;
+    font-weight: normal;
+    color: var(--muted);
+  }
   /* Reference stacks each filter label above its controls. */
   .filter {
     display: flex;
