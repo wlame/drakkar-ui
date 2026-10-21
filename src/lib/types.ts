@@ -183,6 +183,18 @@ export interface DocsConfig {
 // config_summary is the one-line worker config string the reference debug
 // page shows in its banner. The v1.2 fields are optional: older backends
 // omit them and the UI degrades gracefully.
+/** v1.28: what the worker runs. Absent on older backends: treat all as on. */
+export interface Capabilities {
+  recorder?: {
+    enabled?: boolean
+    provider?: 'none' | 'sqlite' | 'postgres'
+    history_search?: boolean
+  }
+  memory?: { enabled?: boolean; window_seconds?: number; max_rows?: number }
+  autodiscover?: { enabled?: boolean; provider?: string | null }
+  cache_exchange?: boolean
+}
+
 export interface Identity {
   worker_id: string
   cluster: string | null
@@ -205,6 +217,9 @@ export interface Identity {
   // anchors. Absent when the deployment serves no docs site, and on backends
   // that predate the feature — the UI then renders no docs affordances.
   docs?: DocsConfig
+  // v1.28: recorder, memory, autodiscover and cache-exchange switches. Absent
+  // on older backends — the UI then treats every capability as on.
+  capabilities?: Capabilities
 }
 
 export interface WorkerPeer {
@@ -236,6 +251,9 @@ export interface WorkerPeer {
   // backends: treat as unknown.
   cluster_tasks_hash?: string | null
   cluster_tasks_match?: boolean | null
+  // v1.28, from the card's features.ui. Absent or null means on; false leaves
+  // the worker out of fan-out and switcher links.
+  ui_enabled?: boolean | null
 }
 
 // --- Events (recorder rows) ---

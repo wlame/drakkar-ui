@@ -370,9 +370,9 @@ format `YYYY-MM-DDTHH:MM:SS.ffffffZ` (fixed six-digit microseconds); the
 
 ## Recorder event-type vocabulary (the `event` field)
 
-**PINNED (v1.27).** An `event` field carries one of these 32
-names and nothing else — 31 of them can appear in the `events` table,
-and `throughput` is broadcast on `/ws` only. The UI matches on these names,
+**PINNED (v1.28).** An `event` field carries one of these 31
+names and nothing else; every one of them is stored in the `events`
+table and sent on `/ws`. The UI matches on these names,
 so a name is as contractual as a column: adding, renaming or removing one is
 a contract change that updates this section and both backends together.
 
@@ -411,7 +411,6 @@ each name and whether it is stored. The Python repo owns the fixture
 | `task_completed` | both | `events` + `/ws` |
 | `task_failed` | both | `events` + `/ws` |
 | `task_started` | both | `events` + `/ws` |
-| `throughput` | both | `/ws` only |
 | `webapp_request_auth_failed` | both | `events` + `/ws` |
 | `webapp_request_completed` | both | `events` + `/ws` |
 | `webapp_request_dropped_after_timeout` | both | `events` + `/ws` |
@@ -1956,6 +1955,83 @@ record). `attempt` is not new.
   ordinary headers and probes the record at its DLQ coordinates. It renders
   the two new event types as uncategorised events (see the vocabulary
   section).
+
+## v1.28 changes (2026-11-07)
+
+The backends read one config layout, and a worker may run without its UI.
+All additions are optional keys; the `throughput` frame and the `cost` and
+`speed` keys are removed.
+
+### Routes of a worker without a UI
+
+`api.enabled` and `ui.enabled` decide which routes a worker serves.
+
+| Route | Needs |
+|---|---|
+| `/healthz`, `/readyz`, `/api/v1/peer/cache/changes` | `api.enabled` |
+| everything else: `/ws`, `/api/v1/*`, `/api-docs`, `/docs`, the pages | `api.enabled` and `ui.enabled` |
+
+With `ui.enabled: false` the worker fetches no bundle, and every route of
+the second row answers 404. `auth_token` guards the second row as before;
+the three routes of the first row are public. A registry card carries the
+worker's URL from `api.public_url`, else `http://<outbound ip>:<api.port>/`.
+
+### `capabilities` on `GET /api/v1/identity`
+
+`Identity` gains an optional `capabilities` object:
+
+```json
+{"recorder": {"enabled": true, "provider": "sqlite", "history_search": true},
+ "memory": {"enabled": true, "window_seconds": 120, "max_rows": 12000},
+ "autodiscover": {"enabled": false, "provider": null},
+ "cache_exchange": false}
+```
+
+- `recorder.enabled`: the recorder runs. `recorder.provider`: the recorder
+  persistence (`none`, `sqlite` or `postgres`). `recorder.history_search`
+  is true when `recorder.enabled` is true.
+- `memory`: the in-memory event store. `window_seconds` and `max_rows` are
+  its limits.
+- `autodiscover.enabled`: the worker registers itself and lists peers.
+  `autodiscover.provider`: the registry provider, or null when off.
+- `cache_exchange`: true when the cache and its exchange are on and
+  autodiscover is on.
+
+A backend older than v1.28 omits `capabilities`. The UI then treats every
+capability as on. The UI with `capabilities`:
+
+- hides the worker switcher and the cluster views when `autodiscover.enabled`
+  is false;
+- hides the history option of the Trace page when `recorder.history_search`
+  is false;
+- shows the memory window on the event views when `recorder.enabled` is false
+  ("last 2 minutes, in memory");
+- leaves workers with `ui_enabled: false` out of its fan-out and out of the
+  links of the switcher.
+
+### `ui_enabled` on `Worker` rows
+
+Rows of `GET /api/v1/workers` gain optional `ui_enabled` (boolean or null),
+taken from the card's `features.ui`. A missing key or null means on.
+
+### Removal of throughput
+
+- The `throughput` event and its `/ws` frame are gone. The event vocabulary
+  has 31 names.
+- The `cost` and `speed` keys are gone from `task_completed` metadata and
+  from the rows of `GET /api/v1/recent-tasks`. `throughput.cost_label` and
+  `throughput.min_cost` are gone from the backend config.
+- The Prometheus metrics `drakkar_task_speed`, `drakkar_throughput` and
+  `drakkar_task_rate` are not registered.
+- New recorder files have no `throughput` column in `worker_state`. A reader
+  MUST tolerate the column in files written by older backends and ignore it.
+- A client MUST ignore a `throughput` frame, and the `cost` and `speed` keys,
+  from an older backend.
+
+### Absence (normative)
+
+A backend older than v1.28 sends no `capabilities` and no `ui_enabled`; the
+UI treats both as on.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 
