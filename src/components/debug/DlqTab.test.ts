@@ -1,11 +1,30 @@
 // DLQ tab: NDJSON window listing over the kafka-read API (alias 'dlq'),
 // rendered against a stubbed fetch. Covers the auto-loaded default window,
 // the row shape, the truncated-stream error banner, the empty state, and
-// the side panel's "Probe this message" deep-link hash.
+// the side panel's "Probe this message" deep-link hash, the dk- header table
+// above the value and the source headers below it, and the probe button that
+// is off for a record the probe cannot take as text.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushSync, mount, unmount } from 'svelte'
 import DlqTab from './DlqTab.svelte'
-import type { KafkaReadMessage } from '../../lib/types'
+import type { KafkaReadHeader, KafkaReadMessage } from '../../lib/types'
+
+function headers(pairs: [string, string][]): KafkaReadHeader[] {
+  return pairs.map(([key, value]) => ({ key, value, value_encoding: 'utf-8' }))
+}
+
+const LONG_ERROR = 'exit code 2: ' + 'segmentation fault in the scorer; '.repeat(40)
+
+const RECORD_HEADERS = headers([
+  ['traceparent', '00-4bf92f3577b34da6-01'],
+  ['dk-record-version', '1'],
+  ['dk-stage', 'execute'],
+  ['dk-error', LONG_ERROR],
+  ['dk-task-id', 't-7f3a9c'],
+  ['dk-source-topic', 'orders'],
+  ['dk-source-partition', '0'],
+  ['dk-source-offset', '0'],
+])
 
 function dlqMessage(overrides: Partial<KafkaReadMessage> = {}): KafkaReadMessage {
   return {
@@ -126,17 +145,104 @@ describe('DlqTab', () => {
     cleanup()
   })
 
-  it('renders the base64 caveat for binary payloads in the panel', async () => {
-    vi.stubGlobal(
-      'fetch',
-      stubFetch(ndjson([dlqMessage({ payload: 'AP8B', payload_encoding: 'base64' })])),
-    )
-    const { target, cleanup } = renderMounted()
+  async function openPanel(message: KafkaReadMessage) {
+    vi.stubGlobal('fetch', stubFetch(ndjson([message])))
+    const mounted = renderMounted()
     await settled()
-
-    ;(target.querySelector('tbody tr') as HTMLElement).click()
+    ;(mounted.target.querySelector('tbody tr') as HTMLElement).click()
     flushSync()
-    expect(document.body.textContent).toContain('binary payload — shown base64-encoded')
+    return mounted
+  }
+
+  function probeButton(): HTMLButtonElement {
+    const found = [...document.body.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Probe this message'),
+    )
+    expect(found).not.toBeUndefined()
+    return found as HTMLButtonElement
+  }
+
+  function follows(later: Element, earlier: Element): boolean {
+    return (earlier.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+  }
+
+  it('shows the dk- headers as a table above the value and the source headers below it', async () => {
+    const { cleanup } = await openPanel(dlqMessage({ headers: RECORD_HEADERS }))
+
+    const dkTable = document.body.querySelector('table.dk-headers')
+    expect(dkTable).not.toBeNull()
+    const dkRows = [...dkTable!.querySelectorAll('tbody tr')].map((r) =>
+      [...r.querySelectorAll('td')].map((c) => c.textContent),
+    )
+    expect(dkRows.map((r) => r[0])).toEqual([
+      'dk-record-version',
+      'dk-stage',
+      'dk-error',
+      'dk-task-id',
+      'dk-source-topic',
+      'dk-source-partition',
+      'dk-source-offset',
+    ])
+    expect(dkRows[2][1]).toBe(LONG_ERROR)
+    expect(dkTable!.querySelectorAll('td.wrap')).toHaveLength(dkRows.length)
+
+    const value = document.body.querySelector('.dlq-value')
+    const sourceHeaders = document.body.querySelector('.source-headers')
+    expect(value).not.toBeNull()
+    expect(sourceHeaders).not.toBeNull()
+    expect(sourceHeaders!.textContent).toContain('traceparent')
+    expect(sourceHeaders!.textContent).not.toContain('dk-stage')
+    expect(follows(value!, dkTable!)).toBe(true)
+    expect(follows(sourceHeaders!, value!)).toBe(true)
+    cleanup()
+  })
+
+  it('shows no dk- table for a record without dk- headers', async () => {
+    const { cleanup } = await openPanel(dlqMessage({ headers: headers([['x-trace', '1']]) }))
+
+    expect(document.body.querySelector('table.dk-headers')).toBeNull()
+    expect(document.body.querySelector('.source-headers')?.textContent).toContain('x-trace')
+    cleanup()
+  })
+
+  it('pretty-prints a JSON value and shows any other text as it is', async () => {
+    const first = await openPanel(dlqMessage({ payload: '{"id":17,"ok":true}' }))
+    expect(document.body.querySelector('.dlq-value')?.textContent).toContain('"id": 17')
+    first.cleanup()
+
+    const second = await openPanel(dlqMessage({ payload: 'not json {' }))
+    expect(document.body.querySelector('.dlq-value')?.textContent).toContain('not json {')
+    second.cleanup()
+  })
+
+  it('labels a binary value as base64 and does not parse it as JSON', async () => {
+    // "1234" is valid JSON; a base64 value must not be pretty-printed as a number.
+    const { cleanup } = await openPanel(dlqMessage({ payload: '1234', payload_encoding: 'base64' }))
+
+    expect(document.body.textContent).toContain('binary, base64')
+    expect(document.body.querySelector('.dlq-value')?.textContent).toContain('1234')
+    cleanup()
+  })
+
+  it.each([
+    ['value', { payload: 'AP8B', payload_encoding: 'base64' as const }, 'the value is binary'],
+    ['key', { key: 'AP8=', key_encoding: 'base64' as const }, 'the key is binary'],
+  ])(
+    'disables the probe button with a note when the %s is base64',
+    async (_part, overrides, note) => {
+      const { cleanup } = await openPanel(dlqMessage(overrides))
+
+      expect(probeButton().disabled).toBe(true)
+      expect(document.body.querySelector('.probe-off')?.textContent).toContain(note)
+      cleanup()
+    },
+  )
+
+  it('keeps the probe button on and shows no note for a text record', async () => {
+    const { cleanup } = await openPanel(dlqMessage())
+
+    expect(probeButton().disabled).toBe(false)
+    expect(document.body.querySelector('.probe-off')).toBeNull()
     cleanup()
   })
 })

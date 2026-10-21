@@ -11,6 +11,7 @@
     type PlannedSinkRecord,
   } from '../../lib/api'
   import { runtimeConfig } from '../../lib/config'
+  import { probeBlockedReason, probeCoordinates } from '../../lib/dlqRecord'
   import { durSec } from '../../lib/format'
   import { NO_SORT, sortRows, type SortAccessor } from '../../lib/sort'
   import KafkaIcon from '../KafkaIcon.svelte'
@@ -49,7 +50,9 @@
 
   // #probe/<alias>/<p>/<o> deep-link payload (Debug.svelte parses the hash).
   // When set, the form prefills itself from the real Kafka record at those
-  // coordinates via the kafka-read API.
+  // coordinates via the kafka-read API. A DLQ record names its source message
+  // in dk-source-* headers; the form takes topic, partition, offset and
+  // timestamp from them, and the record's own coordinates without them.
   let {
     prefill = null,
   }: { prefill?: { alias: string; partition: number; offset: number } | null } = $props()
@@ -60,6 +63,8 @@
   let partition = $state(0)
   let offset = $state(0)
   let topic = $state($runtimeConfig.kafkaSourceTopic)
+  // Epoch ms of the probed message; empty means "now" on the backend.
+  let timestamp = $state<number | null>(null)
   let useCache = $state(false)
 
   // Prefill-from-Kafka state. `loadedPrefill` remembers which coordinates
@@ -67,6 +72,9 @@
   // changes (typing in the form must not reload the record over the user).
   let prefillNote = $state<string | null>(null)
   let prefillError = $state<string | null>(null)
+  // Set when the prefilled record is binary: the probe takes text, so Run
+  // stays off until the next prefill.
+  let probeBlocked = $state<string | null>(null)
   let loadedPrefill = ''
 
   $effect(() => {
@@ -80,22 +88,24 @@
   async function loadPrefill(alias: string, p: number, o: number) {
     prefillNote = null
     prefillError = null
+    probeBlocked = null
     try {
       const msg = await api.kafkaMessage(alias, p, o)
+      const coords = probeCoordinates(msg)
       value = msg.payload
       key = msg.key ?? ''
-      partition = msg.partition
-      offset = msg.offset
+      topic = coords.topic ?? $runtimeConfig.kafkaSourceTopic
+      partition = coords.partition
+      offset = coords.offset
+      timestamp = coords.timestampMs
       collapsed = false
       report = null
-      const caveats: string[] = []
-      // The probe form carries text; a binary payload/key arrives base64-
-      // encoded and would be probed AS base64 — say so instead of guessing.
-      if (msg.payload_encoding === 'base64') caveats.push('payload was binary — shown base64-encoded')
-      if (msg.key_encoding === 'base64') caveats.push('key was binary — shown base64-encoded')
+      // A binary value or key arrives base64-encoded and would be probed AS
+      // base64, so the probe stays off instead of running on the wrong bytes.
+      probeBlocked = probeBlockedReason(msg)
       prefillNote =
         `Prefilled from ${alias} P${msg.partition}:${msg.offset}` +
-        (caveats.length ? ` (${caveats.join('; ')})` : '')
+        (coords.fromSourceHeaders ? ' — source coordinates from its dk-source-* headers' : '')
     } catch (e) {
       prefillError = `Could not prefill from ${alias} P${p}:${o} — ${e instanceof Error ? e.message : String(e)}`
     }
@@ -141,6 +151,7 @@
 
   async function run() {
     formError = null
+    if (probeBlocked) return
     if (!value) {
       formError = 'value is required'
       return
@@ -149,7 +160,15 @@
       formError = 'partition and offset must be non-negative integers'
       return
     }
-    const req: ProbeRequest = { value, key: key || null, partition, offset, topic: topic || '', use_cache: useCache }
+    const req: ProbeRequest = {
+      value,
+      key: key || null,
+      partition,
+      offset,
+      topic: topic || '',
+      timestamp: typeof timestamp === 'number' && Number.isInteger(timestamp) && timestamp >= 0 ? timestamp : null,
+      use_cache: useCache,
+    }
     busy = true
     try {
       report = await api.debugProbe(req)
@@ -191,6 +210,7 @@
 
 {#if prefillNote}<p class="prefill-note">{prefillNote}</p>{/if}
 {#if prefillError}<p class="error">{prefillError}</p>{/if}
+{#if probeBlocked}<p class="warn probe-off">{probeBlocked}</p>{/if}
 
 {#if collapsed && report}
   <div class="chip">
@@ -204,8 +224,9 @@
     <label>Topic<input bind:value={topic} /></label>
     <label>Partition<input type="number" min="0" bind:value={partition} /></label>
     <label>Offset<input type="number" min="0" bind:value={offset} /></label>
+    <label>Timestamp (ms)<input type="number" min="0" placeholder="now" bind:value={timestamp} /></label>
     <label class="ck"><input type="checkbox" bind:checked={useCache} /> Use cache (read-only)</label>
-    <div class="run"><button class="primary" type="submit" disabled={busy}>{busy ? 'Running…' : 'Run'}</button></div>
+    <div class="run"><button class="primary" type="submit" disabled={busy || probeBlocked != null}>{busy ? 'Running…' : 'Run'}</button></div>
   </form>
 {/if}
 
@@ -216,7 +237,7 @@
 
   <div class="toolbar">
     <button onclick={downloadJson}>Download JSON</button>
-    <button onclick={run} disabled={busy}>Re-run</button>
+    <button onclick={run} disabled={busy || probeBlocked != null}>Re-run</button>
     <button onclick={() => (collapsed = false)}>Edit &amp; re-run</button>
   </div>
 

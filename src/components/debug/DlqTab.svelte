@@ -5,8 +5,11 @@
   // invisible to the pipeline. Rows open a side panel with the full payload
   // and headers, plus a "Probe this message" jump that deep-links the
   // Message Probe tab (#probe/dlq/<p>/<o>) so the record can be replayed
-  // through the live handler with zero side effects.
+  // through the live handler with zero side effects. A record is the source
+  // message with dk- headers (contract v1.27): the panel shows them as a
+  // table above the value and the source headers below it.
   import { api, type KafkaReadMessage } from '../../lib/api'
+  import { probeBlockedReason, splitDlqHeaders } from '../../lib/dlqRecord'
   import { fmtBytes, fmtDateTimeMs } from '../../lib/format'
   import { probeHash } from '../../lib/kafkaRead'
   import { setHash } from '../../lib/router'
@@ -42,6 +45,8 @@
   let busy = $state(false)
   let loadedOnce = $state(false)
   let selected = $state<KafkaReadMessage | null>(null)
+  const selectedHeaders = $derived(splitDlqHeaders(selected?.headers ?? []))
+  const probeBlocked = $derived(selected ? probeBlockedReason(selected) : null)
 
   async function load() {
     loadError = null
@@ -86,6 +91,10 @@
 
   function preview(payload: string): string {
     return payload.length > 160 ? payload.slice(0, 160) + '…' : payload
+  }
+  // A base64 value is never parsed: "1234" is valid JSON but not a number here.
+  function valueText(msg: KafkaReadMessage): string {
+    return msg.payload_encoding === 'base64' ? msg.payload : pretty(msg.payload)
   }
   function pretty(text: string): string {
     try {
@@ -147,27 +156,43 @@
     onclose={() => (selected = null)}
   >
     <div class="actions">
-      <button class="primary" onclick={() => selected && probe(selected)}>Probe this message</button>
+      <button class="primary" disabled={probeBlocked != null} onclick={() => selected && probe(selected)}>Probe this message</button>
+      {#if probeBlocked}<p class="probe-off">{probeBlocked}</p>{/if}
     </div>
     <dl>
       <dt>time</dt><dd class="mono">{fmtDateTimeMs(selected.timestamp_ms)}</dd>
       <dt>key</dt><dd class="mono">{selected.key ?? '—'}{selected.key_encoding === 'base64' ? ' (base64)' : ''}</dd>
       <dt>size</dt><dd class="mono">{fmtBytes(selected.payload_size_bytes)}</dd>
-      {#if selected.payload_encoding === 'base64'}
-        <dt>encoding</dt><dd>binary payload — shown base64-encoded</dd>
-      {/if}
     </dl>
-    {#if selected.headers.length}
-      <h3>Headers</h3>
-      <dl>
-        {#each selected.headers as h}
-          <dt class="mono">{h.key}</dt>
-          <dd class="mono">{h.value ?? '—'}{h.value_encoding === 'base64' ? ' (base64)' : ''}</dd>
-        {/each}
-      </dl>
+    {#if selectedHeaders.dk.length}
+      <h3>DLQ facts</h3>
+      <table class="dk-headers">
+        <thead><tr><th>header</th><th>value</th></tr></thead>
+        <tbody>
+          {#each selectedHeaders.dk as h, i (i)}
+            <tr>
+              <td class="mono nowrap">{h.key}</td>
+              <td class="mono wrap">{h.value ?? '—'}{h.value_encoding === 'base64' ? ' (base64)' : ''}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
     {/if}
-    <h3>Payload</h3>
-    <CodeBlock text={pretty(selected.payload)} maxHeight="30rem" />
+    <div class="dlq-value">
+      <h3>Payload{selected.payload_encoding === 'base64' ? ' (binary, base64)' : ''}</h3>
+      <CodeBlock text={valueText(selected)} maxHeight="30rem" />
+    </div>
+    {#if selectedHeaders.source.length}
+      <div class="source-headers">
+        <h3>Source headers</h3>
+        <dl>
+          {#each selectedHeaders.source as h, i (i)}
+            <dt class="mono">{h.key}</dt>
+            <dd class="mono">{h.value ?? '—'}{h.value_encoding === 'base64' ? ' (base64)' : ''}</dd>
+          {/each}
+        </dl>
+      </div>
+    {/if}
   </SidePanel>
 {/if}
 
@@ -223,5 +248,22 @@
   }
   .actions {
     margin-bottom: 0.8rem;
+  }
+  .probe-off {
+    margin: 0.4rem 0 0;
+    font-size: 0.78rem;
+    color: #d97706;
+  }
+  .dk-headers {
+    width: 100%;
+    margin-bottom: 0.8rem;
+  }
+  .dk-headers td {
+    vertical-align: top;
+  }
+  /* dk-error can run to 2000 bytes: wrap it instead of widening the panel. */
+  .wrap {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 </style>

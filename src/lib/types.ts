@@ -789,6 +789,8 @@ export interface ProbeRequest {
   partition: number
   offset: number
   topic: string
+  /** Epoch ms of the probed message; null or absent means the backend's now. */
+  timestamp?: number | null
   use_cache: boolean
 }
 
@@ -994,7 +996,7 @@ export interface UIPage {
 }
 
 export interface DebugReport {
-  input: ProbeRequest & { timestamp?: number | null }
+  input: ProbeRequest
   deserialize_error: ProbeError | null
   parsed_payload: unknown
   message_label: string | null
