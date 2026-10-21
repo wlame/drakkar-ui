@@ -114,6 +114,55 @@ describe('TraceTab history search (v1.23)', () => {
     expect(target.textContent).toContain('3 events')
     cleanup()
   })
+
+  it('hints at the cluster history when nothing is found without history', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('[]', { status: 200 })),
+    )
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    await trace(target, '0:5')
+
+    expect(target.textContent).toContain(
+      'No events found for 0:5 (search history to look in the cluster history too)',
+    )
+    cleanup()
+  })
+
+  it.each([
+    ['one own row', [traceRow(1, 100, 'w-1', 'consumed')], '1 events (the history search failed)'],
+    ['no own row', [], 'No events found for 0:5 (the history search failed)'],
+  ])(
+    'shows the history failure note when the history search answers 503 (%s)',
+    async (_n, ownRows, expected) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: RequestInfo | URL) => {
+          const url = String(input)
+          if (url.includes('/debug/trace?') && url.includes('history=1')) {
+            return new Response(JSON.stringify({ detail: 'history search failed' }), {
+              status: 503,
+            })
+          }
+          if (url.includes('/debug/trace?')) {
+            return new Response(JSON.stringify(ownRows), { status: 200 })
+          }
+          return new Response('[]', { status: 200 })
+        }),
+      )
+      const { target, cleanup } = renderMounted()
+      await settled()
+
+      target.querySelector<HTMLInputElement>('.bar input[type=checkbox]')!.click()
+      flushSync()
+      await trace(target, '0:5')
+
+      expect(target.textContent).toContain(expected)
+      cleanup()
+    },
+  )
 })
 
 // The cluster fan-out (v1.23 part 3): the own-file reads go to every

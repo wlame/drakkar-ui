@@ -3,7 +3,7 @@
   // key=value (ports debug.html trace). Both searches read the own files of
   // every worker of the current worker's cluster (contract v1.23 fan-out;
   // rows carry worker_name), and the partition:offset search with "search
-  // history" also reads the sealed history of the cluster once, on this
+  // history" also reads the cluster history (sealed files, or Postgres, v1.26) once, on this
   // worker (history=1). The answers are merged here; workers that did not
   // answer are listed. Supports the #trace/<partition>/<offset> deep-link
   // prefill via the `prefill` prop.
@@ -59,7 +59,7 @@
   })
 
   // Row ids are per file: the same id appears in several workers' files and
-  // in several sealed files. One row is (worker, id, event, time).
+  // in several history files. One row is (worker, id, event, time).
   function rowKey(e: TraceEvent): string {
     return `${e.worker_name}|${e.id}|${e.event}|${e.ts}`
   }
@@ -131,7 +131,7 @@
       const historyNote = historyRows.status === 'rejected' ? ' (the history search failed)' : ''
       statusMsg = ev.length
         ? `${ev.length} events${historyNote}`
-        : `No events found for ${p}:${o}${includeHistory ? historyNote : ' (search history to look in sealed files too)'}`
+        : `No events found for ${p}:${o}${includeHistory ? historyNote : ' (search history to look in the cluster history too)'}`
     } catch (e) {
       if (seq !== searchSeq) return
       statusMsg = e instanceof Error ? e.message : String(e)

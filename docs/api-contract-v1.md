@@ -247,7 +247,7 @@ the appendix.
   `history/<cluster>/` folder. See v1.8 and v1.23 below.
 - `GET /api/v1/debug/trace?partition=&offset=[&history=1]` (partition and
   offset required int) → array of event rows. `partition` must fit int32 →
-  422 otherwise. `history=1` searches sealed history only (v1.23).
+  422 otherwise. `history=1` searches sealed history only (v1.23) or the worker's Postgres history (v1.26).
 - `GET /api/v1/debug/label-keys` → sorted array of distinct label-key strings.
 - `GET /api/v1/debug/trace-by-label?key=&value=` (both required, non-empty →
   422) → array of event rows.
@@ -1851,6 +1851,33 @@ The bundled UI polls with `after_id: 0`; the note serves other clients.
 - A client older than v1.25 on a newer backend shows the memory row without
   a download button and with the title of a `backlog` row. This is wrong but
   harmless; its `live` button calls without `source` and gets the live file.
+
+## v1.26 changes (2026-11-03)
+
+The recorder can keep its history in Postgres. One meaning and one error
+answer change, both for `GET /api/v1/debug/trace` with `history=1` on a
+worker whose recorder keeps its history in Postgres. No shape changes.
+
+- **Source.** With `history=1`, such a worker searches the rows of its own
+  cluster in Postgres, not the sealed files. Without `history`, the search
+  is unchanged (own live file and own unsealed files, or the memory store).
+- **Row shape.** The same as before: the recorder event columns plus
+  `worker_name`.
+- **Complete answer.** The answer is never cut by a file budget.
+- **Failure.** A Postgres search that fails or does not finish in time
+  answers **503** with `{"detail": "history search failed"}`. This applies to
+  `history=1` only; the search without `history` keeps its rule.
+
+The bundled UI shows the hint "(search history to look in the cluster
+history too)" and, when the history search fails, the note "(the history
+search failed)".
+
+### Absence (normative)
+
+- A backend older than v1.26 searches sealed files only and never answers
+  503 for this request.
+- A client older than v1.26 on a newer backend shows the old hint and
+  handles the 503 as a failed history search, which is right.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 

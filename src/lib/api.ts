@@ -226,8 +226,8 @@ export const api = {
   // Debug: metrics / periodic / trace
   debugMetrics: () => get<MetricFamily[]>('/debug/metrics'),
   debugPeriodic: () => get<PeriodicTask[]>('/debug/periodic'),
-  // history=true searches only the sealed history of the serving worker's
-  // cluster (v1.23); without it, only that worker's own files.
+  // history=true searches only the cluster history of the serving worker
+  // (sealed files, or its Postgres history since v1.26); without it, only that worker's own files.
   debugTrace: (partition: number, offset: number, history = false) =>
     get<TraceEvent[]>(`/debug/trace${qs({ partition, offset, history: history ? 1 : undefined })}`),
   debugLabelKeys: () => get<string[]>('/debug/label-keys'),
