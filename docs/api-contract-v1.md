@@ -1901,11 +1901,11 @@ with `dk-`. Then come the `dk-` headers, all UTF-8 text, in this order:
 |---|---|
 | `dk-record-version` | `1` |
 | `dk-stage` | `parse`, `execute` or `sink` |
-| `dk-error` | the error text, at most 2000 bytes, URL credentials redacted |
+| `dk-error` | the error text with URL credentials redacted, then cut to 2000 bytes at a UTF-8 character boundary |
 | `dk-sink` | `<sink_type>/<sink_name>` of the failed sink (`sink` stage only) |
 | `dk-task-id` | the failed task's id (`execute` stage only) |
-| `dk-attempts` | attempts made, decimal (`0`: the sink's circuit was open; absent for `parse`) |
-| `dk-delivered-sinks` | sorted, comma-joined `<sink_type>/<sink_name>` of the sinks that delivered a result of the message first |
+| `dk-attempts` | decimal: for a `sink` failure the hook-level attempts of that sink for this message (`0` for an open circuit); for an `execute` failure the task's attempts; absent for `parse` |
+| `dk-delivered-sinks` | `<sink_type>/<sink_name>` of every sink that had delivered a result of this message before the record was written, sorted and joined with `,`; absent when none |
 | `dk-source-topic` | the source topic (absent for an HTTP request) |
 | `dk-source-partition` | decimal (absent for an HTTP request) |
 | `dk-source-offset` | decimal (absent for an HTTP request) |
@@ -1915,7 +1915,8 @@ with `dk-`. Then come the `dk-` headers, all UTF-8 text, in this order:
 | `dk-instance` | the worker instance id |
 | `dk-failed-at` | the canonical datetime of the failure (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) |
 
-A header whose value is absent is not written. For an HTTP request the
+A header with no value is not written; `0` is a value, and an empty
+delivered-sinks list is no value. For an HTTP request the
 value is the raw request body and the key is absent. The bundled UI shows
 the `dk-` headers as a table above the value and the source headers below
 it. Its probe prefill takes topic, partition, offset and timestamp from the
@@ -1939,17 +1940,18 @@ Two new event types, both stored in `events` and sent on `/ws`:
   failed. `partition`; `metadata`: `sink`, `reason` (`message_dlq` or
   `dependency_failed`).
 
-A `sink_error` row stands for one failed delivery attempt (`attempt` `0`:
-the sink's circuit was open). Its `metadata` gains **`action`**: `retry`,
-`skip` (also for a window result), `dlq` (a record was written) or `failed`
-(the delivery wrote no record).
+A `sink_error` row stands for one failed delivery attempt. Its `metadata`
+is `sink_type`, `sink_name`, `error`, `attempt` (`0`: the sink's circuit was
+open) and the new field **`action`**: `retry`, `skip` (also for a window
+result), `dlq` (a record was written) or `failed` (the delivery wrote no
+record). `attempt` is not new.
 
 ### Absence (normative)
 
 - A backend older than v1.27 writes DLQ records without `dk-` headers.
   Clients MUST then treat every fact as absent and probe the record at its
   own coordinates. Such a backend never sends `message_dlq` or
-  `sink_not_started`, and its `sink_error` rows have no `action`.
+  `sink_not_started`, and it writes no `action` in `sink_error` metadata.
 - A client older than v1.27 on a newer backend shows the `dk-` headers as
   ordinary headers and probes the record at its DLQ coordinates. It renders
   the two new event types as uncategorised events (see the vocabulary

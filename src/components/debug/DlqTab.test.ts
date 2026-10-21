@@ -233,7 +233,10 @@ describe('DlqTab', () => {
       const { cleanup } = await openPanel(dlqMessage(overrides))
 
       expect(probeButton().disabled).toBe(true)
-      expect(document.body.querySelector('.probe-off')?.textContent).toContain(note)
+      const reason = document.body.querySelector('.probe-off')
+      expect(reason?.textContent).toContain(note)
+      expect(reason?.id).toBeTruthy()
+      expect(probeButton().getAttribute('aria-describedby')).toBe(reason?.id)
       cleanup()
     },
   )
@@ -242,6 +245,7 @@ describe('DlqTab', () => {
     const { cleanup } = await openPanel(dlqMessage())
 
     expect(probeButton().disabled).toBe(false)
+    expect(probeButton().hasAttribute('aria-describedby')).toBe(false)
     expect(document.body.querySelector('.probe-off')).toBeNull()
     cleanup()
   })

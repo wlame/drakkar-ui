@@ -125,7 +125,7 @@ describe('probeCoordinates', () => {
       partition: 1,
       offset: 77,
       timestampMs: 1_793_000_000_789,
-      fromSourceHeaders: true,
+      fromSourceHeaders: ['topic', 'partition', 'offset', 'timestamp'],
     })
   })
 
@@ -135,7 +135,7 @@ describe('probeCoordinates', () => {
       partition: 4,
       offset: 9,
       timestampMs: 1_793_000_005_000,
-      fromSourceHeaders: false,
+      fromSourceHeaders: [],
     })
   })
 
@@ -145,7 +145,7 @@ describe('probeCoordinates', () => {
       partition: 4,
       offset: 9,
       timestampMs: 1_793_000_001_000,
-      fromSourceHeaders: true,
+      fromSourceHeaders: ['timestamp'],
     })
   })
 })

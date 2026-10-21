@@ -5,7 +5,7 @@
 // before v1.27 has no dk- headers; every fact is then absent.
 import type { KafkaReadHeader, KafkaReadMessage } from './types'
 
-export const DK_HEADER_PREFIX = 'dk-'
+const DK_HEADER_PREFIX = 'dk-'
 
 // One field per dk- header. Absent headers, base64 values and decimals that
 // do not parse read as null (deliveredSinks: an empty list).
@@ -35,12 +35,15 @@ export interface ProbeCoordinates {
   partition: number
   offset: number
   timestampMs: number | null
-  fromSourceHeaders: boolean
+  // The probe fields that came from dk-source-* headers, in form order.
+  fromSourceHeaders: ProbeField[]
 }
+
+export type ProbeField = 'topic' | 'partition' | 'offset' | 'timestamp'
 
 const DECIMAL = /^\d+$/
 
-export function isDkHeader(header: KafkaReadHeader): boolean {
+function isDkHeader(header: KafkaReadHeader): boolean {
   return header.key.startsWith(DK_HEADER_PREFIX)
 }
 
@@ -103,11 +106,16 @@ export function probeCoordinates(msg: KafkaReadMessage): ProbeCoordinates {
     partition: facts.sourcePartition ?? msg.partition,
     offset: facts.sourceOffset ?? msg.offset,
     timestampMs: facts.sourceTimestampMs ?? msg.timestamp_ms,
-    fromSourceHeaders:
-      facts.sourceTopic != null ||
-      facts.sourcePartition != null ||
-      facts.sourceOffset != null ||
-      facts.sourceTimestampMs != null,
+    fromSourceHeaders: (
+      [
+        ['topic', facts.sourceTopic],
+        ['partition', facts.sourcePartition],
+        ['offset', facts.sourceOffset],
+        ['timestamp', facts.sourceTimestampMs],
+      ] as [ProbeField, unknown][]
+    )
+      .filter(([, fact]) => fact != null)
+      .map(([field]) => field),
   }
 }
 

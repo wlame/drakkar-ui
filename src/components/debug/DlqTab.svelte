@@ -156,8 +156,8 @@
     onclose={() => (selected = null)}
   >
     <div class="actions">
-      <button class="primary" disabled={probeBlocked != null} onclick={() => selected && probe(selected)}>Probe this message</button>
-      {#if probeBlocked}<p class="probe-off">{probeBlocked}</p>{/if}
+      <button class="primary" disabled={probeBlocked != null} aria-describedby={probeBlocked ? 'dlq-probe-off-reason' : undefined} onclick={() => selected && probe(selected)}>Probe this message</button>
+      {#if probeBlocked}<p class="probe-off" id="dlq-probe-off-reason">{probeBlocked}</p>{/if}
     </div>
     <dl>
       <dt>time</dt><dd class="mono">{fmtDateTimeMs(selected.timestamp_ms)}</dd>

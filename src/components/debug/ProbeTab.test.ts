@@ -106,7 +106,9 @@ describe('ProbeTab prefill', () => {
     expect(field(target, 'Partition').value).toBe('1')
     expect(field(target, 'Offset').value).toBe('77')
     expect(field(target, 'Timestamp').value).toBe('1793000000789')
-    expect(target.querySelector('.prefill-note')?.textContent).toContain('dk-source')
+    expect(target.querySelector('.prefill-note')?.textContent).toContain(
+      'topic, partition, offset, timestamp from its dk-source-* headers',
+    )
 
     runButton(target).click()
     await settled()
@@ -133,6 +135,24 @@ describe('ProbeTab prefill', () => {
     expect(field(target, 'Offset').value).toBe('9')
     expect(field(target, 'Timestamp').value).toBe('1793000005000')
     expect(runButton(target).disabled).toBe(false)
+    expect(target.querySelector('.prefill-note')?.textContent).not.toContain('dk-source')
+    cleanup()
+  })
+
+  it('names only the timestamp in the note for an HTTP record', async () => {
+    const httpHeaders = headers([
+      ['dk-record-version', '1'],
+      ['dk-stage', 'sink'],
+      ['dk-source-timestamp', '1793000001000'],
+      ['dk-request-id', 'req_20261105T101530_0042'],
+    ])
+    const { target, cleanup } = await renderPrefilled(dlqRecord({ headers: httpHeaders }))
+
+    expect(field(target, 'Partition').value).toBe('4')
+    expect(field(target, 'Timestamp').value).toBe('1793000001000')
+    const note = target.querySelector('.prefill-note')?.textContent ?? ''
+    expect(note).toContain('— timestamp from its dk-source-* headers')
+    expect(note).not.toContain('partition')
     cleanup()
   })
 
@@ -143,7 +163,10 @@ describe('ProbeTab prefill', () => {
     const { target, fetchStub, cleanup } = await renderPrefilled(dlqRecord(overrides))
 
     expect(runButton(target).disabled).toBe(true)
-    expect(target.querySelector('.probe-off')?.textContent).toContain(note)
+    const reason = target.querySelector('.probe-off')
+    expect(reason?.textContent).toContain(note)
+    expect(reason?.id).toBeTruthy()
+    expect(runButton(target).getAttribute('aria-describedby')).toBe(reason?.id)
 
     // Enter in a field submits the form even with the button off.
     target

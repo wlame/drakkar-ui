@@ -105,7 +105,9 @@
       probeBlocked = probeBlockedReason(msg)
       prefillNote =
         `Prefilled from ${alias} P${msg.partition}:${msg.offset}` +
-        (coords.fromSourceHeaders ? ' — source coordinates from its dk-source-* headers' : '')
+        (coords.fromSourceHeaders.length
+          ? ` — ${coords.fromSourceHeaders.join(', ')} from its dk-source-* headers`
+          : '')
     } catch (e) {
       prefillError = `Could not prefill from ${alias} P${p}:${o} — ${e instanceof Error ? e.message : String(e)}`
     }
@@ -210,7 +212,7 @@
 
 {#if prefillNote}<p class="prefill-note">{prefillNote}</p>{/if}
 {#if prefillError}<p class="error">{prefillError}</p>{/if}
-{#if probeBlocked}<p class="warn probe-off">{probeBlocked}</p>{/if}
+{#if probeBlocked}<p class="warn probe-off" id="probe-off-reason">{probeBlocked}</p>{/if}
 
 {#if collapsed && report}
   <div class="chip">
@@ -226,7 +228,7 @@
     <label>Offset<input type="number" min="0" bind:value={offset} /></label>
     <label>Timestamp (ms)<input type="number" min="0" placeholder="now" bind:value={timestamp} /></label>
     <label class="ck"><input type="checkbox" bind:checked={useCache} /> Use cache (read-only)</label>
-    <div class="run"><button class="primary" type="submit" disabled={busy || probeBlocked != null}>{busy ? 'Running…' : 'Run'}</button></div>
+    <div class="run"><button class="primary" type="submit" disabled={busy || probeBlocked != null} aria-describedby={probeBlocked ? 'probe-off-reason' : undefined}>{busy ? 'Running…' : 'Run'}</button></div>
   </form>
 {/if}
 
@@ -237,7 +239,7 @@
 
   <div class="toolbar">
     <button onclick={downloadJson}>Download JSON</button>
-    <button onclick={run} disabled={busy || probeBlocked != null}>Re-run</button>
+    <button onclick={run} disabled={busy || probeBlocked != null} aria-describedby={probeBlocked ? 'probe-off-reason' : undefined}>Re-run</button>
     <button onclick={() => (collapsed = false)}>Edit &amp; re-run</button>
   </div>
 
