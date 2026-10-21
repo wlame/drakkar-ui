@@ -370,8 +370,8 @@ format `YYYY-MM-DDTHH:MM:SS.ffffffZ` (fixed six-digit microseconds); the
 
 ## Recorder event-type vocabulary (the `event` field)
 
-**PINNED (v1.21).** An `event` field carries one of these 30
-names and nothing else — 29 of them can appear in the `events` table,
+**PINNED (v1.27).** An `event` field carries one of these 32
+names and nothing else — 31 of them can appear in the `events` table,
 and `throughput` is broadcast on `/ws` only. The UI matches on these names,
 so a name is as contractual as a column: adding, renaming or removing one is
 a contract change that updates this section and both backends together.
@@ -393,6 +393,7 @@ each name and whether it is stored. The Python repo owns the fixture
 | `committed` | both | `events` + `/ws` |
 | `consumed` | both | `events` + `/ws` |
 | `message_complete` | both | `events` + `/ws` |
+| `message_dlq` | both | `events` + `/ws` |
 | `offload` | Python only | `events` + `/ws` |
 | `partition_stalled` | both | `events` + `/ws` |
 | `periodic_run` | both | `events` + `/ws` |
@@ -405,6 +406,7 @@ each name and whether it is stored. The Python repo owns the fixture
 | `runtime_stall` | both | `events` + `/ws` |
 | `sink_delivered` | both | `events` + `/ws` |
 | `sink_error` | both | `events` + `/ws` |
+| `sink_not_started` | both | `events` + `/ws` |
 | `task_complete` | both | `events` + `/ws` |
 | `task_completed` | both | `events` + `/ws` |
 | `task_failed` | both | `events` + `/ws` |
@@ -1098,7 +1100,8 @@ pattern: routes stay registered, policy refuses).
   Byte fields are utf-8 text when the bytes decode, else base64, with the
   encoding flagged. `timestamp_ms` is null when the broker reports no
   timestamp. The record's topic is echoed as `alias`, never as the raw
-  name.
+  name. Since v1.27 a `dlq` record carries `dk-` headers after the source
+  headers (see **v1.27 changes**); the shape is unchanged.
 - **Security posture** (normative): the endpoints sit behind the standard
   optional `auth_token` gate. When any readable alias resolves to a
   non-PLAINTEXT Kafka security config while `auth_token` is empty (and the
@@ -1878,6 +1881,79 @@ search failed)".
   503 for this request.
 - A client older than v1.26 on a newer backend shows the old hint and
   handles the 503 as a failed history search, which is right.
+
+## v1.27 changes (2026-11-05)
+
+A DLQ record is now the original source message with facts in `dk-`
+headers, and the recorder has two new event types. No `/api/v1` shape
+changes.
+
+### DLQ records (informational)
+
+A record on the dead-letter topic is the failed source message: its key and
+value are the source key and value, byte for byte. `GET
+/api/v1/debug/kafka/dlq/message` and `/messages` pass the record through as
+before (`KafkaReadMessage`). The `headers` list holds the source message's
+own headers first, in their order, minus every header whose name starts
+with `dk-`. Then come the `dk-` headers, all UTF-8 text, in this order:
+
+| Header | Value |
+|---|---|
+| `dk-record-version` | `1` |
+| `dk-stage` | `parse`, `execute` or `sink` |
+| `dk-error` | the error text, at most 2000 bytes, URL credentials redacted |
+| `dk-sink` | `<sink_type>/<sink_name>` of the failed sink (`sink` stage only) |
+| `dk-task-id` | the failed task's id (`execute` stage only) |
+| `dk-attempts` | attempts made, decimal (`0`: the sink's circuit was open; absent for `parse`) |
+| `dk-delivered-sinks` | sorted, comma-joined `<sink_type>/<sink_name>` of the sinks that delivered a result of the message first |
+| `dk-source-topic` | the source topic (absent for an HTTP request) |
+| `dk-source-partition` | decimal (absent for an HTTP request) |
+| `dk-source-offset` | decimal (absent for an HTTP request) |
+| `dk-source-timestamp` | the source message's timestamp in epoch ms; for an HTTP request the time it was received |
+| `dk-request-id` | the request id (HTTP request only) |
+| `dk-worker` | the worker name |
+| `dk-instance` | the worker instance id |
+| `dk-failed-at` | the canonical datetime of the failure (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) |
+
+A header whose value is absent is not written. For an HTTP request the
+value is the raw request body and the key is absent. The bundled UI shows
+the `dk-` headers as a table above the value and the source headers below
+it. Its probe prefill takes topic, partition, offset and timestamp from the
+`dk-source-*` headers (each one, when present; else the record's own
+partition, offset and `timestamp_ms`, and the configured source topic), and
+it does not probe a record whose value or key comes as base64, because the
+probe takes text. The probe sends the timestamp as the existing
+`ProbeInput.timestamp`.
+
+### Recorder events
+
+Two new event types, both stored in `events` and sent on `/ws`:
+
+- **`message_dlq`**: a source message is written to the DLQ; no later
+  delivery of it starts. `partition`, `offset`; for an HTTP request
+  `origin` is `"http"`, `request_id` is set, `partition` is `-1` and
+  `offset` is null. `metadata`: `stage`, `sink`, `error`,
+  `delivered_sinks`, `attempts`.
+- **`sink_not_started`**: the delivery of a result to a sink does not
+  start, because its message is on the DLQ or a `depends_on` dependency
+  failed. `partition`; `metadata`: `sink`, `reason` (`message_dlq` or
+  `dependency_failed`).
+
+A `sink_error` row stands for one failed delivery attempt (`attempt` `0`:
+the sink's circuit was open). Its `metadata` gains **`action`**: `retry`,
+`skip` (also for a window result), `dlq` (a record was written) or `failed`
+(the delivery wrote no record).
+
+### Absence (normative)
+
+- A backend older than v1.27 writes DLQ records without `dk-` headers.
+  Clients MUST then treat every fact as absent and probe the record at its
+  own coordinates. Such a backend never sends `message_dlq` or
+  `sink_not_started`, and its `sink_error` rows have no `action`.
+- A client older than v1.27 on a newer backend shows the `dk-` headers as
+  ordinary headers and probes the record at its DLQ coordinates. It renders
+  the two new event types as uncategorised events (see the vocabulary
+  section).
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 
