@@ -31,6 +31,8 @@
   const groups = $derived.by<ClusterGroup[]>(() => {
     const out: ClusterGroup[] = []
     for (const w of workers) {
+      // A worker with no UI has no page to switch to.
+      if (w.ui_enabled === false && !w.is_current) continue
       const cluster = w.cluster || ''
       const last = out[out.length - 1]
       if (last && last.cluster === cluster) last.workers.push(w)

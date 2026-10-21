@@ -77,6 +77,22 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('WorkerSwitcher ui_enabled', () => {
+  it('leaves a worker with ui_enabled false out of the links', async () => {
+    workersPayload = [
+      worker({ worker_name: 'worker-a', is_current: true }),
+      worker({ worker_name: 'worker-b', url: 'http://worker-b:8080/' }),
+      worker({ worker_name: 'worker-headless', url: 'http://wh:8080/', ui_enabled: false }),
+      worker({ worker_name: 'worker-null', url: 'http://wn:8080/', ui_enabled: null }),
+    ]
+    const { target, cleanup } = await openMenu()
+
+    const names = [...target.querySelectorAll('.menu .item .mono')].map((n) => n.textContent)
+    expect(names).toEqual(['worker-a', 'worker-b', 'worker-null'])
+    cleanup()
+  })
+})
+
 describe('WorkerSwitcher liveness', () => {
   it('renders peers without the v1.18 fields exactly as before (no offline chrome)', async () => {
     workersPayload = [

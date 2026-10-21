@@ -14,6 +14,7 @@ import type { TimelineConfig, TimelineEventDecl } from '../../lib/types'
 import type { EventMatch, TimelineEventView } from '../../lib/timelineEvents'
 import { tagBoxWidth, TAG_EDGE_MARGIN_PX } from '../../lib/timeline'
 import { openDocsAnchor, setDocsConfig } from '../../lib/docsAnchors'
+import { identity } from '../../lib/config'
 
 // A fixed synthetic epoch (seconds), pinned onto the clock in beforeEach —
 // deliberately NOT Date.now(). Every fixture timestamp below is expressed
@@ -485,74 +486,35 @@ describe('Timeline', () => {
   })
 })
 
-describe('throughput track', () => {
-  const win = (v: number) => ({ throughput: v, task_rate: 1.5, tasks: 9 })
-  const sample = (offset: number, value: number) => ({
-    ts: NOW - offset,
-    windows: {
-      '1': win(value),
-      '5': win(value),
-      '30': win(value),
-    },
-  })
-  const openGear = (target: HTMLElement) => {
-    ;(target.querySelector('button.gear') as HTMLButtonElement).click()
-    flushSync()
-  }
+describe('memory window note', () => {
+  afterEach(() => identity.set(null))
 
-  it('hides the track and the window switcher without samples', () => {
-    const { target } = render({ tasks: [task('t-1', 60)] })
-    expect(target.querySelector('.tl-throughput')).toBeNull()
-    openGear(target)
-    expect(target.querySelector('.tp-controls')).toBeNull()
-  })
+  const title = (target: HTMLElement) => target.querySelector('.tl-note')?.textContent ?? ''
 
-  it('keeps the window switcher out of the toolbar until the gear opens', () => {
-    const { target } = render({
-      tasks: [task('t-1', 60)],
-      throughput: [sample(10, 30_000_000), sample(5, 41_250_000)],
-    })
-
-    expect(target.querySelector('.tl-throughput polyline')).not.toBeNull()
-    expect(target.querySelector('.tp-controls')).toBeNull()
-
-    openGear(target)
-    const chips = [...target.querySelectorAll('.tp-chip')].map((c) => c.textContent)
-    expect(chips).toEqual(['1s', '5s', '30s'])
-    expect(target.querySelector('.tp-now')?.textContent).toContain('41.3M/s')
-    expect(target.querySelector('.tp-now')?.textContent).toContain('1.5 t/s')
-  })
-
-  it('draws the 5 s window by default and switches via the chips', () => {
-    const mixed = {
-      ts: NOW - 5,
-      windows: {
-        '1': win(1_000_000),
-        '5': win(5_000_000),
-        '30': win(1_000_000),
+  it('says the window is in memory when the recorder is off', () => {
+    identity.set({
+      worker_id: 'w',
+      cluster: null,
+      config_summary: '',
+      capabilities: {
+        recorder: { enabled: false, provider: 'none', history_search: false },
+        memory: { enabled: true, window_seconds: 120, max_rows: 12000 },
       },
-    }
-    const { target } = render({ tasks: [task('t-1', 60)], throughput: [mixed] })
-    openGear(target)
-    expect(target.querySelector('.tp-now')?.textContent).toContain('5.0M/s') // default 5s
-
-    const chip = [...target.querySelectorAll('.tp-chip')].find((c) => c.textContent === '30s')
-    ;(chip as HTMLButtonElement).click()
-    flushSync()
-
-    expect(target.querySelector('.tp-now')?.textContent).toContain('1.0M/s')
+    })
+    const { target } = renderTracked()
+    expect(title(target)).toContain('last 2 minutes, in memory')
+    expect(title(target)).not.toContain('last 30 min')
   })
 
-  it('shows per-task speed in the bar hover detail', () => {
-    const { target } = render({
-      tasks: [task('t-speedy', 60, { speed: 4_194_304, cost: 8_388_608 })],
+  it('keeps the configured depth when the recorder runs or capabilities are missing', () => {
+    expect(title(renderTracked().target)).toContain('last 30 min')
+    identity.set({
+      worker_id: 'w',
+      cluster: null,
+      config_summary: '',
+      capabilities: { recorder: { enabled: true } },
     })
-    const bar = barFor(target, 't-speedy')
-    bar.dispatchEvent(new MouseEvent('mouseenter'))
-    flushSync()
-
-    expect(target.querySelector('.tl-hover')?.textContent).toContain('Speed:')
-    expect(target.querySelector('.tl-hover')?.textContent).toContain('4.2M/s')
+    expect(title(renderTracked().target)).toContain('last 30 min')
   })
 })
 

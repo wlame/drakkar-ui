@@ -132,7 +132,7 @@
       cli = parts.map((p) => JSON.stringify(p)).join(' ')
     }
 
-    // stdin content: on task_started metadata when ui.recorder.store_stdin is
+    // stdin content: on task_started metadata when recorder.capture.stdin is
     // on; failed tasks carry it on the task_failed metadata regardless.
     const failedMeta = safeJsonParse<Record<string, unknown>>(failed?.metadata, {})
     const stdin =
@@ -311,7 +311,7 @@
   {/if}
 
   {#if vm.stdin != null}
-    <h2>Stdin {#if vm.stdinTruncated}<span class="cap-note">(truncated at ui.recorder.stdin_max_bytes)</span>{/if}</h2>
+    <h2>Stdin {#if vm.stdinTruncated}<span class="cap-note">(truncated at recorder.capture.max_stdin)</span>{/if}</h2>
     <CodeBlock text={vm.stdin} maxHeight="22rem" />
   {:else if vm.stdinBytes}
     <h2>Stdin</h2>
@@ -319,7 +319,7 @@
          retention setting that excluded the content. -->
     <p class="muted">
       {fmtBytes(vm.stdinBytes)} consumed, content not stored — enable
-      <code>ui.recorder.store_stdin</code> to keep it (failed tasks always store it, capped).
+      <code>recorder.capture.stdin</code> to keep it (failed tasks always store it, capped).
     </p>
   {/if}
 
@@ -330,7 +330,7 @@
     <h2>Stdout</h2>
     <p class="muted">
       {fmtBytes(vm.completed.stdout_size)} produced, content not stored — the task finished under
-      <code>ui.recorder.output_min_duration_ms</code>, or <code>ui.recorder.store_output</code> is
+      <code>recorder.capture.min_output_duration</code>, or <code>recorder.capture.output</code> is
       off.
     </p>
   {/if}

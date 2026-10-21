@@ -38,6 +38,16 @@ describe('fanOutTargets', () => {
     expect(unreachable).toEqual([])
   })
 
+  it('leaves a worker with ui_enabled false out of the fan-out, not even listed', () => {
+    const { targets, unreachable } = fanOutTargets([
+      peer('w-1', { is_current: true }),
+      peer('w-headless', { ui_enabled: false }),
+    ])
+
+    expect(targets.map((t) => t.worker)).toEqual(['w-1'])
+    expect(unreachable).toEqual([])
+  })
+
   it('lists a peer without an address as unreachable', () => {
     const { targets, unreachable } = fanOutTargets([
       peer('w-1', { is_current: true }),

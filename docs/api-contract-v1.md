@@ -37,7 +37,7 @@ the appendix.
   each other for the cache exchange and send no token (v1.23).
 - **`/ws` Origin:** checked on every handshake, with or without a token. An
   absent `Origin` (non-browser clients) and a same-origin one always pass;
-  a non-empty `ui.allowed_ws_origins` is a strict allowlist. With a token
+  a non-empty `ui.allowed_origins` is a strict allowlist. With a token
   set, every other cross-origin handshake is `4403`. Without one, a
   cross-origin handshake passes — this is what the cluster view relies on —
   **unless** the request `Host` is a loopback address and the `Origin` host
@@ -47,7 +47,7 @@ the appendix.
   every worker of the cluster: `GET /api/v1/debug/trace`,
   `/api/v1/debug/trace-by-label` and `/api/v1/debug/databases`. These paths
   answer cross-origin requests with the same origin rule as `/ws` (same
-  table, same `ui.allowed_ws_origins` key). An `OPTIONS` preflight on them
+  table, same `ui.allowed_origins` key). An `OPTIONS` preflight on them
   needs no token. Allowed: `204` with `Access-Control-Allow-Origin:
   <origin>`, `Access-Control-Allow-Methods: GET`,
   `Access-Control-Allow-Headers: Authorization`,
@@ -57,7 +57,7 @@ the appendix.
   `GET` from a refused origin carries no CORS header (the browser then
   blocks the answer), and auth applies as usual. No other path sends CORS
   headers. With a token set, every worker origin must be listed in
-  `ui.allowed_ws_origins` for the fan-out to work.
+  `ui.allowed_origins` for the fan-out to work.
 - **Content-Type:** `application/json` (no charset suffix).
 - **Error envelopes:** `{"detail":"..."}` for 401/404/500/503;
   `{"detail":[{"loc":[...],"msg":"..."}]}` for 422; legacy `{"error":"..."}`
@@ -225,14 +225,14 @@ the appendix.
   (v1.23; see "Sealed history" below).
 - `POST /api/v1/debug/merge` body `{filenames:[path] (≥2)}` → `{filename,
   path, worker_count, event_count, state_count, cluster_name,
-  source_files:[str]}`. Paths are relative to `shared.dir` (v1.23). 400 on
+  source_files:[str]}`. Paths are relative to `storage.shared_dir` (v1.23). 400 on
   malformed JSON body; segment hardening rejects `/ \` leading-`.` `"` `;`
   and control chars; 404 for missing files; 500 when the merge itself
   fails; errors via `{"error":...}`.
 - `GET /api/v1/debug/download/{path}` → file attachment; `Content-Type:
   application/x-sqlite3` (`.db`) or `application/gzip` (`.db.gz`),
   `Content-Disposition: attachment; filename="..."`, `Cache-Control:
-  no-store, private`. `path` relative to `shared.dir` (v1.23). Token may
+  no-store, private`. `path` relative to `storage.shared_dir` (v1.23). Token may
   ride as `?token=` (plain `<a>` downloads cannot set headers).
 - `GET /api/v1/debug/download-live` → a consistent snapshot of the serving
   worker's live recorder file (SQLite backup API), as an attachment with
@@ -871,7 +871,7 @@ that field is absent.
     itself clamped to `100000` since neither config value has its own
     ceiling.
   - `minutes`'s allowed range rises to `1`–`1440`; requests are
-    additionally clamped server-side to `ui.timeline.max_age_minutes` when
+    additionally clamped server-side to `ui.timeline.max_age` when
     that config is smaller.
   - Each `RecentTaskEntry` gains `stdout_size:int|null` — the existing
     recorder column, now selected on the resync path so color rules keyed
@@ -900,7 +900,7 @@ that field is absent.
 ## v1.8 additions (2026-08-10)
 
 Read-only access to compressed recorder archives: the periodic archive pass
-(`ui.recorder.archive_enabled`) folds a finished time window's raw
+(`recorder.archive.enabled`) folds a finished time window's raw
 `<worker>-*.db` files into one gzip-compressed, merged sqlite db per
 cluster and deletes the raw files it merged. Additive: two new endpoints,
 two new schemas. A backend that predates this section has no
@@ -1057,7 +1057,7 @@ a behavioral note. No new endpoint.
   externally deleted files disappear on the next request; only derived
   statistics are cached. `stats_pending: true` marks rows whose
   statistics were not computed yet (cold cache, per-request inline scan
-  budget exhausted — `ui.recorder.dbstats_inline_scan_limit`); a
+  budget exhausted); a
   background warmer fills them in, so clients should simply re-poll.
   Clients must ignore unknown keys, as ever.
 
@@ -1111,7 +1111,7 @@ pattern: routes stay registered, policy refuses).
 
 Timed consume pause — a Live-page debug control that stops message intake
 for a bounded period. Three endpoints, plus config
-`ui.consume_pause.{enabled, durations_seconds}` (default: disabled,
+`ui.consume_pause.{enabled, durations}` (default: disabled,
 presets `[15, 60, 300, 900]`).
 
 - **`GET /debug/consume-pause`** — always `200 ConsumePauseState =
@@ -1350,7 +1350,7 @@ clustered-first sort order.
   heartbeat in that worker's recorder database; `null` when no heartbeat
   is known.
 - **`online: boolean`** — `true` iff the heartbeat is fresher than the
-  serving backend's `ui.workers_offline_after_seconds` (default 30).
+  serving backend's `autodiscover.offline_after`.
 - **Current worker** (normative): the row with `is_current: true` always
   reports `online: true` — the backend answering the request is alive by
   construction.
@@ -1582,7 +1582,7 @@ Peer rows:
 - **`ip_address: null`, `debug_port: null`** — a card carries a URL, not an
   address and a port. Clients MUST use `url` (or `debug_url`).
 - **`online: boolean | null`** — `true`/`false` from the card's age on the
-  registry's own clock against `fleet.registry.offline_after_seconds`;
+  registry's own clock against `autodiscover.offline_after`;
   **`null`** when the registry knows no age (a fixed peer list). Clients MUST
   treat `null` as "unknown", not as offline.
 - **`last_seen_ts: number | null`** — epoch seconds on the serving worker's
@@ -1594,7 +1594,7 @@ Peer rows:
 
 Current worker row (normative): `is_current: true`, `online: true`,
 `ip_address: null`, `debug_port` = the UI port, `debug_url` =
-`ui.public_url` or `null`, and `url` = `ui.public_url` when set, else
+`api.public_url` or `null`, and `url` = `api.public_url` when set, else
 `http://<detected ip>:<port>/`. It carries its own `backend`, `version`,
 `state`, `started_at` and `instance`.
 
@@ -1615,10 +1615,10 @@ Conventions section. A failed merge leaves no output file.
 
 A worker now writes its recorder file only while it is live. At rotation
 and at a clean stop it **seals** the file (rollback journal, closed) and
-moves it into `<shared.dir>/history/<cluster>/`, with a meta file
-`<name>.db.meta.json` beside it. Merge results go to `<shared.dir>/merged/`.
+moves it into `<storage.shared_dir>/history/<cluster>/`, with a meta file
+`<name>.db.meta.json` beside it. Merge results go to `<storage.shared_dir>/merged/`.
 The debug routes below read those folders. Paths in requests and answers
-are relative to `shared.dir` and use `/` separators.
+are relative to `storage.shared_dir` and use `/` separators.
 
 - **`GET /api/v1/debug/databases`** → an object, no longer an array:
 
@@ -1652,7 +1652,7 @@ are relative to `shared.dir` and use `/` separators.
   `history/<cluster>/<name>.db`, `history/<cluster>/<archive>.db.gz` or
   `merged/<name>.db`. Every segment follows the old filename hardening (no
   `/ \`, no leading `.`, no `"` `;` or control characters); the resolved
-  file must stay inside `shared.dir`. `Content-Type` is
+  file must stay inside `storage.shared_dir`. `Content-Type` is
   `application/x-sqlite3` for `.db` and `application/gzip` for `.db.gz`.
   404 for any other path or a missing file. Token may ride as `?token=`.
 
@@ -1672,8 +1672,8 @@ are relative to `shared.dir` and use `/` separators.
 - **`GET /api/v1/debug/trace`** — without `history`, it searches the serving
   worker's own live file and own unsealed files only. With **`history=1`**
   it searches **only** the sealed files of `history/<own cluster>/`, newest
-  first, within the backend's `ui.trace.history_max_files` /
-  `history_max_seconds` budget. Rows keep `worker_name`. A client that wants
+  first, within the backend's `recorder.search.max_files` /
+  `recorder.search.timeout` budget. Rows keep `worker_name`. A client that wants
   both calls both and merges the rows.
 - **`GET /api/v1/debug/trace-by-label`** searches the serving worker's own
   live file only.
@@ -1718,7 +1718,7 @@ than `(after_ms, after_key)`, ordered by `(updated_at_ms, key)`, at most
 is never served, and no worker relays another worker's rows.
 
 **404** `{"error": "The cache exchange is off on this worker"}` when the
-cache or `fleet.cache_exchange` is off or the cache engine has stopped.
+cache or `cache.exchange.enabled` is off, autodiscover is off or the cache engine has stopped.
 **503** `{"error": "The cache did not answer in time"}` when the read does
 not finish within 5 seconds or fails.
 

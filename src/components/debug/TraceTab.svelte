@@ -17,6 +17,7 @@
   import Expandable from '../Expandable.svelte'
   import SortableTh from '../SortableTh.svelte'
   import { NO_SORT, sortRows, type SortAccessor } from '../../lib/sort'
+  import { historySearchOn } from '../../lib/capabilities'
   import { fanOut, fanOutTargets, type FanOutTarget, type Unreachable } from '../../lib/fanout'
 
   let { prefill = null }: { prefill?: { partition: number; offset: number } | null } = $props()
@@ -28,6 +29,9 @@
   let labelVals = $state<Record<string, string>>({})
   let lastRun = $state('')
   let includeHistory = $state(false)
+  // The history search is offered only while the worker can run it.
+  const canSearchHistory = $derived($historySearchOn)
+  const searchHistory = $derived(canSearchHistory && includeHistory)
   // Workers that did not answer the last search, with the reason.
   let unreachable = $state<Unreachable[]>([])
   // The number of the newest search: a slower answer to an older search
@@ -119,7 +123,7 @@
       // allSettled: a failed history read keeps the own rows.
       const [ownRows, historyRows] = await Promise.allSettled([
         fanOutRows((t, signal) => api.debugTraceAt(t.base, p, o, signal), seq),
-        includeHistory ? api.debugTrace(p, o, true) : Promise.resolve([] as TraceEvent[]),
+        searchHistory ? api.debugTrace(p, o, true) : Promise.resolve([] as TraceEvent[]),
       ])
       if (seq !== searchSeq) return
       if (ownRows.status === 'rejected' && historyRows.status === 'rejected') throw ownRows.reason
@@ -131,7 +135,7 @@
       const historyNote = historyRows.status === 'rejected' ? ' (the history search failed)' : ''
       statusMsg = ev.length
         ? `${ev.length} events${historyNote}`
-        : `No events found for ${p}:${o}${includeHistory ? historyNote : ' (search history to look in the cluster history too)'}`
+        : `No events found for ${p}:${o}${searchHistory ? historyNote : canSearchHistory ? ' (search history to look in the cluster history too)' : ''}`
     } catch (e) {
       if (seq !== searchSeq) return
       statusMsg = e instanceof Error ? e.message : String(e)
@@ -232,7 +236,9 @@
     onkeydown={(e) => e.key === 'Enter' && onTraceClick()}
   />
   <button onclick={onTraceClick}>Trace</button>
-  <label class="muted"><input type="checkbox" bind:checked={includeHistory} /> search history</label>
+  {#if canSearchHistory}
+    <label class="muted"><input type="checkbox" bind:checked={includeHistory} /> search history</label>
+  {/if}
   <span class="muted">{statusMsg}</span>
 </div>
 {#if unreachable.length}

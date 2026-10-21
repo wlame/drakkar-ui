@@ -30,6 +30,17 @@ describe('sameClusterPeers', () => {
     expect(sameClusterPeers([worker({}), worker({ worker_name: 'worker-b' })])).toEqual([])
   })
 
+  it('leaves out a worker with ui_enabled false and keeps null or absent', () => {
+    const peers = sameClusterPeers([
+      worker({ worker_name: 'worker-b', is_current: true }),
+      worker({ worker_name: 'worker-a', ui_enabled: false }),
+      worker({ worker_name: 'worker-c', ui_enabled: null }),
+      worker({ worker_name: 'worker-d', ui_enabled: true }),
+      worker({ worker_name: 'worker-e' }),
+    ])
+    expect(peers.map((w) => w.worker_name)).toEqual(['worker-c', 'worker-d', 'worker-e'])
+  })
+
   it('excludes offline peers so no WebSocket targets a dead worker', () => {
     const peers = sameClusterPeers([
       worker({ worker_name: 'worker-b', is_current: true }),

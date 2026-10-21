@@ -63,6 +63,29 @@ afterEach(() => {
   navigate('/', { replace: true })
 })
 
+describe('worker switcher and capabilities', () => {
+  it('is shown when the backend sends no capabilities', () => {
+    setIdentity(baseIdentity)
+    expect(renderTracked().querySelector('.switcher')).not.toBeNull()
+  })
+
+  it('is shown when autodiscover is on', () => {
+    setIdentity({
+      ...baseIdentity,
+      capabilities: { autodiscover: { enabled: true, provider: 'redis' } },
+    })
+    expect(renderTracked().querySelector('.switcher')).not.toBeNull()
+  })
+
+  it('is hidden when autodiscover is off', () => {
+    setIdentity({
+      ...baseIdentity,
+      capabilities: { autodiscover: { enabled: false, provider: null } },
+    })
+    expect(renderTracked().querySelector('.switcher')).toBeNull()
+  })
+})
+
 describe('docs nav entry', () => {
   it('is absent on a backend that serves no docs site', () => {
     setIdentity(baseIdentity)

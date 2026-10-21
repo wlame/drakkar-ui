@@ -10,6 +10,7 @@
   import type { ArrangeTaskState, TaskResult, MessageResult, WindowResult, WsEvent, WorkerPeer } from '../lib/api'
   import { hash, setHash } from '../lib/router'
   import { hydrateFromOverview, runtimeConfig, identity } from '../lib/config'
+  import { autodiscoverOn } from '../lib/capabilities'
   import { createLiveSocket, WS_STATUS_LABELS, type WsStatus, type LiveSocket } from '../lib/ws'
   import { pausableInterval, visibilityGate } from '../lib/visibility'
   import { DEFAULT_MAX_AGE_MINUTES } from '../lib/timeline'
@@ -31,11 +32,6 @@
     type AnnotationView,
   } from '../lib/live'
   import { hostPressureFromEvent, type HostPressure } from '../lib/hostpressure'
-  import {
-    pushThroughputSample,
-    throughputFromEvent,
-    type ThroughputSample,
-  } from '../lib/throughput'
   import {
     appendEventDeduped,
     eventFromWsEvent,
@@ -70,8 +66,6 @@
     'runtime_stall',
     'runtime_lag_episode',
     'resource_sample',
-    // Per-second throughput windows (v1.16) for the timeline track.
-    'throughput',
   ]
 
   // --- bootstrap config (best-effort; defaults keep the page working) ---
@@ -103,9 +97,6 @@
   // Latest host-pressure reading (resource_sample WS frames, v1.15); the
   // Runtime tab's Host section renders it. Null until the first sample.
   let hostPressure = $state<HostPressure | null>(null)
-  // Throughput samples (v1.16) for the timeline track, newest last,
-  // trimmed to the timeline's max age. Empty = feature off / old backend.
-  let throughputSamples = $state<ThroughputSample[]>([])
   let allTasks = $state<Record<string, TaskView>>({})
   let arranges = $state<ArrangeView[]>([])
   let annotations = $state<AnnotationView[]>([])
@@ -183,6 +174,8 @@
   })
 
   function toggleClusterView() {
+    // Without autodiscover there are no peers to stack.
+    if (!$autodiscoverOn) return
     clusterView = !clusterView
     if (clusterView) void loadClusterPeers()
   }
@@ -288,11 +281,6 @@
         // open tab that fresher data exists (~1 frame per 10s sample, or
         // per transition/stall/episode — never high-rate).
         runtimeSeq += 1
-        break
-      }
-      case 'throughput': {
-        const sample = throughputFromEvent({ ts: e.ts, metadata: e.metadata ?? null })
-        if (sample) throughputSamples = pushThroughputSample(throughputSamples, sample, maxAgeMinutes * 60)
         break
       }
       case 'resource_sample': {
@@ -637,15 +625,17 @@
       scan returns.
     </p>
   {/if}
-  <div class="tl-actions">
-    <button
-      class="cluster-toggle"
-      class:on={clusterView}
-      onclick={toggleClusterView}
-      title="Stack a timeline for every worker in this cluster (c)"
-    >{clusterView ? 'Cluster view: on' : 'Cluster view'}</button>
-  </div>
-  {#if !clusterView}
+  {#if $autodiscoverOn}
+    <div class="tl-actions">
+      <button
+        class="cluster-toggle"
+        class:on={clusterView}
+        onclick={toggleClusterView}
+        title="Stack a timeline for every worker in this cluster (c)"
+      >{clusterView ? 'Cluster view: on' : 'Cluster view'}</button>
+    </div>
+  {/if}
+  {#if !clusterView || !$autodiscoverOn}
     <Timeline
       tasks={tasksList}
       {laneCount}
@@ -653,7 +643,6 @@
       minDurationMs={$runtimeConfig.wsMinDurationMs}
       timeline={timelineConfig}
       workerId={$identity?.worker_id}
-      throughput={throughputSamples}
       events={timelineEvents}
     />
     <TimelineStats tasks={tasksList} attached />

@@ -326,6 +326,53 @@ describe('Live cluster view', () => {
     teardown()
   })
 
+  it('hides the cluster toggle when autodiscover is off, and ignores the c key', async () => {
+    identity.set({
+      ...identityWith(timelineConfig(1)),
+      capabilities: { autodiscover: { enabled: false, provider: null } },
+    })
+    workersPayload = [peer({ worker_name: 'w1', is_current: true }), peer({ worker_name: 'w2' })]
+    const { target, teardown } = mountLive()
+    await settled()
+
+    expect(target.querySelector('.cluster-toggle')).toBeNull()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c' }))
+    await settled()
+    expect(target.querySelectorAll('.tl-panel').length).toBeLessThanOrEqual(1)
+    expect(target.querySelector('.peer-name')).toBeNull()
+
+    teardown()
+  })
+
+  it('keeps the cluster toggle when the backend sends no capabilities', async () => {
+    identity.set(identityWith(timelineConfig(1)))
+    const { target, teardown } = mountLive()
+    await settled()
+
+    expect(target.querySelector('.cluster-toggle')).not.toBeNull()
+
+    teardown()
+  })
+
+  it('does not stack a timeline for a worker with ui_enabled false', async () => {
+    identity.set(identityWith(timelineConfig(1)))
+    workersPayload = [
+      peer({ worker_name: 'w1', is_current: true }),
+      peer({ worker_name: 'w2', url: 'http://w2:8080/' }),
+      peer({ worker_name: 'w-headless', url: 'http://wh:8080/', ui_enabled: false }),
+    ]
+    const { target, teardown } = mountLive()
+    await settled()
+
+    clusterToggle(target).click()
+    await settled()
+
+    const names = [...target.querySelectorAll('.peer-name')].map((el) => el.textContent)
+    expect(names).toEqual(['w1', 'w2'])
+
+    teardown()
+  })
+
   it('does not stack a timeline for an offline peer (v1.18 online=false)', async () => {
     identity.set(identityWith(timelineConfig(1)))
     workersPayload = [
@@ -435,34 +482,6 @@ describe('Live pool readout', () => {
     await settled()
 
     expect(target.textContent).toContain('Pool: 0 / — slots')
-
-    teardown()
-  })
-})
-
-describe('Live throughput routing', () => {
-  it('feeds throughput frames into the timeline track', async () => {
-    const { target, teardown } = mountLive()
-    await settled()
-    socketOpts!.onStatus('connected')
-    flushSync()
-    expect(target.querySelector('.tl-throughput')).toBeNull()
-
-    const win = { throughput: 41_250_000, task_rate: 9, tasks: 9 }
-    socketOpts!.onEvent({
-      event: 'throughput',
-      ts: NOW,
-      metadata: JSON.stringify({
-        windows: { '1': win, '5': win, '30': win },
-      }),
-    })
-    flushSync()
-
-    expect(target.querySelector('.tl-throughput polyline')).not.toBeNull()
-    // The window switcher and the current reading live in the gear popover.
-    ;(target.querySelector('button.gear') as HTMLButtonElement).click()
-    flushSync()
-    expect(target.querySelector('.tp-now')?.textContent).toContain('41.3M/s')
 
     teardown()
   })

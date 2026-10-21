@@ -43,13 +43,21 @@ export interface SharedTimelineControls {
  * lingers) are excluded here, before any PeerTimeline mounts, so no WebSocket
  * client ever starts (or retries) against a dead address. Absent `online`
  * means a pre-v1.18 backend, and `online: null` (v1.23) means the registry
- * knows no age: both keep the peer.
+ * knows no age: both keep the peer. A worker that serves no UI
+ * (`ui_enabled: false`, v1.28) has nothing to read or stream, so it is left
+ * out too; absent or null keeps the peer.
  */
 export function sameClusterPeers(workers: WorkerPeer[]): WorkerPeer[] {
   const current = workers.find((w) => w.is_current)
   if (!current) return []
   return workers
-    .filter((w) => !w.is_current && w.cluster === current.cluster && w.online !== false)
+    .filter(
+      (w) =>
+        !w.is_current &&
+        w.cluster === current.cluster &&
+        w.online !== false &&
+        w.ui_enabled !== false,
+    )
     .sort((a, b) => a.worker_name.localeCompare(b.worker_name))
 }
 

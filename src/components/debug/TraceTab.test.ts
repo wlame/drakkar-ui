@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushSync, mount, unmount } from 'svelte'
 import TraceTab from './TraceTab.svelte'
+import { identity } from '../../lib/config'
 
 function traceRow(id: number, ts: number, worker: string, event: string) {
   return {
@@ -80,6 +81,35 @@ async function trace(target: HTMLElement, value: string) {
 describe('TraceTab history search (v1.23)', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
+    identity.set(null)
+  })
+
+  it('offers the history option when the backend sends no capabilities', async () => {
+    vi.stubGlobal('fetch', stubFetch().fetchMock)
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(target.querySelector('.bar input[type=checkbox]')).not.toBeNull()
+    cleanup()
+  })
+
+  it('hides the history option and its hint when history_search is false', async () => {
+    identity.set({
+      worker_id: 'w1',
+      cluster: null,
+      config_summary: '',
+      capabilities: { recorder: { enabled: false, provider: 'none', history_search: false } },
+    })
+    const { fetchMock, urls } = stubFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(target.querySelector('.bar input[type=checkbox]')).toBeNull()
+    await trace(target, '0:1')
+    expect(urls.filter((u) => u.includes('history=1'))).toEqual([])
+    expect(target.textContent).not.toContain('search history')
+    cleanup()
   })
 
   it('searches only the own files by default', async () => {

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { api } from './lib/api'
   import { hydrateFromOverview, identity, setIdentity } from './lib/config'
+  import { autodiscoverOn } from './lib/capabilities'
   import { currentPath, link, navigate } from './lib/router'
   import { navItems, resolve, type NavItem } from './lib/routes'
   import { resolveRedirect } from './lib/redirects'
@@ -142,7 +143,9 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>
         {/if}
       </button>
-      <WorkerSwitcher />
+      {#if $autodiscoverOn}
+        <WorkerSwitcher />
+      {/if}
     </div>
   </div>
 </header>
