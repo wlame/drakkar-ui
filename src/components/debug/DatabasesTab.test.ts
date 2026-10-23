@@ -6,6 +6,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushSync, mount, unmount } from 'svelte'
 import DatabasesTab from './DatabasesTab.svelte'
+import { setQuery } from '../../lib/router'
 import type { DatabasesResponse, HistoryFile } from '../../lib/types'
 
 function sealed(name: string, worker: string, events: Record<string, number> | null): HistoryFile {
@@ -312,7 +313,7 @@ describe('DatabasesTab (v1.23)', () => {
     const { target, cleanup } = renderMounted()
     await settled()
 
-    const select = target.querySelector<HTMLSelectElement>('select')!
+    const select = target.querySelector<HTMLSelectElement>('select[aria-label="worker filter"]')!
     select.value = 'w-2'
     select.dispatchEvent(new Event('change', { bubbles: true }))
     await settled()
@@ -331,7 +332,7 @@ describe('DatabasesTab (v1.23)', () => {
     }
     flushSync()
 
-    const select = target.querySelector<HTMLSelectElement>('select')!
+    const select = target.querySelector<HTMLSelectElement>('select[aria-label="worker filter"]')!
     select.value = 'w-2'
     select.dispatchEvent(new Event('change', { bubbles: true }))
     await settled()
@@ -418,9 +419,11 @@ function stubClusterFetch() {
 describe('DatabasesTab cluster fan-out (v1.23)', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
+    setQuery('', { replace: true })
   })
 
   it('shows the own files of every same-cluster worker, each with its live snapshot link', async () => {
+    setQuery('db_worker=*', { replace: true })
     const { fetchMock, urls } = stubClusterFetch()
     vi.stubGlobal('fetch', fetchMock)
     const { target, cleanup } = renderMounted()
@@ -428,8 +431,8 @@ describe('DatabasesTab cluster fan-out (v1.23)', () => {
 
     expect(urls.filter((u) => u.includes('/debug/databases')).sort()).toEqual([
       '/api/v1/debug/databases',
-      'http://w-2:8080/api/v1/debug/databases',
-      'http://w-3:8080/api/v1/debug/databases',
+      'http://w-2:8080/api/v1/debug/databases?parts=own,storage,recorder',
+      'http://w-3:8080/api/v1/debug/databases?parts=own,storage,recorder',
     ])
     const headings = [...target.querySelectorAll('h2')].map((h) => h.textContent?.trim())
     expect(headings).toEqual(['Own files of w-1 (2)', 'Own files of w-2 (1)', 'History'])
@@ -448,9 +451,11 @@ describe('DatabasesTab cluster fan-out (v1.23)', () => {
 describe('DatabasesTab with workers behind one address', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
+    setQuery('', { replace: true })
   })
 
   it('renders a section per worker even when two workers share one URL', async () => {
+    setQuery('db_worker=*', { replace: true })
     const shared = [
       {
         worker_name: 'w-1',
@@ -497,6 +502,109 @@ describe('DatabasesTab with workers behind one address', () => {
       'Own files of w-3 (1)',
       'History',
     ])
+    cleanup()
+  })
+})
+
+// Peers are read on an explicit choice only (design 2.4).
+describe('DatabasesTab peer reads on demand', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    setQuery('', { replace: true })
+    localStorage.clear()
+  })
+
+  const peerCalls = (urls: string[]) => urls.filter((u) => u.startsWith('http://'))
+
+  function picker(target: HTMLElement): HTMLSelectElement {
+    return target.querySelector<HTMLSelectElement>('select[aria-label="worker picker"]')!
+  }
+
+  it('calls no peer when the tab opens', async () => {
+    const { fetchMock, urls } = stubClusterFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(peerCalls(urls)).toEqual([])
+    expect(target.querySelectorAll('h2')[0].textContent).toContain('w-1')
+    cleanup()
+  })
+
+  it('reads every peer only after the user picks All workers, and puts it in the URL', async () => {
+    const { fetchMock, urls } = stubClusterFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    const { target, cleanup } = renderMounted()
+    await settled()
+    const before = history.length
+
+    const select = picker(target)
+    select.value = '*'
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+    await settled()
+
+    expect(peerCalls(urls).sort()).toEqual([
+      'http://w-2:8080/api/v1/debug/databases?parts=own,storage,recorder',
+      'http://w-3:8080/api/v1/debug/databases?parts=own,storage,recorder',
+    ])
+    expect(window.location.search).toBe('?db_worker=*')
+    expect(history.length).toBe(before + 1)
+    cleanup()
+  })
+
+  it('reads only the named peer when one worker is picked, keeping the token in the URL', async () => {
+    setQuery('token=abc', { replace: true })
+    const { fetchMock, urls } = stubClusterFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    const select = picker(target)
+    select.value = 'w-2'
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+    await settled()
+
+    expect(peerCalls(urls)).toEqual([
+      'http://w-2:8080/api/v1/debug/databases?parts=own,storage,recorder',
+    ])
+    expect(new URLSearchParams(window.location.search).get('token')).toBe('abc')
+    expect(new URLSearchParams(window.location.search).get('db_worker')).toBe('w-2')
+    cleanup()
+  })
+
+  it('never calls a peer with ui_enabled false, even for All workers', async () => {
+    setQuery('db_worker=*', { replace: true })
+    const urls: string[] = []
+    const workers = clusterWorkers.map((w) =>
+      w.worker_name === 'w-3' ? { ...w, ui_enabled: false } : w,
+    )
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        urls.push(url)
+        if (url.endsWith('/api/v1/workers')) return new Response(JSON.stringify(workers))
+        if (url.startsWith('http://w-2:8080/')) return new Response(JSON.stringify(peerOwn))
+        return new Response(JSON.stringify(body))
+      }),
+    )
+    const { cleanup } = renderMounted()
+    await settled()
+
+    expect(peerCalls(urls)).toHaveLength(1)
+    expect(peerCalls(urls)[0]).toContain('http://w-2:8080/')
+    cleanup()
+  })
+
+  it('rebuilds the view from a link: a pasted db_worker=w-2 reads that peer on open', async () => {
+    setQuery('db_worker=w-2', { replace: true })
+    const { fetchMock, urls } = stubClusterFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(peerCalls(urls)).toHaveLength(1)
+    expect(picker(target).value).toBe('w-2')
     cleanup()
   })
 })

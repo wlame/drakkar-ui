@@ -67,32 +67,50 @@ export function unreachableReason(error: unknown, timedOut: boolean): string {
   return 'unreachable'
 }
 
+/** How many fan-out calls may be in flight at once. */
+export const FANOUT_CONCURRENCY = 6
+
 /**
- * Run call against every target at once, each with its own timeout. The
- * answer keeps the targets' order; nothing here throws.
+ * Run call against every target, each with its own timeout, with at most
+ * `concurrency` calls in flight at once. The answer keeps the targets'
+ * order; nothing here throws.
  */
 export async function fanOut<T>(
   targets: FanOutTarget[],
   call: (target: FanOutTarget, signal: AbortSignal) => Promise<T>,
   timeoutMs = PEER_TIMEOUT_MS,
+  concurrency = FANOUT_CONCURRENCY,
 ): Promise<FanOutAnswer<T>> {
-  const settled = await Promise.all(
-    targets.map(async (target) => {
-      const controller = new AbortController()
-      let timedOut = false
-      const timer = setTimeout(() => {
-        timedOut = true
-        controller.abort()
-      }, timeoutMs)
-      try {
-        return { target, value: await call(target, controller.signal), error: null, timedOut }
-      } catch (error) {
-        return { target, value: null, error, timedOut }
-      } finally {
-        clearTimeout(timer)
+  type Settled = { target: FanOutTarget; value: T | null; error: unknown; timedOut: boolean }
+  const settled: Settled[] = new Array(targets.length)
+  async function runOne(index: number): Promise<void> {
+    const target = targets[index]
+    const controller = new AbortController()
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, timeoutMs)
+    try {
+      settled[index] = {
+        target,
+        value: await call(target, controller.signal),
+        error: null,
+        timedOut,
       }
-    }),
-  )
+    } catch (error) {
+      settled[index] = { target, value: null, error, timedOut }
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  // A small pool: each lane takes the next unstarted target until none is left.
+  let next = 0
+  async function lane(): Promise<void> {
+    while (next < targets.length) await runOne(next++)
+  }
+  const lanes = Math.max(1, Math.min(Math.floor(concurrency) || 1, targets.length))
+  await Promise.all(Array.from({ length: lanes }, lane))
   const results: FanOutResult<T>[] = []
   const unreachable: Unreachable[] = []
   for (const one of settled) {

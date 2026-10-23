@@ -253,11 +253,19 @@ export const api = {
   },
   // The databases answer of another worker of the cluster (v1.23 fan-out);
   // null for a pre-v1.23 array answer, as above.
+  // `parts` asks the peer for those parts only (a backend that does not know
+  // the parameter ignores it and answers in full).
   debugDatabasesAt: async (
     base: string,
     signal?: AbortSignal,
+    parts?: string[],
   ): Promise<DatabasesResponse | null> => {
-    const body = await getFrom<DatabasesResponse | unknown[]>(base, '/debug/databases', signal)
+    const query = parts?.length ? `?parts=${parts.join(',')}` : ''
+    const body = await getFrom<DatabasesResponse | unknown[]>(
+      base,
+      `/debug/databases${query}`,
+      signal,
+    )
     return Array.isArray(body) ? null : body
   },
   // A snapshot of a worker's live recorder file (v1.23) or, since v1.25, of its

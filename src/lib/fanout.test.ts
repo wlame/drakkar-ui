@@ -113,3 +113,46 @@ describe('fanOut', () => {
     expect(out.unreachable).toEqual([{ worker: 'w-2', reason: 'timed out' }])
   })
 })
+
+describe('fanOut concurrency', () => {
+  it('keeps at most `concurrency` calls in flight and the targets order', async () => {
+    const targets: FanOutTarget[] = Array.from({ length: 14 }, (_, i) => ({
+      worker: `w-${i}`,
+      base: `http://w-${i}`,
+    }))
+    let inFlight = 0
+    let peak = 0
+    const answer = await fanOut(
+      targets,
+      async (t) => {
+        inFlight++
+        peak = Math.max(peak, inFlight)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        inFlight--
+        return t.worker
+      },
+      1000,
+      6,
+    )
+
+    expect(peak).toBe(6)
+    expect(answer.results.map((r) => r.value)).toEqual(targets.map((t) => t.worker))
+  })
+
+  it('defaults to 6 calls at once', async () => {
+    const targets: FanOutTarget[] = Array.from({ length: 10 }, (_, i) => ({
+      worker: `w-${i}`,
+      base: `http://w-${i}`,
+    }))
+    let inFlight = 0
+    let peak = 0
+    await fanOut(targets, async () => {
+      inFlight++
+      peak = Math.max(peak, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      inFlight--
+    })
+
+    expect(peak).toBe(6)
+  })
+})
