@@ -81,11 +81,19 @@ downloads can't set headers, so the token rides as `?token=` there
   backfill and no resync.
 - **Cluster fan-out reads** (contract v1.23): the Trace and Databases tabs
   read `/debug/trace`, `/debug/trace-by-label` and `/debug/databases` from
-  every same-cluster worker that is not offline (`src/lib/fanout.ts`; one
-  timeout per worker; workers that do not answer are listed, never fatal).
+  every same-cluster worker that is not offline and not `ui_enabled: false`
+  (`src/lib/fanout.ts`; one timeout per worker; workers that do not answer
+  are listed, never fatal).
   Only these three paths answer CORS on the backends, with the `/ws` origin
   rule. The sealed history and merges stay on the page's own worker. Trace
   rows are keyed by (worker, id, event, ts): row ids repeat across files.
+- **Capabilities** (contract v1.28): `src/lib/capabilities.ts` reads
+  `capabilities` from `/identity` and holds every rule that depends on it.
+  A missing key, a missing `capabilities` object or a null identity means
+  "on", so an older backend renders as before. With autodiscover off the
+  worker switcher and the cluster view are hidden; with the history search
+  off the history option is hidden; with the recorder off the event views
+  (the Timeline and Event History) show the memory window note.
 - **The bundle knows its version**: `__APP_VERSION__` is injected via Vite
   `define` from `DRAKKAR_UI_VERSION` (set by `build.sh bundle` and
   release.yml) and shown in the header — operators can always tell which
@@ -124,8 +132,8 @@ verify a downloaded bundle against it when present) → creates the GitHub
 Release. Keep exactly ONE `.tar.gz` asset per release, named by that
 convention — backends construct the direct download URL from the tag
 (`releases/download/<tag>/drakkar-ui-<tag>.tar.gz`) without touching the
-rate-limited REST API. Backends also embed a pinned release as their
-offline fallback (`just embed-ui vX.Y.Z` in each backend repo). Cut releases with
+rate-limited REST API. No backend embeds a bundle: a worker with an empty
+cache and no reachable release source serves no pages. Cut releases with
 `just release X.Y.Z` / `just bump`, then push the printed tag.
 
 ## Directory map
@@ -139,6 +147,7 @@ src/
     types.ts              the contract shapes — mirror of docs/api-contract-v1.md
     router.ts, routes.ts  History-API router + data-driven route table
     config.ts             runtime config store + hydrateFromOverview
+    capabilities.ts       what the serving worker can do (missing key = on)
     ws.ts                 live WS client (reconnect, close codes 4401/4403)
     events.ts, format.ts, kafka.ts, live.ts   presentation helpers
   pages/                  one component per route (Dashboard … Live, Debug)
