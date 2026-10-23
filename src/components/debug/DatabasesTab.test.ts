@@ -607,4 +607,51 @@ describe('DatabasesTab peer reads on demand', () => {
     expect(picker(target).value).toBe('w-2')
     cleanup()
   })
+
+  it('requests the workers list once on open', async () => {
+    setQuery('db_worker=*', { replace: true })
+    const { fetchMock, urls } = stubClusterFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    const { cleanup } = renderMounted()
+    await settled()
+
+    expect(urls.filter((u) => u.endsWith('/api/v1/workers'))).toHaveLength(1)
+    cleanup()
+  })
+
+  it('makes no new read when another db_ key changes', async () => {
+    setQuery('db_worker=*', { replace: true })
+    const { fetchMock, urls } = stubClusterFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    const { cleanup } = renderMounted()
+    await settled()
+    const before = urls.length
+
+    setQuery('db_worker=*&db_range=1h', { replace: true })
+    await settled()
+
+    expect(urls.length).toBe(before)
+    cleanup()
+  })
+
+  it('undoes a worker pick with Back', async () => {
+    const { fetchMock, urls } = stubClusterFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    const { target, cleanup } = renderMounted()
+    await settled()
+    const select = picker(target)
+    select.value = 'w-2'
+    select.dispatchEvent(new Event('change', { bubbles: true }))
+    await settled()
+    expect(window.location.search).toBe('?db_worker=w-2')
+
+    window.history.back()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    await settled()
+
+    expect(window.location.search).toBe('')
+    expect(picker(target).value).toBe('')
+    expect(peerCalls(urls)).toHaveLength(1)
+    cleanup()
+  })
 })

@@ -9,7 +9,7 @@
   // their own part only, and at most FANOUT_CONCURRENCY calls run at once.
   // A backend older than v1.23 answers the old array: the tab then says the
   // view is not available there.
-  import { onMount, untrack } from 'svelte'
+  import { untrack } from 'svelte'
   import { api, type DatabasesResponse } from '../../lib/api'
   import { autodiscoverOn } from '../../lib/capabilities'
   import { sameClusterPeers } from '../../lib/cluster'
@@ -39,14 +39,21 @@
     setQuery(writeDbView(window.location.search, change), { replace: !isPushChange(change) })
   }
 
-  async function loadWorkers() {
-    try {
-      workers = await api.workers()
-    } catch {
-      // An older backend without a usable workers list: this worker alone.
-      workers = []
-    }
-    currentWorker = workers.find((w) => w.is_current)?.worker_name ?? ''
+  // One workers read at a time: the open and the first load share it.
+  let workersRead: Promise<void> | null = null
+
+  function loadWorkers(): Promise<void> {
+    workersRead ??= (async () => {
+      try {
+        workers = await api.workers()
+      } catch (e) {
+        // An older backend without a usable workers list: this worker alone.
+        console.warn('databases: the workers list is not available', e)
+        workers = []
+      }
+      currentWorker = workers.find((w) => w.is_current)?.worker_name ?? ''
+    })()
+    return workersRead
   }
 
   // The peers the URL asks for: none, one named worker, or the whole cluster.
@@ -66,11 +73,12 @@
   // A newer read makes an older one that is still in flight stale.
   let readSequence = 0
 
-  async function load(worker: string | null) {
+  async function load(worker: string | null, refreshWorkers = false) {
+    if (refreshWorkers) workersRead = null
     const mine = ++readSequence
     error = null
     try {
-      if (worker !== null && workers.length === 0) await loadWorkers()
+      await loadWorkers()
       const [res, peers] = await Promise.all([api.debugDatabases(), loadPeers(worker)])
       if (mine !== readSequence) return
       unavailable = res === null
@@ -108,21 +116,22 @@
   )
 
   // Read on open and whenever the picked worker changes (a pasted link, Back).
+  // It depends on the worker value alone: another db_* change never reads again.
+  const pickedWorker = $derived(view.worker)
   $effect(() => {
-    const worker = view.worker
+    const worker = pickedWorker
     untrack(() => load(worker))
   })
-
-  onMount(loadWorkers)
 
   function pick(value: string) {
     setView({ worker: value === '' ? null : value })
   }
-  const picked = $derived(view.worker ?? '')
+  // The own worker's name in a link is the same as no choice.
+  const picked = $derived(view.worker === currentWorker ? '' : (view.worker ?? ''))
 </script>
 
 <div class="bar">
-  <button onclick={() => load(view.worker)}>Refresh</button>
+  <button onclick={() => load(view.worker, true)}>Refresh</button>
   {#if $autodiscoverOn}
     <select value={picked} onchange={(e) => pick(e.currentTarget.value)} aria-label="worker picker">
       <option value="">This worker{currentWorker ? ` (${currentWorker})` : ''}</option>
