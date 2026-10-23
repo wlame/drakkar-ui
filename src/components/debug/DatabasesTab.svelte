@@ -17,8 +17,17 @@
   import { fanOut, fanOutTargets, type FanOutTarget, type Unreachable } from '../../lib/fanout'
   import { search, setQuery } from '../../lib/router'
   import type { WorkerPeer } from '../../lib/types'
+  import { buildCoverage } from '../../lib/coverage'
+  import CoverageBar from './databases/CoverageBar.svelte'
   import FilesView from './databases/FilesView.svelte'
+  import SliceView from './databases/SliceView.svelte'
   import type { OwnSection } from './databases/types'
+
+  // The views the tab can draw; more are added here as they land.
+  const VIEW_BUTTONS: { view: DbViewState['view']; label: string }[] = [
+    { view: 'files', label: 'Files' },
+    { view: 'slice', label: 'Slice' },
+  ]
 
   // What a peer is asked for: its own part, not the shared history.
   const PEER_PARTS = ['own', 'storage', 'recorder']
@@ -102,7 +111,12 @@
     return {
       sections: answer.results
         .filter((r) => r.value !== null)
-        .map((r) => ({ worker: r.worker, base: r.base, own: r.value?.own ?? [] })),
+        .map((r) => ({
+          worker: r.worker,
+          base: r.base,
+          own: r.value?.own ?? [],
+          recorder: r.value?.recorder,
+        })),
       unreachable: [
         ...missing,
         ...answer.unreachable,
@@ -112,8 +126,24 @@
   }
 
   const ownSections = $derived<OwnSection[]>(
-    data ? [{ worker: currentWorker, base: '', own: data.own }, ...peerSections] : [],
+    data
+      ? [{ worker: currentWorker, base: '', own: data.own, recorder: data.recorder }, ...peerSections]
+      : [],
   )
+
+  // The coverage bar shows the picked worker: a named peer, else this one.
+  const coverage = $derived.by(() => {
+    const section = ownSections.find((s) => s.worker === view.worker && s.base !== '') ?? ownSections[0]
+    return buildCoverage(section?.own ?? [], data ?? { history: { folders: [] } }, section?.worker ?? '')
+  })
+  const selection = $derived(
+    view.from !== null && view.to !== null ? { from: view.from, to: view.to } : null,
+  )
+
+  // A range dragged on the bar goes to the URL; from the Files view it also opens the Slice view.
+  function selectRange(range: { from: number; to: number }) {
+    setView(view.view === 'slice' ? range : { ...range, view: 'slice' })
+  }
 
   // Read on open and whenever the picked worker changes (a pasted link, Back).
   // It depends on the worker value alone: another db_* change never reads again.
@@ -129,6 +159,16 @@
   // The own worker's name in a link is the same as no choice.
   const picked = $derived(view.worker === currentWorker ? '' : (view.worker ?? ''))
 </script>
+
+<div class="bar views" role="group" aria-label="database views">
+  {#each VIEW_BUTTONS as b (b.view)}
+    <button
+      class:on={view.view === b.view || (b.view === 'files' && !VIEW_BUTTONS.some((v) => v.view === view.view))}
+      aria-pressed={view.view === b.view}
+      onclick={() => setView({ view: b.view })}>{b.label}</button
+    >
+  {/each}
+</div>
 
 <div class="bar">
   <button onclick={() => load(view.worker, true)}>Refresh</button>
@@ -147,7 +187,12 @@
 {:else if unavailable}
   <p class="muted">The databases view is not available on this worker: it runs an older release.</p>
 {:else if data}
-  <FilesView {data} {ownSections} {unreachable} onmerged={() => load(view.worker)} />
+  <CoverageBar {coverage} {selection} onselect={selectRange} />
+  {#if view.view === 'slice'}
+    <SliceView {data} {ownSections} {workers} {currentWorker} {view} {coverage} onchange={setView} />
+  {:else}
+    <FilesView {data} {ownSections} {unreachable} onmerged={() => load(view.worker)} />
+  {/if}
 {/if}
 
 <style>
@@ -157,6 +202,11 @@
     gap: 0.6rem;
     margin-bottom: 0.9rem;
     flex-wrap: wrap;
+  }
+  .views button.on {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
   }
   .bar select {
     font: inherit;

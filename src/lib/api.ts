@@ -24,6 +24,7 @@ import type {
   RecentTasksResponse,
   RuntimeHealthSnapshot,
   RuntimeUnitCensus,
+  SliceRequest,
   SinkStatus,
   ConsumePauseState,
   KafkaReadMessage,
@@ -164,6 +165,27 @@ export function downloadUrl(path: string): string {
   return withAuthToken(`${API_BASE}${path}`)
 }
 
+// sliceQuery writes the slice filters as the query string of the route (3.3 of
+// the design): lists are comma separated, `output` is sent only when off.
+export function sliceQuery(r: SliceRequest): string {
+  return qs({
+    from: r.from,
+    to: r.to,
+    scope: r.scope,
+    sources: r.sources?.join(','),
+    partition: r.partition,
+    offset_from: r.offset_from,
+    offset_to: r.offset_to,
+    task_id: r.task_id,
+    events: r.events?.join(','),
+    label_key: r.label_key,
+    label_value: r.label_value,
+    output: r.output === false ? '0' : undefined,
+    max_rows: r.max_rows,
+    compress: r.compress,
+  })
+}
+
 export interface EventsQuery {
   partitions?: string // comma-separated partition ids
   event_types?: string // comma-separated event names
@@ -272,6 +294,21 @@ export const api = {
   // memory store: a plain <a> navigation, so the token rides as ?token=.
   debugDownloadLiveUrl: (base: string, source: 'memory' | 'file'): string =>
     withAuthToken(`${base}${API_BASE}/debug/download-live?source=${source}`),
+  // The slice download of a worker (v1.30): a plain navigation to that
+  // worker's origin, so the file body is never read into the page.
+  debugSliceUrl: (base: string, request: SliceRequest): string =>
+    withAuthToken(`${base}${API_BASE}/debug/slice${sliceQuery(request)}`),
+  // Whether a worker has the slice route. A call with no filters is refused
+  // with 400 where the route exists and answers 404 where it does not; null
+  // when the answer says nothing (unreachable, blocked).
+  debugSliceSupportedAt: async (base: string, signal?: AbortSignal): Promise<boolean | null> => {
+    try {
+      const res = await fetch(`${base}${API_BASE}/debug/slice`, { headers: authHeaders(), signal })
+      return res.status !== 404
+    } catch {
+      return null
+    }
+  },
   // paths are relative to storage.shared_dir: history/<cluster>/<name>.db or merged/<name>.db.
   debugMerge: (paths: string[]) => post<MergeResult>('/debug/merge', { filenames: paths }),
   // Each segment is encoded; the / separators stay (the route takes a path).

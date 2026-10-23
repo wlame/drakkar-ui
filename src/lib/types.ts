@@ -660,6 +660,107 @@ export interface HistoryFolder {
 export interface DatabasesResponse {
   own: OwnDb[]
   history: { folders: HistoryFolder[] }
+  // v1.30 (all optional): a backend that predates it sends none of these.
+  worker?: { name: string; cluster: string | null; instance: string }
+  storage?: StorageStatus
+  recorder?: RecorderStatus
+}
+
+export interface StorageStatus {
+  dir_set: boolean
+  own_folder: string
+  shared_dir_set: boolean
+  shared_is_storage_dir: boolean
+  files: {
+    name: string
+    kind: 'cache' | 'watchdog' | 'owner_lock' | 'temp'
+    size_bytes: number
+    modified_at: string
+    entries: number | null
+  }[]
+  temp_files: { count: number; size_bytes: number }
+  siblings:
+    | {
+        worker: string
+        files: number
+        size_bytes: number
+        newest_modified_at: string | null
+        in_use: boolean | null
+        online: boolean | null
+      }[]
+    | null
+}
+
+export interface PostgresStatus {
+  connection: string
+  schema: string
+  table: string
+  initial_retention_hours: number
+  max_size_bytes: number
+  store_completed_output: boolean
+  writer: {
+    started: boolean
+    queue_rows: number
+    queue_bytes: number
+    rows_written: number
+    dropped: { queue_full: number; rejected: number; no_partition: number; shutdown: number }
+    breaker_open: boolean
+    last_upkeep: {
+      at: string
+      held_lock: boolean
+      created: string[]
+      dropped: string[]
+      dropped_for_size: string[]
+    } | null
+  } | null
+}
+
+export interface RecorderStatus {
+  enabled: boolean
+  provider: 'none' | 'sqlite' | 'postgres'
+  memory: { window_seconds: number; max_rows: number; max_bytes: number } | null
+  sqlite: {
+    rotation_interval_seconds: number
+    archive: {
+      enabled: boolean
+      scope: 'cluster' | 'worker' | null
+      next_slot_ts: number | null
+      window_seconds: number
+      due_after_seconds: number
+      retention_days: number
+      merged_retention_days: number
+    }
+  } | null
+  postgres: PostgresStatus | null
+}
+
+// GET /api/v1/debug/databases/postgres (v1.30): the partitions of the table.
+export interface PostgresPartitions {
+  server_now: number
+  stored_retention_hours: number | null
+  partitions: { name: string; from_ts: number; to_ts: number; size_bytes: number | null }[]
+  total_bytes: number
+  next_drops: { retention: string[]; size: string[] }
+}
+
+// The filters of GET /api/v1/debug/slice (v1.30), one field per query
+// parameter. Offsets are digit strings: a signed 64-bit offset does not fit
+// a JavaScript number.
+export interface SliceRequest {
+  from: number
+  to: number
+  scope?: 'worker' | 'cluster'
+  sources?: string[]
+  partition?: number
+  offset_from?: string
+  offset_to?: string
+  task_id?: string
+  events?: string[]
+  label_key?: string
+  label_value?: string
+  output?: boolean
+  max_rows?: number
+  compress?: 'gzip'
 }
 
 export interface MergeResult {
