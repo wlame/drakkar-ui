@@ -428,7 +428,7 @@ such row.
 ## Capability gaps (future, not required for v1 conformance)
 
 - No cache **write/delete** endpoint (the cache browser is read-only).
-- No DB-file **delete** endpoint (merged files accumulate in db_dir).
+- No DB-file **delete** endpoint (merge results stay in `<storage.shared_dir>/merged/` until `recorder.archive.merged_retention`).
 - ~~No checksum on UI bundle release assets~~ — the release workflow now
   publishes a `drakkar-ui-<tag>.tar.gz.sha256` sidecar and both backends
   verify a downloaded bundle against it when present (absent sidecar —
@@ -926,7 +926,7 @@ the raw-databases list above it is unaffected.
 - `GET /api/v1/debug/archives/{name}` (removed in v1.23; archives download through `/debug/download/{path}`) → the archive file as an attachment:
   `Content-Type: application/gzip`, `Content-Disposition: attachment;
   filename="..."`, `Cache-Control: no-store, private`. `name` must match
-  the naming grammar above and resolve inside the backend's `db_dir`; a
+  the naming grammar above and resolve inside the backend's storage folder; a
   rejected, path-escaping, or missing name all answer `404`, never a
   distinguishable error — same non-disclosure shape as `/debug/download`.
   The token rides as `?token=` exactly like `/debug/download`, since a
@@ -1051,7 +1051,7 @@ a behavioral note. No new endpoint.
   under their stable symlink name (`<worker>-cache.db`) while `path`
   points at the scanned `.actual` file.
 - **Behavior**: backends may serve statistics from a shared
-  `<db_dir>/.dbstats.db` cache keyed by `(path, mtime_ns, size_bytes)`
+  `.dbstats.db` cache in the storage folder, keyed by `(path, mtime_ns, size_bytes)`
   (schema `db_stats_v1`, identical across backends — a mixed fleet
   shares the file). The file *list* is always a live directory scan, so
   externally deleted files disappear on the next request; only derived
@@ -1182,8 +1182,8 @@ a key is omitted when its platform source is unavailable — never zeroed):
 ### `runtime_lag_episode` event (persisted)
 
 One row per **lag episode**: the span from the runtime-health monitor
-leaving `healthy` to its return (or to the `runtime_health.
-episode_max_seconds` cap, default 300 — a longer incident produces several
+leaving `healthy` to its return (or to the `runtime_health.max_episode`
+cap, default `5m` — a longer incident produces several
 back-to-back rows). Episodes exist because a single long blocking call is
 already captured by `runtime_stall`, while *diffuse* degradation — many
 small delays, CPU starvation — previously produced a `stalled` badge with
@@ -1357,7 +1357,7 @@ clustered-first sort order.
 - **Absence** (normative): pre-v1.18 backends omit BOTH fields entirely,
   never `null`-ed or defaulted. Clients MUST degrade to the previous
   behavior and treat every worker as online when the fields are absent.
-- **Operational meaning.** Peers are discovered via the shared db_dir,
+- **Operational meaning.** In this version peers were discovered through the shared storage folder,
   and a crashed worker's `-live.db` symlink can linger long after its
   process died. Such a worker keeps its row but now reports
   `online: false`, so clients can gray it out and skip live (WebSocket)
@@ -1429,7 +1429,7 @@ compatibility shims on either side.
   now bound keep-alive idle time (120 s), request header size (64 KiB) and
   request body size on every HTTP surface, and the Python backend — which
   had none of these — additionally bounds its webapp body READ in time
-  (`request_timeout_seconds` + 30 s, answering **408**), which Go already
+  (`sources.http.request_timeout` + 30 s, answering **408**), which Go already
   got from `http.Server.WriteTimeout`. Deployments should still front these
   ports with a proxy that enforces its own read timeouts.
 
@@ -1583,7 +1583,7 @@ Peer rows:
   address and a port. Clients MUST use `url` (or `debug_url`).
 - **`online: boolean | null`** — `true`/`false` from the card's age on the
   registry's own clock against `autodiscover.offline_after`;
-  **`null`** when the registry knows no age (a fixed peer list). Clients MUST
+  **`null`** when the provider gives neither an online flag nor an age. Clients MUST
   treat `null` as "unknown", not as offline.
 - **`last_seen_ts: number | null`** — epoch seconds on the serving worker's
   clock: `now − age` when the age is known, else `null`.
@@ -1972,7 +1972,8 @@ All additions are optional keys; the `throughput` frame and the `cost` and
 | everything else: `/ws`, `/api/v1/*`, `/api-docs`, `/docs`, the pages | `api.enabled` and `ui.enabled` |
 
 With `ui.enabled: false` the worker fetches no bundle, and every route of
-the second row answers 404. `auth_token` guards the second row as before;
+the second row answers 404, except a WebSocket handshake on `/ws`, which
+answers 403. `auth_token` guards the second row as before;
 the three routes of the first row are public. A registry card carries the
 worker's URL from `api.public_url`, else `http://<outbound ip>:<api.port>/`.
 
@@ -2020,9 +2021,8 @@ its registry card. A missing key or null means on.
 ### Removal of `custom` sinks
 
 `custom` is no longer a value of `PlannedSinkRecord.sink_type`, and
-`CollectResult` has no `custom` array. Plugin sinks are named by their own
-type and are not a probe sink type. A client keeps `sink_type` a string and
-MUST tolerate `custom` from an older backend.
+`CollectResult` has no `custom` array. There are no plugin sinks. A client
+keeps `sink_type` a string and MUST tolerate `custom` from an older backend.
 
 ### Config reference entry types
 
