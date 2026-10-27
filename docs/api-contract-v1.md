@@ -193,7 +193,8 @@ the appendix.
 - `GET /api/v1/recent-tasks?minutes=2` →
   `{tasks:[<entry>...], lane_count:int, truncated:bool}` (no DB → `[]`). Each
   entry: `{task_id, partition, start_ts, end_ts, duration, status, args, pid,
-  slot, labels, env, origin, client_name, request_id}`. Archived retry attempts
+  slot, labels, env, origin, client_name, request_id}`, plus the optional
+  `stdout_size` (v1.7), `run_started_at` and `reported_run_seconds` (v1.29). Archived retry attempts
   keep the Python reference's ordering and the `task_id:r<float-ts>`
   composite-key format; consumers must not rely on positional order.
 
@@ -2049,6 +2050,60 @@ the raw value.
 
 A backend older than v1.28 sends no `capabilities` and no `ui_enabled`; the
 UI treats both as on.
+
+## v1.29 changes (2026-11-08)
+
+A task's run bar shows how long its subprocess ran, measured off the event
+loop, so a busy worker loop no longer stretches the bar. All additions are
+optional keys; no route changes.
+
+### `duration` of `task_completed` and `task_failed`
+
+`duration` is the process run time in seconds, from the spawn to the exit.
+The backend reads the exit time when the kernel reports the exit, not when
+its event loop handles it. Before v1.29 `duration` ended when the loop
+handled the exit, so it included loop stalls. A launch failure and a
+precomputed result keep their old meaning.
+
+### New metadata keys of `task_completed` and `task_failed`
+
+Stored in `events.metadata` and sent on `/ws`:
+
+| Key | Type | Meaning |
+|---|---|---|
+| `run_started_at` | number | Unix seconds of the spawn, 6 decimals. Absent for a launch failure and a precomputed result. |
+| `exit_notice_ms` | number | Milliseconds from the process exit to the moment the worker handled it, 1 decimal. A loop-stall signal: a healthy worker shows a few ms. Absent when the exit could not be timed off the loop. |
+| `reported_run_seconds` | number | The run time the handler's optional `task_run_seconds` hook reported for this task, 6 decimals. Present only when the hook gave a valid value (a finite number from 0 to `duration` plus 0.05). |
+
+`task_started` does not change: its `ts` is the spawn time within
+microseconds, and it stays the key of a retry's archived row
+(`<task_id>:r<start_ts>`).
+
+### New keys of `GET /api/v1/recent-tasks` rows
+
+`RecentTaskEntry` gains optional `run_started_at` (number or null) and
+`reported_run_seconds` (number or null), copied from the completion event's
+metadata. `start_ts` and `end_ts` keep their meaning (the `ts` of
+`task_started` and of the completion event).
+
+### The bar (normative for the UI)
+
+- A finished task with `run_started_at` and `reported_run_seconds` draws
+  `[run_started_at, run_started_at + reported_run_seconds]`.
+- Else a finished task with `run_started_at` and `duration` draws
+  `[run_started_at, run_started_at + duration]`.
+- Else (a running task, a launch failure, an older backend) the bar is
+  `[start_ts, end_ts]`, with `end_ts` = now while running.
+
+Lanes, sorting, the retry archive key and the age cut keep using
+`start_ts` and `end_ts`. The hover shows `exit_notice_ms` when it is above
+50 ms, and both run times when `reported_run_seconds` is present.
+
+### Absence (normative)
+
+A backend older than v1.29 sends none of the three metadata keys and none of
+the two row keys. The UI then draws the bar from `start_ts` and `end_ts`, as
+before.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 

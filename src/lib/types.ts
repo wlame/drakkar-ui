@@ -307,6 +307,12 @@ export interface RecentTask {
   // failed-only tasks. Selected on the resync path (v1.7) so color rules
   // keyed on it work for resync-loaded rows, not only WS-updated ones.
   stdout_size?: number | null
+  // Unix seconds of the subprocess spawn (v1.29); with `duration` it gives the
+  // run bar measured off the worker's event loop. Absent on older backends.
+  run_started_at?: number | null
+  // Run time the handler's task_run_seconds hook reported (v1.29); when
+  // present the bar uses it instead of `duration`.
+  reported_run_seconds?: number | null
 }
 
 export interface RecentTasksResponse {
