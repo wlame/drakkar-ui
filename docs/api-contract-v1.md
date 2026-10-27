@@ -2062,8 +2062,11 @@ optional keys; no route changes.
 `duration` is the process run time in seconds, from the spawn to the exit.
 The backend reads the exit time when the kernel reports the exit, not when
 its event loop handles it. Before v1.29 `duration` ended when the loop
-handled the exit, so it included loop stalls. A launch failure and a
-precomputed result keep their old meaning.
+handled the exit, so it included loop stalls. A task ends when its process
+has exited and its output pipes have closed: when a descendant keeps the
+pipes open after the process exited, the run ends when they close (read by
+the loop). A timed-out task ends when the timeout fired (read by the loop).
+A launch failure and a precomputed result keep their old meaning.
 
 ### New metadata keys of `task_completed` and `task_failed`
 
@@ -2072,7 +2075,7 @@ Stored in `events.metadata` and sent on `/ws`:
 | Key | Type | Meaning |
 |---|---|---|
 | `run_started_at` | number | Unix seconds of the spawn, 6 decimals. Absent for a launch failure and a precomputed result. |
-| `exit_notice_ms` | number | Milliseconds from the process exit to the moment the worker handled it, 1 decimal. A loop-stall signal: a healthy worker shows a few ms. Absent when the exit could not be timed off the loop. |
+| `exit_notice_ms` | number | Milliseconds from the process exit to the moment the worker handled it, 1 decimal. A loop-stall signal. `0` means the worker handled the exit before the backend's exit watcher reported it, so the loop was not stalled; on a healthy worker this is the common value. Absent when the exit could not be timed off the loop, when a descendant of the process kept its output pipes open after the process exited (the run then ends when the pipes close), and for a timed-out task. |
 | `reported_run_seconds` | number | The run time the handler's optional `task_run_seconds` hook reported for this task, 6 decimals. Present only when the hook gave a valid value (a finite number from 0 to `duration` plus 0.05). |
 
 `task_started` does not change: its `ts` is the spawn time within
