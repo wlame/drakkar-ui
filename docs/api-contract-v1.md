@@ -61,7 +61,8 @@ the appendix.
 - **Content-Type:** `application/json` (no charset suffix).
 - **Error envelopes:** `{"detail":"..."}` for 401/404/500/503;
   `{"detail":[{"loc":[...],"msg":"..."}]}` for 422; legacy `{"error":"..."}`
-  for merge/download 400/404, merge 500, `download-live` 404/500, the
+  for merge/download 400/404, merge 500, `download-live` 400/404/500,
+  `/debug/databases` 400 (v1.30), the
   `/api/v1/peer/` routes and the CORS preflight 403. The 422 shape is pinned **minimal** (`loc`+`msg`);
   the UI relies only on the HTTP status and `detail[].msg`, never on
   framework-specific extras (`type`/`input`/`ctx`/`url`).
@@ -222,8 +223,10 @@ the appendix.
   empty → `{}`. Missing `partition` → 422.
 
 ### Debug tools
-- `GET /api/v1/debug/databases` → `{own:[...], history:{folders:[...]}}`
-  (v1.23; see "Sealed history" below).
+- `GET /api/v1/debug/databases[?parts=own,history,storage,recorder]` →
+  `{own:[...], history:{folders:[...]}}` (v1.23; see "Sealed history"
+  below). Since v1.30 it also answers `worker`, `recorder` and `storage`,
+  and `parts` limits the answer; see [v1.30 changes](#v130-changes-2026-11-08).
 - `POST /api/v1/debug/merge` body `{filenames:[path] (≥2)}` → `{filename,
   path, worker_count, event_count, state_count, cluster_name,
   source_files:[str]}`. Paths are relative to `storage.shared_dir` (v1.23). 400 on
@@ -234,7 +237,8 @@ the appendix.
   application/x-sqlite3` (`.db`) or `application/gzip` (`.db.gz`),
   `Content-Disposition: attachment; filename="..."`, `Cache-Control:
   no-store, private`. `path` relative to `storage.shared_dir` (v1.23). Token may
-  ride as `?token=` (plain `<a>` downloads cannot set headers).
+  ride as `?token=` (plain `<a>` downloads cannot set headers). Since v1.30
+  it takes `compress=gzip`.
 - `GET /api/v1/debug/download-live` → a consistent snapshot of the serving
   worker's live recorder file (SQLite backup API), as an attachment with
   the live file's name, `Content-Type: application/x-sqlite3`,
@@ -242,7 +246,8 @@ the appendix.
   is open; 500 `{"error": "Snapshot failed: <reason>"}` when the copy
   fails. Token may ride as `?token=` (v1.23). Since v1.25 it takes
   `source=memory|file` and serves the memory store of a memory-only worker;
-  see [v1.25 changes](#v125-changes-2026-11-01).
+  see [v1.25 changes](#v125-changes-2026-11-01). Since v1.30 it takes
+  `source=cache` and `compress=gzip`; see [v1.30 changes](#v130-changes-2026-11-08).
 - `GET /api/v1/debug/archives` → `{archives:[{name, cluster, folder, path,
   from_ts, to_ts, size_bytes}]}`, newest-first by `to_ts`, from every
   `history/<cluster>/` folder. See v1.8 and v1.23 below.
@@ -2107,6 +2112,207 @@ Lanes, sorting, the retry archive key and the age cut keep using
 A backend older than v1.29 sends none of the three metadata keys and none of
 the two row keys. The UI then draws the bar from `start_ts` and `end_ts`, as
 before.
+
+## v1.30 changes (2026-11-08)
+
+The Databases view of the UI shows where a worker keeps its data and lets
+an operator download it. v1.30 lands in parts: each part adds its
+subsections here together with the routes that serve it. Every addition is
+optional, and a client MUST degrade when a key or a route is missing.
+
+This part changes three existing routes. It adds no route.
+
+### `GET /api/v1/debug/databases`: the `parts` parameter
+
+New optional query parameter **`parts`**: a comma list of `own`, `history`,
+`storage` and `recorder`. When absent, all four are answered. A part that
+is not asked for is absent from the answer, and the backend does not do
+its work: a peer asked for `own,storage,recorder` does not list the shared
+history folder.
+
+| Case | Answer |
+|---|---|
+| every item is a known part (repeats are allowed) | 200, the parts asked for |
+| an item is not a known part; an empty item (`parts=`, `parts=own,`) counts as one | 400 `{"error": "unknown part '<p>'; known: history, own, recorder, storage"}`, for the first such item |
+
+`own` and `history` keep their shapes. The key `worker` is always present.
+
+### `GET /api/v1/debug/databases`: the `worker` block
+
+```
+"worker": {"name": str, "cluster": str|null, "instance": str}
+```
+
+`cluster` is `null` when the worker has no cluster name. `instance` names
+this process; it is the instance of the worker's registry card and of its
+sealed files' meta files.
+
+### `GET /api/v1/debug/databases`: the `recorder` block (part `recorder`)
+
+What the recorder of the worker runs, read from its config and from memory.
+No database or file is read for it.
+
+```
+"recorder": {
+  "enabled": bool,                              // recorder.enabled
+  "provider": "none"|"sqlite"|"postgres",       // the effective provider
+  "memory": {"window_seconds": int, "max_rows": int, "max_bytes": int} | null,
+  "sqlite": {
+    "rotation_interval_seconds": int,
+    "archive": {"enabled": bool, "scope": "cluster"|"worker"|null,
+                "next_slot_ts": float|null, "window_seconds": int,
+                "due_after_seconds": int, "retention_days": int,
+                "merged_retention_days": int}
+  } | null,
+  "postgres": PostgresStatus | null
+}
+```
+
+- `provider` is `none` when the recorder is off, else `recorder.provider`.
+- `memory` holds the bounds of the memory store (the time window, the row
+  cap and the data budget); `null` when the worker keeps no memory store.
+- `sqlite` is present only with provider `sqlite`, else `null`.
+  `archive.scope` is what the archive pass covers: `cluster` (one worker
+  of the cluster archives the shared history, chosen per slot), `worker`
+  (each worker archives its own files) or `null` (no archive pass runs).
+  `next_slot_ts` is the epoch second of the next archive slot, `null` when
+  no pass runs. `retention_days` 0 keeps archives for ever;
+  `merged_retention_days` 0 keeps merge results for ever.
+- `postgres` is present only with provider `postgres`, else `null`:
+
+```
+PostgresStatus = {
+  "connection": str,            // the entry name under connections.postgres
+  "schema": str,
+  "table": str,                 // the table name without the schema
+  "initial_retention_hours": int,
+  "max_size_bytes": int,        // 0 = no limit
+  "store_completed_output": bool,
+  "writer": {
+    "started": bool,
+    "queue_rows": int,
+    "queue_bytes": int,
+    "rows_written": int,
+    "dropped": {"queue_full": int, "rejected": int, "no_partition": int, "shutdown": int},
+    "breaker_open": bool,
+    "last_upkeep": {"at": str, "held_lock": bool, "created": [str],
+                    "dropped": [str], "dropped_for_size": [str]} | null
+  } | null
+}
+```
+
+- The DSN is never part of the answer. The connection name and the schema
+  are not secrets.
+- `writer` is this worker's writer to the table; `null` when the worker
+  writes no rows (`recorder.capture.events: false`) or before the recorder
+  started. `started` is false until the writer has opened its connection
+  and found the table. `queue_rows` counts the rows waiting, the chunk in
+  flight included; `queue_bytes` is the text waiting in the queue, counted
+  as `recorder.postgres.max_queue` counts it. `rows_written` and
+  `dropped` count rows since the process started; the reasons are those
+  of the metric `drakkar_recorder_postgres_dropped_rows_total`.
+- `last_upkeep` is the last partition upkeep this worker ran: `at` (RFC
+  3339 micro), `held_lock` (false when another writer of the table held
+  the upkeep lock; the three lists are then empty), the partitions it
+  created, dropped by the stored retention, and dropped for
+  `max_size`. `null` before the first upkeep. A failed upkeep leaves the
+  previous value.
+
+### `GET /api/v1/debug/databases`: the `storage` block (part `storage`)
+
+The worker's own folder `<storage.dir>/<sanitized cluster>/<worker>/` and
+the folders of the other workers of its cluster on the same host.
+
+```
+"storage": {
+  "dir_set": bool,
+  "own_folder": str,
+  "shared_dir_set": bool,
+  "shared_is_storage_dir": bool,
+  "files": [{"name": str, "kind": "cache"|"watchdog"|"owner_lock",
+             "size_bytes": int, "modified_at": str, "entries": int|null}],
+  "temp_files": {"count": int, "size_bytes": int},
+  "siblings": [{"worker": str, "files": int, "size_bytes": int,
+                "newest_modified_at": str|null, "in_use": bool|null,
+                "online": bool|null}] | null
+}
+```
+
+- `dir_set` is true when `storage.dir` is set. `own_folder` is
+  `<sanitized cluster>/<worker>`, relative to `storage.dir`; `""` when
+  `storage.dir` is empty. No absolute path is sent.
+- `shared_dir_set` is true when `storage.shared_dir` is set.
+  `shared_is_storage_dir` is true when the shared folder is `storage.dir`
+  (`storage.shared_dir` is empty or names the same folder).
+- `files` lists the files of the own folder that are not recorder files
+  (those are in `own`), sorted by name: the cache file (`cache`; its size
+  includes its `-wal` and `-shm` files, and `modified_at` is the newest of
+  them), the crash marker (`watchdog`) and the owner lock file
+  (`owner_lock`). `modified_at` is RFC 3339 micro. `entries` is the
+  number of cache rows; `null` for the other kinds, and when the count did
+  not finish within 1 second or failed. Empty when there is no own folder.
+- `temp_files` counts the download temp files in the own folder (copies
+  made for a snapshot download, and their sidecars): the files of a
+  download in progress, and files a crashed process left (the worker
+  deletes those at its next start).
+- `siblings` lists the other worker folders of
+  `<storage.dir>/<sanitized cluster>/`, sorted by worker. `files`,
+  `size_bytes` and `newest_modified_at` cover the regular files in the
+  folder except the owner lock file (`newest_modified_at` is `null` with
+  no such file). `in_use` is true when a process holds the folder's owner
+  lock, false when it is free, and `null` when the folder has no lock
+  file or the test failed. The test takes a shared lock and frees it at
+  once; an orphan pass that runs at that moment skips the folder for one
+  round. `online` is the registry's verdict for the worker name: `null`
+  with autodiscover off or when the registry cannot tell. `siblings` is
+  `null` when `storage.dir` is empty or the cluster folder cannot be
+  listed.
+
+### Compressed downloads
+
+`GET /api/v1/debug/download/{path}` and `GET /api/v1/debug/download-live`
+take the new optional query parameter **`compress`**, whose one value is
+`gzip`. With it the answer is the same bytes as a gzip stream: the
+attachment name gains `.gz`, `Content-Type` is `application/gzip`, there
+is no `Content-Length`, and `Cache-Control` stays `no-store, private`.
+
+| Case | Answer |
+|---|---|
+| `compress` with any other value (an empty one too) | 400 `{"error": "compress must be gzip"}`, before any other check |
+| `compress=gzip` on an archive path (`history/<cluster>/<archive>.db.gz`) | 400 `{"error": "the file is already compressed"}`, before the file is looked up |
+
+The other answers of both routes do not change.
+
+### `GET /api/v1/debug/download-live`: `source=cache`
+
+`source` gains the value **`cache`**: a consistent copy of the worker's
+cache file (the SQLite backup API on a read-only connection), as an
+attachment named `<worker>-cache-<YYYY-MM-DD__HH_MM_SS>.db` (UTC time of
+the copy). `Content-Type` and `Cache-Control` are those of the other
+sources.
+
+| Case | Answer |
+|---|---|
+| the worker has no cache file (the cache is off, `storage.dir` is empty, or the file does not exist yet) | 404 `{"error": "No cache on this worker"}` |
+| any value but `memory`, `file` or `cache` | 400 `{"error": "source must be memory, file or cache"}` (was `source must be memory or file`) |
+| the copy failed | 500 `{"error": "Snapshot failed: <reason>"}` |
+
+One memory or cache copy runs at a time on a worker. A second request
+waits up to 30 seconds for the running copy, then answers 500 with the
+reason `another <memory|cache> snapshot is still running`, naming the copy
+that holds the slot.
+
+### Absence (normative)
+
+- A backend older than v1.30 ignores `parts` and answers every part; it
+  sends no `worker`, `recorder` or `storage` key. The UI then hides the
+  panels those keys feed (the mode strip, the own folder rows, the other
+  folders of the host) and keeps the rest of the view.
+- An older backend ignores `compress` and sends the plain file under its
+  plain name. The UI offers the compressed download only on a worker that
+  sends the `recorder` block.
+- An older backend refuses `source=cache` with 400. The UI offers the cache
+  download only from a `cache` row of `storage.files`.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 

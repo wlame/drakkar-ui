@@ -664,6 +664,8 @@ export interface HistoryFolder {
 }
 
 export interface DatabasesResponse {
+  // With `?parts=` (v1.30) a part not asked for is absent; the tab asks
+  // without `parts` on its own worker and reads only `own` from peers.
   own: OwnDb[]
   history: { folders: HistoryFolder[] }
   // v1.30 (all optional): a backend that predates it sends none of these.
@@ -679,7 +681,7 @@ export interface StorageStatus {
   shared_is_storage_dir: boolean
   files: {
     name: string
-    kind: 'cache' | 'watchdog' | 'owner_lock' | 'temp'
+    kind: 'cache' | 'watchdog' | 'owner_lock'
     size_bytes: number
     modified_at: string
     entries: number | null
