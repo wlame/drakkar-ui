@@ -57,6 +57,8 @@
   import type { SharedTimelineControls } from '../../lib/cluster'
   import {
     barGeometry,
+    runTimingHover,
+    taskBarSpan,
     barTexts,
     tagLeftOffset,
     deriveMarkers,
@@ -522,7 +524,11 @@
       const end = t.end_ts ?? now
       if (end < windowStart) continue // stale-data filter only, not a coordinate
       const lane = Math.min(Math.max(t.slot ?? 0, 0), Math.max(laneCount - 1, 0))
-      const { left, width } = barGeometry(t.start_ts, end, originTs, pxPerSec, MIN_BAR_PX)
+      // The bar spans the run measured off the worker's loop when the task
+      // carries it (v1.29), else start_ts..end; the stale filter above keeps
+      // reading end_ts so lanes and the age cut do not change.
+      const span = taskBarSpan(t, now)
+      const { left, width } = barGeometry(span.start, span.end, originTs, pxPerSec, MIN_BAR_PX)
       if (culling && (left + width < visibleFrom || left > visibleTo)) continue
       const color = cachedBarColor(t, colorRules)
       const visibleWidth = Math.min(left + width, visibleRight) - left
@@ -1541,6 +1547,10 @@
       {/if}
       {#if hovered.spawn_ms != null}
         <span class="hl">Spawn:</span><span class="hv">{hovered.spawn_ms}ms</span>
+      {/if}
+      {@const runTiming = runTimingHover(hovered)}
+      {#if runTiming}
+        <span class="hl">Run:</span><span class="hv">{runTiming}</span>
       {/if}
       <span class="hl">Start:</span><span class="hv">{fmtTimeMs(hovered.start_ts)}</span>
       <span class="hl">End:</span><span class="hv"

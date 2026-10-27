@@ -49,6 +49,9 @@ function task(id: string, startOffset: number, extra: Partial<TaskView> = {}): T
     source_offsets: null,
     spawn_ms: null,
     queue_wait_ms: null,
+    run_started_at: null,
+    reported_run_seconds: null,
+    exit_notice_ms: null,
     ...extra,
   }
 }
@@ -292,6 +295,38 @@ describe('Timeline', () => {
     flushSync()
     expect((target.querySelector('.tl-hover') as HTMLElement).textContent).toContain('marker:')
     expect((target.querySelector('.tl-hover') as HTMLElement).textContent).toContain('0:41')
+  })
+
+  it('draws a v1.29 bar from run_started_at and duration, not from the completion ts', () => {
+    // Completion ts 20s after start, but the process ran 5s: a stalled loop.
+    const stalled = task('stalled', 60, { duration: 5, run_started_at: NOW - 60 })
+    const plain = task('plain', 60, { slot: 1 })
+    const { target } = renderTracked({ tasks: [stalled, plain] })
+    const stalledBar = barFor(target, 'stalled')
+    const plainBar = barFor(target, 'plain')
+    expect(styleNumber(stalledBar, 'left')).toBeCloseTo(styleNumber(plainBar, 'left'))
+    // Same start, a quarter of the width: 5s against 20s.
+    expect(styleNumber(stalledBar, 'width') * 4).toBeCloseTo(styleNumber(plainBar, 'width'))
+  })
+
+  it('draws the reported run time and names both times in the hover', () => {
+    const reported = task('reported', 60, {
+      duration: 8,
+      run_started_at: NOW - 60,
+      reported_run_seconds: 2,
+      exit_notice_ms: 300,
+    })
+    const plain = task('plain', 60, { slot: 1 })
+    const { target } = renderTracked({ tasks: [reported, plain] })
+    const bar = barFor(target, 'reported')
+    expect(styleNumber(bar, 'width') * 10).toBeCloseTo(
+      styleNumber(barFor(target, 'plain'), 'width'),
+    )
+    bar.dispatchEvent(new Event('mouseenter'))
+    flushSync()
+    const hover = (target.querySelector('.tl-hover') as HTMLElement).textContent ?? ''
+    expect(hover).toContain('reported 2.000s, process 8.000s')
+    expect(hover).toContain('worker noticed the exit 300 ms late')
   })
 
   it('shows the size alone when the backend sent no line count', () => {

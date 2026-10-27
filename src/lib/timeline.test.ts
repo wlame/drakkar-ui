@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import {
   barGeometry,
+  taskBarSpan,
+  runTimingHover,
   tickMarks,
   followScrollLeft,
   shouldRebase,
@@ -43,9 +45,75 @@ function task(overrides: Partial<TaskView> = {}): TaskView {
     source_offsets: null,
     spawn_ms: null,
     queue_wait_ms: null,
+    run_started_at: null,
+    reported_run_seconds: null,
+    exit_notice_ms: null,
     ...overrides,
   }
 }
+
+describe('taskBarSpan', () => {
+  it('draws a finished v1.29 task from run_started_at plus duration', () => {
+    // The completion ts (1005) came 2s after the real exit: a stalled loop.
+    const t = task({ start_ts: 1000.001, end_ts: 1005, duration: 3, run_started_at: 1000 })
+    expect(taskBarSpan(t, 2000)).toEqual({ start: 1000, end: 1003 })
+    const g = barGeometry(1000, 1003, 990, 10, 2)
+    const span = taskBarSpan(t, 2000)
+    expect(barGeometry(span.start, span.end, 990, 10, 2)).toEqual(g)
+    expect(g.width).toBe(30)
+  })
+
+  it('prefers the reported run time when the hook gave one', () => {
+    const t = task({ end_ts: 1005, duration: 3, run_started_at: 1000, reported_run_seconds: 2.5 })
+    expect(taskBarSpan(t, 2000)).toEqual({ start: 1000, end: 1002.5 })
+  })
+
+  it('falls back to start_ts and end_ts without run_started_at (older backend)', () => {
+    const t = task({ start_ts: 1000, end_ts: 1005, duration: 3 })
+    expect(taskBarSpan(t, 2000)).toEqual({ start: 1000, end: 1005 })
+  })
+
+  it('draws a running task to now even when run_started_at is known', () => {
+    const t = task({ end_ts: null, duration: null, status: 'running', run_started_at: 1000 })
+    expect(taskBarSpan(t, 1010)).toEqual({ start: 1000, end: 1010 })
+  })
+
+  it('falls back when the finished task has no run time', () => {
+    const t = task({ start_ts: 1000, end_ts: 1004, duration: null, run_started_at: 1000 })
+    expect(taskBarSpan(t, 2000)).toEqual({ start: 1000, end: 1004 })
+  })
+
+  it('ignores a negative run time', () => {
+    const t = task({ start_ts: 1000, end_ts: 1004, duration: -1, run_started_at: 1000 })
+    expect(taskBarSpan(t, 2000)).toEqual({ start: 1000, end: 1004 })
+  })
+})
+
+describe('runTimingHover', () => {
+  it('returns null when there is nothing to add', () => {
+    expect(runTimingHover(task({ exit_notice_ms: 3 }))).toBeNull()
+    expect(runTimingHover(task())).toBeNull()
+  })
+
+  it('names both run times when the hook reported one', () => {
+    expect(runTimingHover(task({ duration: 0.24, reported_run_seconds: 0.212 }))).toBe(
+      'reported 0.212s, process 0.240s',
+    )
+  })
+
+  it('shows an exit notice above 50 ms', () => {
+    expect(runTimingHover(task({ exit_notice_ms: 50 }))).toBeNull()
+    expect(runTimingHover(task({ exit_notice_ms: 812.4 }))).toBe(
+      'worker noticed the exit 812 ms late',
+    )
+  })
+
+  it('joins both parts', () => {
+    expect(
+      runTimingHover(task({ duration: 1, reported_run_seconds: 0.5, exit_notice_ms: 120 })),
+    ).toBe('reported 0.500s, process 1.000s; worker noticed the exit 120 ms late')
+  })
+})
 
 describe('barGeometry', () => {
   it('positions a bar relative to the origin', () => {

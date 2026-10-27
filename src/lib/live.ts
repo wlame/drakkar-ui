@@ -42,6 +42,13 @@ export interface TaskView {
   // (task_started metadata `queue_wait_ms`, v1.11 backends). WS-only, like
   // spawn_ms. Long waits = the pool (or the CPUs behind it) is the bottleneck.
   queue_wait_ms: number | null
+  // Run timing from the completion event (v1.29). `run_started_at` (unix
+  // seconds of the spawn) and `reported_run_seconds` (the handler hook's run
+  // time) come from both paths; `exit_notice_ms` (how late the worker handled
+  // the exit) is WS-only, like spawn_ms. All null on older backends.
+  run_started_at: number | null
+  reported_run_seconds: number | null
+  exit_notice_ms: number | null
 }
 
 // baseTaskId strips a `:r<ts>` retry suffix so links and lookups use the canonical id.
@@ -113,6 +120,9 @@ export function taskFromRecent(r: RecentTask): TaskView {
     source_offsets: null,
     spawn_ms: null,
     queue_wait_ms: null,
+    run_started_at: r.run_started_at ?? null,
+    reported_run_seconds: r.reported_run_seconds ?? null,
+    exit_notice_ms: null,
   }
 }
 

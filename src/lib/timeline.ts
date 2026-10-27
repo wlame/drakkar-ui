@@ -48,6 +48,58 @@ export function barGeometry(
   return { left, width }
 }
 
+export interface BarSpan {
+  start: number
+  end: number
+}
+
+/**
+ * The time span a task's bar covers (contract v1.29).
+ *
+ * A finished task from a v1.29 backend carries `run_started_at` (the spawn)
+ * and a run time measured off the worker's event loop: the handler hook's
+ * `reported_run_seconds` when present, else `duration`. Its bar is
+ * `[run_started_at, run_started_at + run time]`, so a stalled worker loop no
+ * longer stretches it. Everything else — a running task, a launch failure, an
+ * older backend — keeps the `[start_ts, end_ts ?? now]` bar.
+ */
+export function taskBarSpan(
+  t: Pick<TaskView, 'start_ts' | 'end_ts' | 'duration' | 'run_started_at' | 'reported_run_seconds'>,
+  now: number,
+): BarSpan {
+  if (t.end_ts != null && t.run_started_at != null) {
+    const run = t.reported_run_seconds ?? t.duration
+    if (run != null && Number.isFinite(run) && run >= 0) {
+      return { start: t.run_started_at, end: t.run_started_at + run }
+    }
+  }
+  return { start: t.start_ts, end: t.end_ts ?? now }
+}
+
+/** Exit notices above this many ms are shown in the hover: a healthy worker
+ * handles an exit within a few ms. */
+export const EXIT_NOTICE_HOVER_MIN_MS = 50
+
+/**
+ * Hover text for a task's run timing, or null when there is nothing to add.
+ *
+ * Names both run times when the handler reported its own ("reported 0.212s,
+ * process 0.240s"), and a late exit notice ("worker noticed the exit 812 ms
+ * late") when the worker's loop handled the exit late.
+ */
+export function runTimingHover(
+  t: Pick<TaskView, 'duration' | 'reported_run_seconds' | 'exit_notice_ms'>,
+): string | null {
+  const parts: string[] = []
+  if (t.reported_run_seconds != null && t.duration != null) {
+    parts.push(`reported ${t.reported_run_seconds.toFixed(3)}s, process ${t.duration.toFixed(3)}s`)
+  }
+  if (t.exit_notice_ms != null && t.exit_notice_ms > EXIT_NOTICE_HOVER_MIN_MS) {
+    parts.push(`worker noticed the exit ${Math.round(t.exit_notice_ms)} ms late`)
+  }
+  return parts.length ? parts.join('; ') : null
+}
+
 export interface TickMark {
   left: number
   ts: number

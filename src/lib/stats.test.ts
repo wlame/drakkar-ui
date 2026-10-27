@@ -26,6 +26,9 @@ function task(over: Partial<TaskView>): TaskView {
     source_offsets: null,
     spawn_ms: null,
     queue_wait_ms: null,
+    run_started_at: null,
+    reported_run_seconds: null,
+    exit_notice_ms: null,
     ...over,
   }
 }

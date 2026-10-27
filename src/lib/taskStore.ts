@@ -68,6 +68,9 @@ export function applyTaskEvent(tasks: Record<string, TaskView>, e: WsEvent): voi
           : null,
         spawn_ms: null,
         queue_wait_ms: typeof meta.queue_wait_ms === 'number' ? meta.queue_wait_ms : null,
+        run_started_at: null,
+        reported_run_seconds: null,
+        exit_notice_ms: null,
       }
       return
     }
@@ -80,6 +83,10 @@ export function applyTaskEvent(tasks: Record<string, TaskView>, e: WsEvent): voi
       // task_completed metadata carries spawn_ms on v1.11+ backends.
       const meta = safeJsonParse<Record<string, unknown>>(e.metadata ?? undefined, {})
       const spawnMs = typeof meta.spawn_ms === 'number' ? meta.spawn_ms : null
+      // Run timing measured off the worker's loop (v1.29 backends).
+      const runStartedAt = numberOrNull(meta.run_started_at)
+      const reportedRunSeconds = numberOrNull(meta.reported_run_seconds)
+      const exitNoticeMs = numberOrNull(meta.exit_notice_ms)
       tasks[e.task_id] = {
         task_id: e.task_id,
         partition: e.partition ?? ex?.partition ?? null,
@@ -103,10 +110,18 @@ export function applyTaskEvent(tasks: Record<string, TaskView>, e: WsEvent): voi
         source_offsets: ex?.source_offsets ?? null,
         spawn_ms: spawnMs,
         queue_wait_ms: ex?.queue_wait_ms ?? null,
+        run_started_at: runStartedAt,
+        reported_run_seconds: reportedRunSeconds,
+        exit_notice_ms: exitNoticeMs,
       }
       return
     }
   }
+}
+
+// A finite number from event metadata, else null (an older backend omits the key).
+function numberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 /**
@@ -138,6 +153,9 @@ export function mergeRecentTasks(
       v.exit_code = v.exit_code ?? old.exit_code
       v.spawn_ms = old.spawn_ms
       v.queue_wait_ms = old.queue_wait_ms
+      v.exit_notice_ms = old.exit_notice_ms
+      v.run_started_at = v.run_started_at ?? old.run_started_at
+      v.reported_run_seconds = v.reported_run_seconds ?? old.reported_run_seconds
     }
     map[t.task_id] = v
   }

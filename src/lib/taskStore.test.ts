@@ -201,6 +201,100 @@ describe('laneCountFromTasks', () => {
   })
 })
 
+describe('run timing (v1.29)', () => {
+  it('reads run_started_at, exit_notice_ms and reported_run_seconds from completion metadata', () => {
+    const tasks: Record<string, TaskView> = {}
+    applyTaskEvent(tasks, started())
+    applyTaskEvent(
+      tasks,
+      completed({
+        metadata: JSON.stringify({
+          run_started_at: 100.0001,
+          exit_notice_ms: 812.5,
+          reported_run_seconds: 2.5,
+        }),
+      }),
+    )
+    const t = tasks['t1']
+    expect(t.run_started_at).toBe(100.0001)
+    expect(t.exit_notice_ms).toBe(812.5)
+    expect(t.reported_run_seconds).toBe(2.5)
+  })
+
+  it('reads them from task_failed too', () => {
+    const tasks: Record<string, TaskView> = {}
+    applyTaskEvent(tasks, started())
+    applyTaskEvent(tasks, {
+      event: 'task_failed',
+      ts: 105,
+      task_id: 't1',
+      duration: 4,
+      metadata: JSON.stringify({ run_started_at: 100, exit_notice_ms: 1.5 }),
+    })
+    expect(tasks['t1'].run_started_at).toBe(100)
+    expect(tasks['t1'].exit_notice_ms).toBe(1.5)
+    expect(tasks['t1'].reported_run_seconds).toBeNull()
+  })
+
+  it('leaves them null for an older backend', () => {
+    const tasks: Record<string, TaskView> = {}
+    applyTaskEvent(tasks, started())
+    applyTaskEvent(tasks, completed({ metadata: JSON.stringify({ spawn_ms: 1 }) }))
+    expect(tasks['t1'].run_started_at).toBeNull()
+    expect(tasks['t1'].exit_notice_ms).toBeNull()
+    expect(tasks['t1'].reported_run_seconds).toBeNull()
+  })
+
+  it('takes the row keys on resync and keeps the WS-only exit notice', () => {
+    const tasks: Record<string, TaskView> = {}
+    applyTaskEvent(tasks, started())
+    applyTaskEvent(
+      tasks,
+      completed({ metadata: JSON.stringify({ run_started_at: 100, exit_notice_ms: 70 }) }),
+    )
+    const row: RecentTask = {
+      task_id: 't1',
+      partition: 0,
+      start_ts: 100,
+      end_ts: 105,
+      duration: 5,
+      status: 'completed',
+      args: null,
+      pid: null,
+      slot: 2,
+      labels: null,
+      env: null,
+      origin: 'kafka',
+      client_name: null,
+      request_id: null,
+      run_started_at: 100.5,
+      reported_run_seconds: 1.25,
+    }
+    const merged = mergeRecentTasks(tasks, [row])
+    expect(merged['t1'].run_started_at).toBe(100.5)
+    expect(merged['t1'].reported_run_seconds).toBe(1.25)
+    expect(merged['t1'].exit_notice_ms).toBe(70)
+    // An older backend's row (no keys) keeps the WS-delivered values.
+    const older = mergeRecentTasks(merged, [
+      { ...row, run_started_at: undefined, reported_run_seconds: undefined },
+    ])
+    expect(older['t1'].run_started_at).toBe(100.5)
+    expect(older['t1'].reported_run_seconds).toBe(1.25)
+  })
+
+  it('keeps the retry archive key on start_ts', () => {
+    const tasks: Record<string, TaskView> = {}
+    applyTaskEvent(tasks, started({ ts: 100 }))
+    applyTaskEvent(
+      tasks,
+      completed({ ts: 103, metadata: JSON.stringify({ run_started_at: 99.5 }) }),
+    )
+    applyTaskEvent(tasks, started({ ts: 110 }))
+    expect(Object.keys(tasks).sort()).toEqual(['t1', 't1:r100'])
+    expect(tasks['t1:r100'].run_started_at).toBe(99.5)
+  })
+})
+
 describe('queue_wait_ms', () => {
   it('parses queue_wait_ms from task_started metadata and survives completion', () => {
     const tasks: Record<string, TaskView> = {}
