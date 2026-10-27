@@ -15,6 +15,7 @@ import type { EventMatch, TimelineEventView } from '../../lib/timelineEvents'
 import { tagBoxWidth, TAG_EDGE_MARGIN_PX } from '../../lib/timeline'
 import { openDocsAnchor, setDocsConfig } from '../../lib/docsAnchors'
 import { identity } from '../../lib/config'
+import { fmtTimeMs } from '../../lib/format'
 
 // A fixed synthetic epoch (seconds), pinned onto the clock in beforeEach —
 // deliberately NOT Date.now(). Every fixture timestamp below is expressed
@@ -327,6 +328,17 @@ describe('Timeline', () => {
     const hover = (target.querySelector('.tl-hover') as HTMLElement).textContent ?? ''
     expect(hover).toContain('reported 2.000s, process 8.000s')
     expect(hover).toContain('worker noticed the exit 300 ms late')
+  })
+
+  it('shows the drawn bar edges as Start and End in the hover', () => {
+    // Completion ts 20s after start; the process ran 5s.
+    const stalled = task('stalled', 60, { duration: 5, run_started_at: NOW - 60 })
+    const { target } = renderTracked({ tasks: [stalled] })
+    barFor(target, 'stalled').dispatchEvent(new Event('mouseenter'))
+    flushSync()
+    const hover = (target.querySelector('.tl-hover') as HTMLElement).textContent ?? ''
+    expect(hover).toContain(fmtTimeMs(NOW - 55))
+    expect(hover).not.toContain(fmtTimeMs(NOW - 40))
   })
 
   it('shows the size alone when the backend sent no line count', () => {

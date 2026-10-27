@@ -151,11 +151,16 @@ export function mergeRecentTasks(
       v.env = v.env ?? old.env
       v.source_offsets = old.source_offsets
       v.exit_code = v.exit_code ?? old.exit_code
-      v.spawn_ms = old.spawn_ms
-      v.queue_wait_ms = old.queue_wait_ms
-      v.exit_notice_ms = old.exit_notice_ms
-      v.run_started_at = v.run_started_at ?? old.run_started_at
-      v.reported_run_seconds = v.reported_run_seconds ?? old.reported_run_seconds
+      // Values of one attempt pass over only to the same attempt: when the WS
+      // missed a retry's task_started, `old` is still the earlier attempt,
+      // and its spawn time or exit notice would land on the new one.
+      if (old.start_ts === v.start_ts) {
+        v.spawn_ms = old.spawn_ms
+        v.queue_wait_ms = old.queue_wait_ms
+        v.exit_notice_ms = old.exit_notice_ms
+        v.run_started_at = v.run_started_at ?? old.run_started_at
+        v.reported_run_seconds = v.reported_run_seconds ?? old.reported_run_seconds
+      }
     }
     map[t.task_id] = v
   }

@@ -282,6 +282,40 @@ describe('run timing (v1.29)', () => {
     expect(older['t1'].reported_run_seconds).toBe(1.25)
   })
 
+  it('does not pass the values of one attempt to a retry the WS missed', () => {
+    const tasks: Record<string, TaskView> = {}
+    applyTaskEvent(tasks, started({ ts: 100 }))
+    applyTaskEvent(
+      tasks,
+      completed({
+        ts: 103,
+        metadata: JSON.stringify({ run_started_at: 100, exit_notice_ms: 70, spawn_ms: 4 }),
+      }),
+    )
+    // The resync row is attempt 2 (start_ts 110), a launch failure with no run timing.
+    const retry: RecentTask = {
+      task_id: 't1',
+      partition: 0,
+      start_ts: 110,
+      end_ts: 110.5,
+      duration: 0.5,
+      status: 'failed',
+      args: null,
+      pid: null,
+      slot: 2,
+      labels: null,
+      env: null,
+      origin: 'kafka',
+      client_name: null,
+      request_id: null,
+      run_started_at: null,
+    }
+    const merged = mergeRecentTasks(tasks, [retry])
+    expect(merged['t1'].run_started_at).toBeNull()
+    expect(merged['t1'].exit_notice_ms).toBeNull()
+    expect(merged['t1'].spawn_ms).toBeNull()
+  })
+
   it('keeps the retry archive key on start_ts', () => {
     const tasks: Record<string, TaskView> = {}
     applyTaskEvent(tasks, started({ ts: 100 }))

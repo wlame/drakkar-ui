@@ -1549,12 +1549,14 @@
         <span class="hl">Spawn:</span><span class="hv">{hovered.spawn_ms}ms</span>
       {/if}
       {@const runTiming = runTimingHover(hovered)}
+      {@const hoveredSpan = taskBarSpan(hovered, now)}
       {#if runTiming}
         <span class="hl">Run:</span><span class="hv">{runTiming}</span>
       {/if}
-      <span class="hl">Start:</span><span class="hv">{fmtTimeMs(hovered.start_ts)}</span>
+      <!-- Start and End are the drawn bar's edges, so the hover matches the bar. -->
+      <span class="hl">Start:</span><span class="hv">{fmtTimeMs(hoveredSpan.start)}</span>
       <span class="hl">End:</span><span class="hv"
-        >{hovered.end_ts ? fmtTimeMs(hovered.end_ts) : 'running'}</span
+        >{hovered.end_ts ? fmtTimeMs(hoveredSpan.end) : 'running'}</span
       >
       <br />
       <span class="hl">CLI:</span><span class="hv">{hovered.args ?? '-'}</span>
