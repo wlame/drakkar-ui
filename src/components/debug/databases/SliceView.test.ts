@@ -184,4 +184,46 @@ describe('Slice view', () => {
     expect(target.querySelector('[role=status]')?.textContent).toContain('Building on w-1')
     close()
   })
+
+  it('offers every recorder event type, including the sink and web request ones', async () => {
+    const { target, close } = await open('db_view=slice&db_from=10&db_to=20', stub())
+    const text = target.textContent ?? ''
+    for (const type of ['message_dlq', 'sink_not_started', 'webapp_request_auth_failed']) {
+      expect(text).toContain(type)
+    }
+    close()
+  })
+
+  it('refreshes the href of a relative range when the pointer reaches the link', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000_000_000)
+    const { target, close } = await open('db_view=slice&db_range=1h', stub())
+    const link = target.querySelector<HTMLAnchorElement>('.links a')!
+    expect(link.getAttribute('href')).toContain('from=999996400&to=1000000000')
+    now.mockReturnValue(1_000_007_200_000)
+    link.dispatchEvent(new Event('pointerenter'))
+    await settled()
+    expect(target.querySelector('.links a')!.getAttribute('href')).toContain(
+      'from=1000003600&to=1000007200',
+    )
+    now.mockRestore()
+    close()
+  })
+
+  it('gives no link to a peer whose advertised address is a javascript: url', async () => {
+    const bad = workers.map((w) => (w.is_current ? w : { ...w, url: 'javascript:alert(1)//' }))
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/api/v1/workers')) return new Response(JSON.stringify(bad))
+      if (url.includes('/debug/slice')) return new Response('{}', { status: 400 })
+      return new Response(JSON.stringify(answer('sqlite')))
+    })
+    const { target, close } = await open(
+      'db_view=slice&db_scope=cluster&db_from=10&db_to=20',
+      fetchMock as never,
+    )
+    const hrefs = links(target).map(([, href]) => href)
+    expect(hrefs.every((h) => h?.startsWith('/api/v1/'))).toBe(true)
+    expect(target.textContent).toContain('w-2 (no address)')
+    close()
+  })
 })

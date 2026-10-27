@@ -11,12 +11,49 @@ export const SLICE_MAX_RANGE_SECONDS = 604800
 export const SLICE_DEFAULT_MAX_ROWS = 200000
 export const SLICE_MAX_ROWS = 1000000
 export const SLICE_BUILD_LIMIT_SECONDS = 60
-export const SLICE_MAX_EVENTS = 40
+
+/**
+ * The recorder's event types (`EventType` in the recorder schema). The form
+ * offers these; the request check below tests the shape only, because a newer
+ * backend may know more types than this list.
+ */
+export const RECORDER_EVENT_TYPES = [
+  'consumed',
+  'arranged',
+  'assigned',
+  'revoked',
+  'committed',
+  'partition_stalled',
+  'message_complete',
+  'window_complete',
+  'task_started',
+  'task_completed',
+  'task_failed',
+  'task_complete',
+  'produced',
+  'sink_delivered',
+  'sink_error',
+  'message_dlq',
+  'sink_not_started',
+  'runtime_health',
+  'runtime_stall',
+  'runtime_lag_episode',
+  'runtime_probe',
+  'resource_sample',
+  'annotation',
+  'periodic_run',
+  'offload',
+  'webapp_request_received',
+  'webapp_request_completed',
+  'webapp_request_timeout',
+  'webapp_request_rate_limited',
+  'webapp_request_auth_failed',
+  'webapp_request_dropped_after_timeout',
+] as const
 
 const MAX_PARTITION = 2147483647
 const MAX_TASK_ID = 256
 const MAX_LABEL_KEY = 128
-const MAX_LABEL_VALUE = 1024
 const EVENT_TYPE_RE = /^[a-z][a-z0-9_]*$/
 const UNSAFE_NAME_CHARS = /[^a-zA-Z0-9_-]/g
 
@@ -72,7 +109,8 @@ export function buildSliceRequest(
   nowSeconds: number,
 ): SliceRequest {
   const request: SliceRequest = { ...resolveRange(state, nowSeconds), scope: state.scope }
-  if (state.scope === 'worker' && state.sources) request.sources = state.sources
+  if (state.scope === 'worker' && state.sources)
+    request.sources = state.sources as SliceRequest['sources']
   if (state.partition !== null) request.partition = state.partition
   if (state.offsets) {
     const [from, to] = state.offsets.split('-')
@@ -130,9 +168,6 @@ export function validateSliceRequest(r: SliceRequest, available: readonly string
   }
   const badEvent = (r.events ?? []).find((e) => !EVENT_TYPE_RE.test(e))
   if (badEvent !== undefined) return `event '${badEvent}' is not a recorder event type`
-  if ((r.events ?? []).length > SLICE_MAX_EVENTS) {
-    return `events: give at most ${SLICE_MAX_EVENTS} event types`
-  }
   if ((r.label_key === undefined) !== (r.label_value === undefined)) {
     return 'give label_key and label_value together'
   }
@@ -141,9 +176,6 @@ export function validateSliceRequest(r: SliceRequest, available: readonly string
     (r.label_key.length < 1 || r.label_key.length > MAX_LABEL_KEY || /["\\]/.test(r.label_key))
   ) {
     return 'label_key must be 1 to 128 characters without " or \\'
-  }
-  if (r.label_value !== undefined && r.label_value.length > MAX_LABEL_VALUE) {
-    return `label_value must be 1 to ${MAX_LABEL_VALUE} characters`
   }
   if (r.max_rows !== undefined && !isWholeNumber(r.max_rows, 1, SLICE_MAX_ROWS)) {
     return 'max_rows must be a whole number from 1 to 1000000'
@@ -262,7 +294,7 @@ export function clusterPlan(
     request: { ...request, scope: 'cluster', sources: undefined },
   }
   if (provider === 'postgres') return { links: [clusterFile], notes: [POSTGRES_NOTE] }
-  const part = (sources: string[]) =>
+  const part = (sources: NonNullable<SliceRequest['sources']>) =>
     perWorkerLinks({ ...request, sources }, targets).map((l) => ({
       ...l,
       label: `Unsealed part of ${l.label}`,

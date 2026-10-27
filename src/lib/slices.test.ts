@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { api } from './api'
-import { parseDbView, writeDbView } from './dbview'
+import { isOffsetsText, parseDbView, writeDbView } from './dbview'
 import {
   EMPTY_SLICE_FORM,
   buildSliceRequest,
@@ -272,5 +272,13 @@ describe('local time inputs', () => {
     expect(text).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/)
     expect(fromLocalInput(text)).toBe(1760432400)
     expect(fromLocalInput('not a time')).toBeNull()
+  })
+})
+
+describe('offset text', () => {
+  it('takes offsets up to the signed 64-bit maximum and refuses larger ones', () => {
+    expect(isOffsetsText('1-9223372036854775807')).toBe(true)
+    expect(isOffsetsText('1-9223372036854775808')).toBe(false)
+    expect(isOffsetsText('5-')).toBe(false)
   })
 })

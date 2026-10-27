@@ -82,3 +82,29 @@ describe('peerBaseUrl', () => {
     expect(peerBaseUrl(worker({ url: '' }))).toBe('')
   })
 })
+
+describe('peerBaseUrl scheme check', () => {
+  const peer = (url: string) =>
+    ({
+      worker_name: 'w',
+      cluster: 'c',
+      url,
+      is_current: false,
+      ip_address: null,
+      debug_port: null,
+    }) as WorkerPeer
+
+  it.each([
+    ['a javascript: url', 'javascript:alert(1)//'],
+    ['a data: url', 'data:text/html,<script>1</script>'],
+    ['a relative value', '/other/path'],
+    ['a scheme-less host', 'w-2:8080'],
+  ])('refuses %s', (_name, url) => {
+    expect(peerBaseUrl(peer(url))).toBe('')
+  })
+
+  it('accepts http and https and drops trailing slashes', () => {
+    expect(peerBaseUrl(peer('http://w-2:8080/'))).toBe('http://w-2:8080')
+    expect(peerBaseUrl(peer('https://w-2.example/'))).toBe('https://w-2.example')
+  })
+})

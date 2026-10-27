@@ -750,7 +750,7 @@ export interface SliceRequest {
   from: number
   to: number
   scope?: 'worker' | 'cluster'
-  sources?: string[]
+  sources?: ('memory' | 'files' | 'history' | 'postgres')[]
   partition?: number
   offset_from?: string
   offset_to?: string

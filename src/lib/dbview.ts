@@ -51,7 +51,14 @@ export const DB_DEFAULTS: DbViewState = {
 const MAX_NAME_LENGTH = 256
 const MAX_PARTITION = 2147483647
 const EVENT_TYPE_RE = /^[a-z][a-z0-9_]*$/
-const OFFSETS_RE = /^\d{1,18}-\d{1,18}$/
+const OFFSETS_RE = /^(\d{1,19})-(\d{1,19})$/
+const MAX_INT64 = 9223372036854775807n
+
+/** True for `<from>-<to>` with both offsets whole numbers that fit a signed 64-bit integer. */
+export function isOffsetsText(text: string): boolean {
+  const m = OFFSETS_RE.exec(text)
+  return m !== null && BigInt(m[1]) <= MAX_INT64 && BigInt(m[2]) <= MAX_INT64
+}
 
 // Query key of each state field.
 const KEYS: Record<keyof DbViewState, string> = {
@@ -112,7 +119,7 @@ export function parseDbView(query: string): DbViewState {
     sources: list(get('sources'), (s) => (DB_SOURCES as readonly string[]).includes(s)),
     types: list(get('types'), (t) => t.length <= 64 && EVENT_TYPE_RE.test(t)),
     partition: wholeNumber(get('partition'), MAX_PARTITION),
-    offsets: offsets && OFFSETS_RE.test(offsets) ? offsets : null,
+    offsets: offsets && isOffsetsText(offsets) ? offsets : null,
     labelKey: name(get('labelKey')),
   }
 }

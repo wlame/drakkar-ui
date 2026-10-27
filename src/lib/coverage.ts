@@ -124,7 +124,7 @@ export function spanPosition(
   minWidth = 0.5,
 ): { left: number; width: number } {
   const total = Math.max(axis.to - axis.from, 1)
-  const left = Math.min(((span.from - axis.from) / total) * 100, 100 - minWidth)
+  const left = Math.max(Math.min(((span.from - axis.from) / total) * 100, 100 - minWidth), 0)
   const width = Math.min(Math.max(((span.to - span.from) / total) * 100, minWidth), 100 - left)
   return { left, width }
 }

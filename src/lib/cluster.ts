@@ -69,5 +69,22 @@ export function sameClusterPeers(workers: WorkerPeer[]): WorkerPeer[] {
 export function peerBaseUrl(w: WorkerPeer): string {
   const base =
     w.url || (w.ip_address && w.debug_port != null ? `http://${w.ip_address}:${w.debug_port}` : '')
+  return safeHttpBase(base)
+}
+
+/**
+ * The base unchanged but for trailing slashes, when it is an absolute http or
+ * https URL; '' for anything else. A peer's URL is data another worker
+ * advertised and ends up in links and in `window.open`, so a `javascript:`,
+ * `data:` or relative value must never pass.
+ */
+function safeHttpBase(base: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(base)
+  } catch {
+    return ''
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return ''
   return base.replace(/\/+$/, '')
 }

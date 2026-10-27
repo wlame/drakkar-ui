@@ -4,15 +4,16 @@
   // go there), the limits the server enforces, and the download links. A
   // download is a plain navigation to the building worker's own origin: the
   // file is never read into this page.
-  import { onMount, untrack } from 'svelte'
+  import { onDestroy, onMount, untrack } from 'svelte'
   import { api, type DatabasesResponse, type WorkerPeer } from '../../../lib/api'
   import { coverageSummary, type Coverage } from '../../../lib/coverage'
-  import { DB_RANGES, DB_SOURCES, type DbViewState, ALL_WORKERS } from '../../../lib/dbview'
-  import { EVENT_TYPES } from '../../../lib/events'
-  import { fanOutTargets } from '../../../lib/fanout'
+  import { DB_RANGES, DB_SOURCES, isOffsetsText, type DbViewState, ALL_WORKERS } from '../../../lib/dbview'
+    import { fanOutTargets } from '../../../lib/fanout'
   import { fmtDateTimeMs } from '../../../lib/format'
   import {
     EMPTY_SLICE_FORM,
+    RECORDER_EVENT_TYPES,
+    SLICE_BUILD_LIMIT_SECONDS,
     SLICE_LIMITS_TEXT,
     buildSliceRequest,
     canSliceCluster,
@@ -42,8 +43,6 @@
   }
   let { data, ownSections, workers, currentWorker, view, coverage, onchange }: Props = $props()
 
-  const OFFSETS_RE = /^\d{1,18}-\d{1,18}$/
-
   let form = $state<SliceForm>({ ...EMPTY_SLICE_FORM })
   let nowSeconds = $state(Math.floor(Date.now() / 1000))
   // A typed from/to that cannot be a range yet stays here, not in the URL.
@@ -64,6 +63,7 @@
   const everyWorker = $derived(view.worker === ALL_WORKERS)
 
   // The databases answer of the worker that builds: its own section when it is a peer.
+  // The history is the shared folder, read once on this page's worker, so a peer uses it too.
   const builderView = $derived.by(() => {
     const section = builder && builder.base !== '' ? ownSections.find((s) => s.worker === builder.worker) : undefined
     return section ? { own: section.own, history: data.history, recorder: section.recorder } : data
@@ -99,7 +99,7 @@
     builder !== null && plan.links.length > 0 && plan.links.every((l) => supported(l) === false),
   )
 
-  const eventChoices = $derived([...new Set([...EVENT_TYPES, ...(view.types ?? [])])])
+  const eventChoices = $derived([...new Set([...RECORDER_EVENT_TYPES, ...(view.types ?? [])])])
   const ownerNames = $derived({ worker: builder?.worker || currentWorker, cluster: data.worker?.cluster ?? null })
 
   function pickRange(key: string) {
@@ -135,7 +135,7 @@
 
   function setOffsets(text: string) {
     offsetsText = text
-    offsetsBad = text !== '' && !OFFSETS_RE.test(text)
+    offsetsBad = text !== '' && !isOffsetsText(text)
     if (text === '') onchange({ offsets: null })
     else if (!offsetsBad) onchange({ offsets: text })
   }
@@ -155,6 +155,18 @@
     }
     window.open(api.debugSliceUrl(link.base, fresh), '_blank', 'noopener')
     building = link.label
+    // The banner is a hint for the build time; it goes when the build limit has passed.
+    clearTimeout(bannerTimer)
+    bannerTimer = setTimeout(() => (building = null), SLICE_BUILD_LIMIT_SECONDS * 1000)
+  }
+
+  let bannerTimer: ReturnType<typeof setTimeout> | undefined
+  onDestroy(() => clearTimeout(bannerTimer))
+
+  // A link opened another way than a left click (middle click, context menu,
+  // copy) uses its href as drawn, so the relative range is refreshed first.
+  function freshen() {
+    nowSeconds = Math.floor(Date.now() / 1000)
   }
 
   function clock(ts: number): string {
@@ -254,7 +266,11 @@
       {:else if has === false}
         <span class="muted">{link.label}: this worker does not support slices</span>
       {:else}
-        <a class="button" href={href(link)} target="_blank" rel="noopener" onclick={(e) => download(e, link)}>Download: {link.label}</a>
+        <a class="button" href={href(link)} target="_blank" rel="noopener" onclick={(e) => download(e, link)}
+          onpointerenter={freshen}
+          onfocus={freshen}
+          oncontextmenu={freshen}
+          onauxclick={freshen}>Download: {link.label}</a>
       {/if}
     {/each}
   </div>
