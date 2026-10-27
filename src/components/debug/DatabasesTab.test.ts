@@ -655,3 +655,168 @@ describe('DatabasesTab peer reads on demand', () => {
     cleanup()
   })
 })
+
+// Contract v1.30 (first part): the mode strip, the own folder with the cache
+// snapshot, the other worker folders of the host, the history cleanup line and
+// the compressed downloads. Each panel draws only when its key is present.
+const v130: DatabasesResponse = {
+  ...body,
+  worker: { name: 'w-1', cluster: 'search', instance: '0123456789abcdef' },
+  recorder: {
+    enabled: true,
+    provider: 'sqlite',
+    memory: { window_seconds: 120, max_rows: 12000, max_bytes: 268435456 },
+    sqlite: {
+      rotation_interval_seconds: 3600,
+      archive: {
+        enabled: true,
+        scope: 'worker',
+        next_slot_ts: null,
+        window_seconds: 86400,
+        due_after_seconds: 172800,
+        retention_days: 30,
+        merged_retention_days: 7,
+      },
+    },
+    postgres: null,
+  },
+  storage: {
+    dir_set: true,
+    own_folder: 'search/w-1',
+    shared_dir_set: false,
+    shared_is_storage_dir: true,
+    files: [
+      {
+        name: '.owner.lock',
+        kind: 'owner_lock',
+        size_bytes: 0,
+        modified_at: '2026-10-14T08:00:00.000000Z',
+        entries: null,
+      },
+      {
+        name: 'w-1-cache.db',
+        kind: 'cache',
+        size_bytes: 40960,
+        modified_at: '2026-10-14T09:00:00.000000Z',
+        entries: 1234,
+      },
+    ],
+    temp_files: { count: 2, size_bytes: 4096 },
+    siblings: [
+      {
+        worker: 'w-old',
+        files: 3,
+        size_bytes: 8192,
+        newest_modified_at: '2026-10-13T09:00:00.000000Z',
+        in_use: false,
+        online: false,
+      },
+    ],
+  },
+}
+
+describe('DatabasesTab v1.30 panels', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    localStorage.clear()
+  })
+
+  it('shows the mode strip of the serving worker', async () => {
+    vi.stubGlobal('fetch', stubFetch(v130))
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    const strip = target.querySelector('[data-testid=mode-strip]')
+    expect(strip?.textContent).toBe(
+      'w-1 · cluster search · recorder sqlite (memory 2m, rotation 1h) · archive: worker scope',
+    )
+    cleanup()
+  })
+
+  it('lists the own folder files with the cache snapshot links and the temp file count', async () => {
+    vi.stubGlobal('fetch', stubFetch(v130))
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(target.textContent).toContain('Own folder search/w-1')
+    const cache = row(target, 'w-1-cache.db')
+    expect(cache.textContent).toContain('1,234')
+    expect([...cache.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual([
+      '/api/v1/debug/download-live?source=cache',
+      '/api/v1/debug/download-live?source=cache&compress=gzip',
+    ])
+    expect(row(target, '.owner.lock').querySelector('a')).toBeNull()
+    expect(target.textContent).toContain('Download temp files: 2')
+    cleanup()
+  })
+
+  it('lists the other worker folders of the host with their lock and registry state', async () => {
+    vi.stubGlobal('fetch', stubFetch(v130))
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(target.textContent).toContain('Other folders on this host (1)')
+    const sibling = row(target, 'w-old')
+    expect(sibling.textContent).toContain('free')
+    expect(sibling.textContent).toContain('offline')
+    cleanup()
+  })
+
+  it('offers compressed downloads for snapshots and history files, never for an archive', async () => {
+    vi.stubGlobal('fetch', stubFetch(v130))
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    const live = row(target, 'w-1-2026-10-14__09_00_00.db')
+    expect(live.querySelector('a.gz')?.getAttribute('href')).toBe(
+      '/api/v1/debug/download-live?source=file&compress=gzip',
+    )
+    const sealedRow = row(target, 'w-1-2026-10-14__07_00_00.db')
+    expect(sealedRow.querySelector('a.gz')?.getAttribute('href')).toBe(
+      '/api/v1/debug/download/history/search/w-1-2026-10-14__07_00_00.db?compress=gzip',
+    )
+    expect(
+      row(target, 'search-2026-10-12_00-00__2026-10-13_00-00.db.gz').querySelector('a.gz'),
+    ).toBeNull()
+    cleanup()
+  })
+
+  it('says when history files leave', async () => {
+    vi.stubGlobal('fetch', stubFetch(v130))
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(target.querySelector('.cleanup')?.textContent).toBe(
+      'Sealed files go into an archive 48h after their 24h window ends; archives are deleted after 30 days; ' +
+        'merge results are deleted after 7 days.',
+    )
+    cleanup()
+  })
+
+  it('says a worker with no storage.dir has no own folder', async () => {
+    const noFolder = {
+      ...v130,
+      storage: { ...v130.storage!, dir_set: false, own_folder: '', files: [], siblings: null },
+    }
+    vi.stubGlobal('fetch', stubFetch(noFolder))
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(target.textContent).toContain('No own folder')
+    expect(target.textContent).not.toContain('Other folders on this host')
+    cleanup()
+  })
+
+  it('hides every v1.30 panel for an answer older than v1.30', async () => {
+    vi.stubGlobal('fetch', stubFetch(body))
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(target.querySelector('[data-testid=mode-strip]')).toBeNull()
+    expect(target.textContent).not.toContain('Own folder')
+    expect(target.textContent).not.toContain('Other folders on this host')
+    expect(target.querySelector('.cleanup')).toBeNull()
+    expect(target.querySelector('a.gz')).toBeNull()
+    cleanup()
+  })
+})

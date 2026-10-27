@@ -11,7 +11,8 @@
   // view is not available there.
   import { untrack } from 'svelte'
   import { api, type DatabasesResponse } from '../../lib/api'
-  import { autodiscoverOn } from '../../lib/capabilities'
+  import { autodiscoverOn, capabilities } from '../../lib/capabilities'
+  import { modeStrip } from '../../lib/dbmode'
   import { sameClusterPeers } from '../../lib/cluster'
   import { ALL_WORKERS, isPushChange, parseDbView, writeDbView, type DbViewState } from '../../lib/dbview'
   import { fanOut, fanOutTargets, type FanOutTarget, type Unreachable } from '../../lib/fanout'
@@ -116,6 +117,7 @@
           base: r.base,
           own: r.value?.own ?? [],
           recorder: r.value?.recorder,
+          storage: r.value?.storage,
         })),
       unreachable: [
         ...missing,
@@ -127,7 +129,10 @@
 
   const ownSections = $derived<OwnSection[]>(
     data
-      ? [{ worker: currentWorker, base: '', own: data.own, recorder: data.recorder }, ...peerSections]
+      ? [
+          { worker: currentWorker, base: '', own: data.own, recorder: data.recorder, storage: data.storage },
+          ...peerSections,
+        ]
       : [],
   )
 
@@ -156,9 +161,16 @@
   function pick(value: string) {
     setView({ worker: value === '' ? null : value })
   }
+  // What the serving worker runs (v1.30); absent for an older worker.
+  const mode = $derived(data ? modeStrip(data, $capabilities) : null)
+
   // The own worker's name in a link is the same as no choice.
   const picked = $derived(view.worker === currentWorker ? '' : (view.worker ?? ''))
 </script>
+
+{#if mode}
+  <p class="mode" data-testid="mode-strip">{mode}</p>
+{/if}
 
 <div class="bar views" role="group" aria-label="database views">
   {#each VIEW_BUTTONS as b (b.view)}
@@ -196,6 +208,11 @@
 {/if}
 
 <style>
+  .mode {
+    margin: 0 0 0.7rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
   .bar {
     display: flex;
     align-items: center;

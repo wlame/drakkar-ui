@@ -290,10 +290,18 @@ export const api = {
     )
     return Array.isArray(body) ? null : body
   },
-  // A snapshot of a worker's live recorder file (v1.23) or, since v1.25, of its
-  // memory store: a plain <a> navigation, so the token rides as ?token=.
-  debugDownloadLiveUrl: (base: string, source: 'memory' | 'file'): string =>
-    withAuthToken(`${base}${API_BASE}/debug/download-live?source=${source}`),
+  // A snapshot of a worker's live recorder file (v1.23), since v1.25 of its
+  // memory store, and since v1.30 of its cache file: a plain <a> navigation,
+  // so the token rides as ?token=. `compress` asks for a gzip stream (v1.30);
+  // offer it only to a worker that sends the v1.30 `recorder` block.
+  debugDownloadLiveUrl: (
+    base: string,
+    source: 'memory' | 'file' | 'cache',
+    compress = false,
+  ): string =>
+    withAuthToken(
+      `${base}${API_BASE}/debug/download-live?source=${source}${compress ? '&compress=gzip' : ''}`,
+    ),
   // The slice download of a worker (v1.30): a plain navigation to that
   // worker's origin, so the file body is never read into the page.
   debugSliceUrl: (base: string, request: SliceRequest): string =>
@@ -312,8 +320,11 @@ export const api = {
   // paths are relative to storage.shared_dir: history/<cluster>/<name>.db or merged/<name>.db.
   debugMerge: (paths: string[]) => post<MergeResult>('/debug/merge', { filenames: paths }),
   // Each segment is encoded; the / separators stay (the route takes a path).
-  debugDownloadUrl: (path: string) =>
-    downloadUrl(`/debug/download/${path.split('/').map(encodeURIComponent).join('/')}`),
+  // `compress` asks for a gzip stream (v1.30); never for an archive.
+  debugDownloadUrl: (path: string, compress = false) =>
+    downloadUrl(
+      `/debug/download/${path.split('/').map(encodeURIComponent).join('/')}${compress ? '?compress=gzip' : ''}`,
+    ),
 
   // Debug: consume pause (contract v1.14). Timed pause of the pipeline
   // consumer — never leaves the consumer group, auto-resumes at the

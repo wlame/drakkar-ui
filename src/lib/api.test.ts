@@ -184,6 +184,20 @@ describe('downloadUrl', () => {
       '/api/v1/debug/download/history/a%20b/w-1-2026-10-14__00_00_00.db',
     )
   })
+
+  it('asks for gzip and for the cache snapshot (v1.30), the token after them', () => {
+    expect(api.debugDownloadUrl('merged/m.db', true)).toBe(
+      '/api/v1/debug/download/merged/m.db?compress=gzip',
+    )
+    expect(api.debugDownloadLiveUrl('', 'cache')).toBe('/api/v1/debug/download-live?source=cache')
+    localStorage.setItem('drakkar_token', 't')
+    expect(api.debugDownloadLiveUrl('http://w-2:8080', 'memory', true)).toBe(
+      'http://w-2:8080/api/v1/debug/download-live?source=memory&compress=gzip&token=t',
+    )
+    expect(api.debugDownloadUrl('merged/m.db', true)).toBe(
+      '/api/v1/debug/download/merged/m.db?compress=gzip&token=t',
+    )
+  })
 })
 
 describe('timelineEvents', () => {

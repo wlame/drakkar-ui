@@ -4,6 +4,12 @@
   // this worker. Sealed files and merge results can be merged (>=2) and
   // downloaded by path; archives only downloaded. The shell (DatabasesTab)
   // reads the data; this view draws it and runs the merge.
+  //
+  // v1.30 panels draw only when their key is in the answer: the own folder
+  // (`storage.files`, with the cache snapshot), the other worker folders of
+  // this host (`storage.siblings`), the cleanup line of the history
+  // (`recorder.sqlite`) and the compressed downloads (offered to a worker
+  // that sends `recorder`).
   import {
     api,
     type DatabasesResponse,
@@ -13,6 +19,7 @@
   } from '../../../lib/api'
   import type { Unreachable } from '../../../lib/fanout'
   import type { OwnSection } from './types'
+  import { historyCleanupNote } from '../../../lib/dbmode'
   import { fmtBytes, fmtDateTimeMs } from '../../../lib/format'
 
   interface Props {
@@ -58,6 +65,28 @@
     )
     return [...selected].filter((path) => shown.has(path))
   })
+
+  // A worker that sends the v1.30 `recorder` block also serves compressed downloads.
+  function servesCompressed(section: OwnSection): boolean {
+    return section.recorder !== undefined
+  }
+  const historyCompressed = $derived(data.recorder !== undefined)
+  const cleanupNote = $derived(historyCleanupNote(data.recorder))
+  const siblings = $derived(data.storage?.siblings ?? null)
+
+  const STORAGE_KIND_TITLES: Record<string, string> = {
+    cache: "The worker's cache file, with its -wal and -shm files",
+    watchdog: 'The crash marker; it names the last task when the worker died',
+    owner_lock: 'Held while the worker runs; a second process with the same name cannot start',
+  }
+  function lockState(inUse: boolean | null): string {
+    if (inUse === null) return 'unknown'
+    return inUse ? 'in use' : 'free'
+  }
+  function onlineState(online: boolean | null): string {
+    if (online === null) return 'unknown'
+    return online ? 'online' : 'offline'
+  }
 
   function sectionTitle(section: OwnSection): string {
     return section.worker ? `Own files of ${section.worker}` : "This worker's files"
@@ -178,10 +207,16 @@
               <td class="muted nowrap">{fmtEpoch(d.last_event_ts)}</td>
               <td class="num mono">{fmtBytes(d.size_bytes)}</td>
               <td>
-                {#if d.kind === 'live'}
-                  <a href={api.debugDownloadLiveUrl(section.base, 'file')} title="Download a snapshot of the live file">↓</a>
-                {:else if d.kind === 'memory'}
-                  <a href={api.debugDownloadLiveUrl(section.base, 'memory')} title="Download a snapshot of the memory store">↓</a>
+                {#if d.kind === 'live' || d.kind === 'memory'}
+                  {@const source = d.kind === 'live' ? 'file' : 'memory'}
+                  <a
+                    href={api.debugDownloadLiveUrl(section.base, source)}
+                    title={d.kind === 'live' ? 'Download a snapshot of the live file' : 'Download a snapshot of the memory store'}
+                    >↓</a
+                  >
+                  {#if servesCompressed(section)}
+                    <a class="gz" href={api.debugDownloadLiveUrl(section.base, source, true)} title="Download the snapshot gzip-compressed">↓gz</a>
+                  {/if}
                 {/if}
               </td>
             </tr>
@@ -189,7 +224,84 @@
         </tbody>
       </table>
     {/if}
+    {#if section.storage}
+      {@const storage = section.storage}
+      {#if storage.own_folder}
+        <h3>Own folder <code>{storage.own_folder}</code></h3>
+        <table class="storage">
+          <thead>
+            <tr>
+              <th>File</th>
+              <th class="num">Entries</th>
+              <th>Changed</th>
+              <th class="num">Size</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each storage.files as f (f.name)}
+              <tr>
+                <td class="mono">
+                  {f.name}
+                  <span class="chip kind" title={STORAGE_KIND_TITLES[f.kind] ?? ''}>{f.kind}</span>
+                </td>
+                <td class="num mono">{f.entries != null ? f.entries.toLocaleString() : '-'}</td>
+                <td class="muted nowrap">{fmtIso(f.modified_at)}</td>
+                <td class="num mono">{fmtBytes(f.size_bytes)}</td>
+                <td>
+                  {#if f.kind === 'cache'}
+                    <a href={api.debugDownloadLiveUrl(section.base, 'cache')} title="Download a snapshot of the cache file">↓</a>
+                    <a class="gz" href={api.debugDownloadLiveUrl(section.base, 'cache', true)} title="Download the snapshot gzip-compressed">↓gz</a>
+                  {/if}
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+        {#if storage.temp_files.count > 0}
+          <p class="muted">
+            Download temp files: {storage.temp_files.count} ({fmtBytes(storage.temp_files.size_bytes)}). They belong to
+            downloads in progress, or to a process that stopped; the worker deletes those at its next start.
+          </p>
+        {/if}
+      {:else}
+        <p class="muted">No own folder: storage.dir is empty, so this worker keeps no files of its own.</p>
+      {/if}
+    {/if}
   {/each}
+  {#if siblings}
+    <h2>Other folders on this host ({siblings.length})</h2>
+    <p class="muted">
+      The orphan pass of any worker of this cluster seals and removes a folder whose lock is free, whose files are idle
+      for 5 minutes, and whose worker is not online.
+    </p>
+    {#if siblings.length > 0}
+      <table class="siblings">
+        <thead>
+          <tr>
+            <th>Worker</th>
+            <th class="num">Files</th>
+            <th class="num">Size</th>
+            <th>Newest change</th>
+            <th>Lock</th>
+            <th>Registry</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each siblings as sibling (sibling.worker)}
+            <tr>
+              <td class="mono">{sibling.worker}</td>
+              <td class="num mono">{sibling.files}</td>
+              <td class="num mono">{fmtBytes(sibling.size_bytes)}</td>
+              <td class="muted nowrap">{fmtIso(sibling.newest_modified_at)}</td>
+              <td>{lockState(sibling.in_use)}</td>
+              <td>{onlineState(sibling.online)}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
+  {/if}
   {#if unreachable.length}
     <p class="muted unreachable">
       Not answered: {unreachable.map((u) => `${u.worker} (${u.reason})`).join(', ')}
@@ -197,6 +309,9 @@
   {/if}
 
   <h2>History</h2>
+  {#if cleanupNote}
+    <p class="muted cleanup">{cleanupNote}</p>
+  {/if}
   {#if folders.length === 0}
     <p class="muted">No sealed history yet.</p>
   {/if}
@@ -240,7 +355,12 @@
               <td class="muted nowrap">{fmtIso(f.meta?.first_event_ts)}</td>
               <td class="muted nowrap">{fmtIso(f.meta?.last_event_ts)}</td>
               <td class="num mono">{fmtBytes(f.size_bytes)}</td>
-              <td><a href={api.debugDownloadUrl(f.path)} title="Download">↓</a></td>
+              <td>
+                <a href={api.debugDownloadUrl(f.path)} title="Download">↓</a>
+                {#if historyCompressed && f.kind !== 'archive'}
+                  <a class="gz" href={api.debugDownloadUrl(f.path, true)} title="Download gzip-compressed">↓gz</a>
+                {/if}
+              </td>
             </tr>
           {/each}
         </tbody>
@@ -296,6 +416,10 @@
   }
   .nowrap {
     white-space: nowrap;
+  }
+  a.gz {
+    margin-left: 0.4rem;
+    font-size: 0.8rem;
   }
   /* The live file: being written right now. Accent border + faint tint. */
   tr.in-use td {
