@@ -62,7 +62,7 @@ the appendix.
 - **Error envelopes:** `{"detail":"..."}` for 401/404/500/503;
   `{"detail":[{"loc":[...],"msg":"..."}]}` for 422; legacy `{"error":"..."}`
   for merge/download 400/404, merge 500, `download-live` 400/404/500,
-  `/debug/databases` 400 (v1.30), the
+  `/debug/databases` 400 (v1.30), `/debug/slice` 400/409/429/500/503 (v1.30), the
   `/api/v1/peer/` routes and the CORS preflight 403. The 422 shape is pinned **minimal** (`loc`+`msg`);
   the UI relies only on the HTTP status and `detail[].msg`, never on
   framework-specific extras (`type`/`input`/`ctx`/`url`).
@@ -248,6 +248,10 @@ the appendix.
   `source=memory|file` and serves the memory store of a memory-only worker;
   see [v1.25 changes](#v125-changes-2026-11-01). Since v1.30 it takes
   `source=cache` and `compress=gzip`; see [v1.30 changes](#v130-changes-2026-11-08).
+- `GET /api/v1/debug/slice?from=&to=[&scope=&sources=&partition=&offset_from=&offset_to=&task_id=&events=&label_key=&label_value=&output=&max_rows=&compress=]`
+  → a SQLite file of the recorder events of one time range, built by the
+  serving worker and streamed as an attachment (v1.30). Token may ride as
+  `?token=`. See [v1.30 changes](#get-apiv1debugslice-new).
 - `GET /api/v1/debug/archives` → `{archives:[{name, cluster, folder, path,
   from_ts, to_ts, size_bytes}]}`, newest-first by `to_ts`, from every
   `history/<cluster>/` folder. See v1.8 and v1.23 below.
@@ -2120,7 +2124,8 @@ an operator download it. v1.30 lands in parts: each part adds its
 subsections here together with the routes that serve it. Every addition is
 optional, and a client MUST degrade when a key or a route is missing.
 
-This part changes three existing routes. It adds no route.
+The first part changes three existing routes. The second part adds
+`GET /api/v1/debug/slice`.
 
 ### `GET /api/v1/debug/databases`: the `parts` parameter
 
@@ -2307,6 +2312,169 @@ cache request waits up to 30 seconds for the running cache copy, then
 answers 500 `{"error": "Snapshot failed: another cache snapshot is still
 running"}`.
 
+### `GET /api/v1/debug/slice` (new)
+
+Builds a SQLite file with the recorder events of one time range, filtered,
+on the serving worker, and streams it as an attachment. The worker builds
+the file into a private temp file (or in RAM when `storage.dir` is empty),
+unlinks it and streams it, so no file is held between requests. The UI
+opens the route as a plain link (a navigation, also to a peer's origin), so
+the route takes only query parameters and answers no CORS. The token may
+ride as `?token=`.
+
+Parameters (all text in the query; any other parameter, `token` too, is
+ignored):
+
+| Parameter | Rule | Default |
+|---|---|---|
+| `from`, `to` | epoch seconds, a decimal number (ASCII digits, an optional fraction and exponent), finite; `to > from`; `to - from <= 604800` (168 h) | required |
+| `scope` | `worker` or `cluster` | `worker` |
+| `sources` | comma list; each must be a source of the scope on this worker (below) | every source of the scope |
+| `partition` | whole number 0 to 2147483647 | none |
+| `offset_from`, `offset_to` | whole numbers in the signed 64-bit range; need `partition`; `offset_from <= offset_to` | none |
+| `task_id` | 1 to 256 characters | none |
+| `events` | comma list of at most 40 recorder event types | all |
+| `label_key`, `label_value` | both or neither; the key 1 to 128 characters without `"` or `\`, the value 1 to 1024 characters | none |
+| `output` | `0` writes `stdout` and `stderr` as NULL; `1` keeps them | `1` |
+| `max_rows` | whole number 1 to 1000000 | 200000 |
+| `compress` | `gzip` | none |
+
+Sources of a scope:
+
+| Recorder provider | `scope=worker` | `scope=cluster` |
+|---|---|---|
+| `sqlite` | `memory` (when a memory store is open), `files` (the live and backlog files), `history` (own sealed files; when a shared folder resolves) | `history`: every sealed file of the own cluster folder |
+| `postgres` | `memory` (when open), `postgres` (the table rows of this worker) | `postgres`: the table rows of the own cluster, every worker |
+| recorder off | `memory` (when open) | none |
+
+The checks run in this order; the first rule broken answers 400
+`{"error": "<message>"}`:
+
+1. `from and to must be finite numbers of epoch seconds`
+2. `to must be greater than from`
+3. `the time range is at most 168h`
+4. `scope must be worker or cluster`
+5. `source '<s>' is not available on this worker; available: <sorted list joined with ", ", or none>`
+6. `partition must be a whole number from 0 to 2147483647`
+7. `offset_from and offset_to need partition`
+8. `offset_from and offset_to must be whole numbers from -9223372036854775808 to 9223372036854775807`
+9. `offset_from must not be greater than offset_to`
+10. `task_id must be 1 to 256 characters`
+11. `events must name at most 40 event types`
+12. `event '<e>' is not a recorder event type`
+13. `give label_key and label_value together`
+14. `label_key must be 1 to 128 characters without " or \`
+15. `label_value must be 1 to 1024 characters`
+16. `output must be 0 or 1`
+17. `max_rows must be a whole number from 1 to 1000000`
+18. `compress must be gzip`
+
+A `scope=cluster` request on a worker with no cluster source skips check 5.
+A request with no parameters therefore always answers 400 (check 1), on
+every worker and while a build runs: the UI uses that to tell the route
+exists (404 means it does not).
+
+| Status | When | Body |
+|---|---|---|
+| 200 | the file is built (it may hold 0 rows) | the file |
+| 400 | a rule above fails | `{"error": "<message>"}` |
+| 409 | `scope=cluster` on a worker with no cluster source (recorder off), after every 400 check | `{"error": "scope cluster needs the shared history or the Postgres table"}` |
+| 429 | another slice is building on this worker (one build at a time), after the 409 check | `{"error": "a slice is already being built on this worker"}`, `Retry-After: 5` |
+| 503 | the Postgres read failed or found no free read slot | `{"error": "postgres read failed"}` |
+| 500 | the slice file could not be written | `{"error": "Slice failed: <reason>"}` |
+
+Headers of a 200: `Content-Type: application/x-sqlite3` (or
+`application/gzip` with `compress=gzip`), `Content-Disposition: attachment;
+filename="<name>"`, `Content-Length` (absent with `compress`),
+`Cache-Control: no-store, private`, `X-Drakkar-Slice-Rows` (the event rows
+in the file), and `X-Drakkar-Slice-Truncated` (`rows`, `bytes`, `time` or
+`files`; absent when the file is complete).
+
+File name: `<worker>-slice-<from>__<to>.db` for `scope=worker`,
+`<cluster>-cluster-slice-<from>__<to>.db` for `scope=cluster` (the
+sanitized cluster, `default` when it has none); `-partial` before `.db`
+when a limit cut the file; `.gz` after it with `compress=gzip`. `<from>`
+and `<to>` are UTC, `%Y-%m-%d_%H-%M-%S`, the fraction of a second dropped.
+
+Limits. A limit never answers an error: the worker finishes the file with
+the rows it has and marks it (header, file name, `slice.truncated`).
+
+| Limit | Value | Mark |
+|---|---|---|
+| rows in the file | `max_rows` (at most 1000000) | `rows` |
+| the file on disk | 1 GiB, checked after each batch of 5000 rows | `bytes` |
+| the file in RAM (no `storage.dir`) | 64 MiB | `bytes` |
+| the whole build | 60 s | `time` |
+| sealed files read | `recorder.search.max_files` (newest first); later files are skipped and the build goes on | `files` |
+
+A Postgres read that the 60 s limit (or the server's statement timeout,
+which is set to the time left) cuts keeps the rows it read and marks the
+file `time`; only an error of the read or no free read slot answers 503.
+The Postgres reads of the UI (the history search and the slice) share 2
+slots per worker process.
+
+Rows and ids. Each source row is written once:
+
+- `sqlite`, `scope=worker` with `files`: the worker asks the recorder for
+  one flush first (at most 5 s; the note `flush_timed_out` or
+  `flush_failed` says when it did not end), then reads the files only:
+  after the flush every memory row is also in the live file, so `memory`
+  adds nothing. `memory` without `files` reads the memory store (after a
+  flush of the recorder into it), and own sealed files of the same process
+  then leave out the rows the store holds.
+- `postgres`: the table rows of this worker except the rows of this
+  process that the memory store holds (from its lowest id up), then the
+  memory store.
+- Recorder off: the memory store.
+
+Ids are renumbered from 1 in the order the rows are written (oldest source
+first). Rows of one worker from two process lifetimes can carry the same
+id, so the source ids are not kept.
+
+The file. `scope=worker` has the tables of a recorder file (`events`,
+`worker_config`, `worker_state`); `worker_config` comes from the newest
+file read, else from the memory store. `scope=cluster` has the tables of a
+merge result (`workers`, `events` with `worker_id`, `worker_states`); a
+cluster file built from the table has one `workers` row per worker, with
+`source_file` `postgres`. Both add two tables that describe the slice:
+
+```sql
+CREATE TABLE slice (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    schema      INTEGER NOT NULL,   -- 1
+    created_at  TEXT    NOT NULL,   -- RFC 3339 with microseconds, UTC
+    scope       TEXT    NOT NULL,   -- worker | cluster
+    worker      TEXT,               -- the building worker
+    cluster     TEXT,
+    from_ts     REAL    NOT NULL,
+    to_ts       REAL    NOT NULL,
+    filters     TEXT    NOT NULL,   -- sorted compact JSON of the filters
+    rows        INTEGER NOT NULL,
+    truncated   TEXT,               -- rows | bytes | time | files | NULL
+    notes       TEXT    NOT NULL    -- JSON list, e.g. ["flush_timed_out"]
+);
+CREATE TABLE slice_sources (
+    kind    TEXT    NOT NULL,       -- memory | live | backlog | sealed | postgres
+    name    TEXT,                   -- file base name; NULL for memory and postgres
+    worker  TEXT,
+    rows    INTEGER NOT NULL
+);
+```
+
+`filters` always holds `max_rows`, `output` and `sources` (the sorted
+sources read), and every other filter only when given (`events` sorted
+without repeats). The DDL, the messages, the file names and the filters
+JSON are pinned in `tests/fixtures/slice_contract.json` of the Python
+backend.
+
+The whole cluster. No worker calls another worker. With `sqlite` the
+cluster file holds the sealed history of the cluster folder; the parts not
+sealed yet are one link per worker (`scope=worker&sources=files` on that
+worker's origin), which the UI lists before the cluster file. With
+`postgres` the cluster file is the table rows of the cluster; the newest
+seconds may be missing. With the recorder off there is no cluster file
+(409); the UI offers one memory link per worker.
+
 ### Absence (normative)
 
 - A backend older than v1.30 ignores `parts` and answers every part; it
@@ -2321,6 +2489,10 @@ running"}`.
   sends the `recorder` block.
 - An older backend refuses `source=cache` with 400. The UI offers the cache
   download only from a `cache` row of `storage.files`.
+- A backend older than the second part answers 404 on `/debug/slice`. The
+  UI probes its own worker with a request that has no parameters (400
+  means the route exists) and counts a peer without the `recorder` block as
+  one without the route.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 
