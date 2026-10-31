@@ -2206,9 +2206,9 @@ PostgresStatus = {
 - `writer` is this worker's writer to the table; `null` when the worker
   writes no rows (`recorder.capture.events: false`) or before the recorder
   started. `started` is false until the writer has opened its connection
-  and found the table. `queue_rows` counts the rows waiting, the chunk in
-  flight included; `queue_bytes` is the text waiting in the queue, counted
-  as `recorder.postgres.max_queue` counts it. `rows_written` and
+  and found the table. `queue_rows` and `queue_bytes` count the rows and
+  the text waiting, the chunk in flight included; the text is counted as
+  `recorder.postgres.max_queue` counts it. `rows_written` and
   `dropped` count rows since the process started; the reasons are those
   of the metric `drakkar_recorder_postgres_dropped_rows_total`.
 - `last_upkeep` is the last partition upkeep this worker ran: `at` (RFC
@@ -2286,26 +2286,34 @@ The other answers of both routes do not change.
 ### `GET /api/v1/debug/download-live`: `source=cache`
 
 `source` gains the value **`cache`**: a consistent copy of the worker's
-cache file (the SQLite backup API on a read-only connection), as an
-attachment named `<worker>-cache-<YYYY-MM-DD__HH_MM_SS>.db` (UTC time of
-the copy). `Content-Type` and `Cache-Control` are those of the other
-sources.
+cache file (`VACUUM INTO` on a read-only connection; the cache keeps
+writing during the copy), as an attachment named
+`<worker>-cache-<YYYY-MM-DD__HH_MM_SS>.db` (UTC time of the copy).
+`Content-Type` and `Cache-Control` are those of the other sources. A copy
+that does not finish within 30 seconds is stopped and its partial file
+deleted; a cache too large to copy in that time cannot be downloaded this
+way.
 
 | Case | Answer |
 |---|---|
 | the worker has no cache file (the cache is off, `storage.dir` is empty, or the file does not exist yet) | 404 `{"error": "No cache on this worker"}` |
 | any value but `memory`, `file` or `cache` | 400 `{"error": "source must be memory, file or cache"}` (was `source must be memory or file`) |
+| the copy did not finish within 30 seconds | 500 `{"error": "Snapshot failed: the cache copy did not finish in 30 s"}` |
 | the copy failed | 500 `{"error": "Snapshot failed: <reason>"}` |
 
-One memory or cache copy runs at a time on a worker. A second request
-waits up to 30 seconds for the running copy, then answers 500 with the
-reason `another <memory|cache> snapshot is still running`, naming the copy
-that holds the slot.
+One cache copy runs at a time on a worker, apart from the one memory copy
+(v1.25), so a cache copy never makes a memory download wait. A second
+cache request waits up to 30 seconds for the running cache copy, then
+answers 500 `{"error": "Snapshot failed: another cache snapshot is still
+running"}`.
 
 ### Absence (normative)
 
 - A backend older than v1.30 ignores `parts` and answers every part; it
-  sends no `worker`, `recorder` or `storage` key. The UI then hides the
+  sends no `worker`, `recorder` or `storage` key.
+- A v1.30 backend answers 400 for a part it does not know. A client that
+  sends a part added after v1.30 reads once more without `parts` when it
+  gets 400, so a newer client still reads an older worker. The UI then hides the
   panels those keys feed (the mode strip, the own folder rows, the other
   folders of the host) and keeps the rest of the view.
 - An older backend ignores `compress` and sends the plain file under its
