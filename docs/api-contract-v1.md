@@ -2327,7 +2327,7 @@ ignored):
 
 | Parameter | Rule | Default |
 |---|---|---|
-| `from`, `to` | epoch seconds, a decimal number (ASCII digits, an optional fraction and exponent), finite; `to > from`; `to - from <= 604800` (168 h) | required |
+| `from`, `to` | epoch seconds, a decimal number (ASCII digits, an optional fraction and exponent) from 0 to 253402300799 (the last second of the year 9999); `to > from`; `to - from <= 604800` (168 h) | required |
 | `scope` | `worker` or `cluster` | `worker` |
 | `sources` | comma list; each must be a source of the scope on this worker (below) | every source of the scope |
 | `partition` | whole number 0 to 2147483647 | none |
@@ -2350,7 +2350,7 @@ Sources of a scope:
 The checks run in this order; the first rule broken answers 400
 `{"error": "<message>"}`:
 
-1. `from and to must be finite numbers of epoch seconds`
+1. `from and to must be finite numbers of epoch seconds` (also for a bound outside 0 to 253402300799)
 2. `to must be greater than from`
 3. `the time range is at most 168h`
 4. `scope must be worker or cluster`
@@ -2380,6 +2380,7 @@ exists (404 means it does not).
 | 400 | a rule above fails | `{"error": "<message>"}` |
 | 409 | `scope=cluster` on a worker with no cluster source (recorder off), after every 400 check | `{"error": "scope cluster needs the shared history or the Postgres table"}` |
 | 429 | another slice is building on this worker (one build at a time), after the 409 check | `{"error": "a slice is already being built on this worker"}`, `Retry-After: 5` |
+| 429 | finished slices that are still being sent hold 2 GiB on this worker, after the check above | `{"error": "slices still being sent hold 2 GiB on this worker; wait for one to end"}`, `Retry-After: 5` |
 | 503 | the Postgres read failed or found no free read slot | `{"error": "postgres read failed"}` |
 | 500 | the slice file could not be written | `{"error": "Slice failed: <reason>"}` |
 
@@ -2402,10 +2403,16 @@ the rows it has and marks it (header, file name, `slice.truncated`).
 | Limit | Value | Mark |
 |---|---|---|
 | rows in the file | `max_rows` (at most 1000000) | `rows` |
-| the file on disk | 1 GiB, checked after each batch of 5000 rows | `bytes` |
-| the file in RAM (no `storage.dir`) | 64 MiB | `bytes` |
+| the file on disk | 1 GiB, checked after each batch | `bytes` |
+| the file in RAM (no `storage.dir`) | 64 MiB, checked after each batch | `bytes` |
 | the whole build | 60 s | `time` |
 | sealed files read | `recorder.search.max_files` (newest first); later files are skipped and the build goes on | `files` |
+
+A batch ends at 5000 rows or 8 MiB of text, whichever comes first, so a
+file ends at most one batch past its size limit. A download whose client
+takes no chunk for 120 s is ended; the file of a finished slice stays
+pinned (an unlinked temp file or a buffer in RAM) only while its download
+runs.
 
 A Postgres read that the 60 s limit (or the server's statement timeout,
 which is set to the time left) cuts keeps the rows it read and marks the
@@ -2419,16 +2426,22 @@ Rows and ids. Each source row is written once:
   one flush first (at most 5 s; the note `flush_timed_out` or
   `flush_failed` says when it did not end), then reads the files only:
   after the flush every memory row is also in the live file, so `memory`
-  adds nothing. `memory` without `files` reads the memory store (after a
-  flush of the recorder into it), and own sealed files of the same process
-  then leave out the rows the store holds.
-- `postgres`: the table rows of this worker except the rows of this
-  process that the memory store holds (from its lowest id up), then the
-  memory store.
+  adds nothing. `memory` without `files` reads the memory store first
+  (after a flush of the recorder into it), and own sealed files then leave
+  out each row the store gave (the same process and id; without a meta
+  file, the same id and time).
+- `postgres`: the worker runs its Postgres write stage once (at most 3 s),
+  reads the memory store, then the table rows of this worker without the
+  rows of this process newer than the store's read, and leaves out each
+  table row the store gave (the same process and id). A row the store
+  evicts during the build is then still written once. One gap is left: a
+  row that left the store while it still waited for the write stage after
+  that run is in neither source; the note `postgres_queue_waiting` then
+  says rows of this worker were still waiting.
 - Recorder off: the memory store.
 
-Ids are renumbered from 1 in the order the rows are written (oldest source
-first). Rows of one worker from two process lifetimes can carry the same
+Ids are renumbered from 1 in the order the rows are written: the memory
+store first, then the files oldest first, then the table. Rows of one worker from two process lifetimes can carry the same
 id, so the source ids are not kept.
 
 The file. `scope=worker` has the tables of a recorder file (`events`,
@@ -2451,7 +2464,7 @@ CREATE TABLE slice (
     filters     TEXT    NOT NULL,   -- sorted compact JSON of the filters
     rows        INTEGER NOT NULL,
     truncated   TEXT,               -- rows | bytes | time | files | NULL
-    notes       TEXT    NOT NULL    -- JSON list, e.g. ["flush_timed_out"]
+    notes       TEXT    NOT NULL    -- JSON list: flush_timed_out, flush_failed, source_unreadable, postgres_queue_waiting
 );
 CREATE TABLE slice_sources (
     kind    TEXT    NOT NULL,       -- memory | live | backlog | sealed | postgres
