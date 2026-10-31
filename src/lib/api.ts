@@ -276,18 +276,23 @@ export const api = {
   // The databases answer of another worker of the cluster (v1.23 fan-out);
   // null for a pre-v1.23 array answer, as above.
   // `parts` asks the peer for those parts only (a backend that does not know
-  // the parameter ignores it and answers in full).
+  // the parameter ignores it and answers in full). A worker that does not
+  // know one of the parts answers 400 (v1.30); the read is then made once
+  // more without `parts`, so a newer UI still reads an older worker.
   debugDatabasesAt: async (
     base: string,
     signal?: AbortSignal,
     parts?: string[],
   ): Promise<DatabasesResponse | null> => {
-    const query = parts?.length ? `?parts=${parts.join(',')}` : ''
-    const body = await getFrom<DatabasesResponse | unknown[]>(
-      base,
-      `/debug/databases${query}`,
-      signal,
-    )
+    const read = (query: string) =>
+      getFrom<DatabasesResponse | unknown[]>(base, `/debug/databases${query}`, signal)
+    let body: DatabasesResponse | unknown[]
+    try {
+      body = await read(parts?.length ? `?parts=${parts.join(',')}` : '')
+    } catch (e) {
+      if (!parts?.length || !(e instanceof HttpError) || e.status !== 400) throw e
+      body = await read('')
+    }
     return Array.isArray(body) ? null : body
   },
   // A snapshot of a worker's live recorder file (v1.23), since v1.25 of its

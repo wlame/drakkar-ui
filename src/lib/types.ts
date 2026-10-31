@@ -664,10 +664,10 @@ export interface HistoryFolder {
 }
 
 export interface DatabasesResponse {
-  // With `?parts=` (v1.30) a part not asked for is absent; the tab asks
-  // without `parts` on its own worker and reads only `own` from peers.
-  own: OwnDb[]
-  history: { folders: HistoryFolder[] }
+  // With `?parts=` (v1.30) a part not asked for is absent, so both are
+  // optional; a backend older than v1.30 always sends both.
+  own?: OwnDb[]
+  history?: { folders: HistoryFolder[] }
   // v1.30 (all optional): a backend that predates it sends none of these.
   worker?: { name: string; cluster: string | null; instance: string }
   storage?: StorageStatus

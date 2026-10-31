@@ -130,7 +130,7 @@
   const ownSections = $derived<OwnSection[]>(
     data
       ? [
-          { worker: currentWorker, base: '', own: data.own, recorder: data.recorder, storage: data.storage },
+          { worker: currentWorker, base: '', own: data.own ?? [], recorder: data.recorder, storage: data.storage },
           ...peerSections,
         ]
       : [],

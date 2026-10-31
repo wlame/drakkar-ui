@@ -267,3 +267,33 @@ describe('debugMerge', () => {
     })
   })
 })
+
+describe('debugDatabasesAt parts (v1.30)', () => {
+  const answer = { own: [], worker: { name: 'w-2', cluster: null, instance: 'i' } }
+
+  it('asks for the parts given', async () => {
+    fetchMock.mockResolvedValue(okJson(answer))
+    await expect(
+      api.debugDatabasesAt('http://w-2:8080', undefined, ['own', 'storage']),
+    ).resolves.toEqual(answer)
+    expect(call().url).toBe('http://w-2:8080/api/v1/debug/databases?parts=own,storage')
+  })
+
+  it('reads once more without parts when the worker refuses a part with 400', async () => {
+    fetchMock
+      .mockResolvedValueOnce(httpError(400, '{"error":"unknown part \'later\'"}'))
+      .mockResolvedValueOnce(okJson(answer))
+    await expect(
+      api.debugDatabasesAt('http://w-2:8080', undefined, ['own', 'later']),
+    ).resolves.toEqual(answer)
+    expect(call(1).url).toBe('http://w-2:8080/api/v1/debug/databases')
+  })
+
+  it('does not read again for another error', async () => {
+    fetchMock.mockResolvedValueOnce(httpError(500, 'boom'))
+    await expect(api.debugDatabasesAt('http://w-2:8080', undefined, ['own'])).rejects.toThrow(
+      'HTTP 500',
+    )
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})

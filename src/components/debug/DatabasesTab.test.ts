@@ -200,7 +200,7 @@ describe('DatabasesTab (v1.23)', () => {
       last_event_ts: 1760432460,
       size_bytes: 65536,
     }
-    vi.stubGlobal('fetch', stubFetch({ ...body, own: [memory, ...body.own] }))
+    vi.stubGlobal('fetch', stubFetch({ ...body, own: [memory, ...(body.own ?? [])] }))
     const { target, cleanup } = renderMounted()
     await settled()
 

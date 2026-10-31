@@ -38,7 +38,7 @@
   let mergeError = $state<string | null>(null)
   let merging = $state(false)
 
-  const folders = $derived(data.history.folders)
+  const folders = $derived(data.history?.folders ?? [])
   function fileWorker(f: HistoryFile): string {
     return f.meta?.worker ?? ''
   }

@@ -80,7 +80,7 @@ export function buildCoverage(
   worker: string,
   partitions?: PostgresPartitions | null,
 ): Coverage {
-  const files = data.history.folders.flatMap((f) => f.files)
+  const files = (data.history?.folders ?? []).flatMap((f) => f.files)
   const byKey: Record<LaneKey, CoverageSpan[] | null> = {
     memory: spansOfKind(own, 'memory'),
     live: spansOfKind(own, 'live'),

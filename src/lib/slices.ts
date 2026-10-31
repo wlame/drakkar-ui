@@ -194,8 +194,8 @@ export type RecorderProvider = 'none' | 'sqlite' | 'postgres'
 /** The recorder provider: the `recorder` block, else read from the kinds of rows the worker lists. */
 export function providerOf(data: WorkerView): RecorderProvider {
   if (data.recorder) return data.recorder.provider
-  const kinds = new Set(data.own.map((o) => o.kind))
-  const hasHistory = data.history.folders.some((f) => f.files.length > 0)
+  const kinds = new Set((data.own ?? []).map((o) => o.kind))
+  const hasHistory = (data.history?.folders ?? []).some((f) => f.files.length > 0)
   if (kinds.has('live') || kinds.has('backlog') || hasHistory) return 'sqlite'
   return 'none'
 }
@@ -204,7 +204,8 @@ export function providerOf(data: WorkerView): RecorderProvider {
 export function sourcesFor(data: WorkerView): string[] {
   const provider = providerOf(data)
   if (provider === 'postgres') return ['memory', 'postgres']
-  const hasMemory = data.recorder?.memory != null || data.own.some((o) => o.kind === 'memory')
+  const hasMemory =
+    data.recorder?.memory != null || (data.own ?? []).some((o) => o.kind === 'memory')
   if (provider === 'sqlite') return ['memory', 'files', 'history']
   return hasMemory ? ['memory'] : []
 }
