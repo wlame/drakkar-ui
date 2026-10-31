@@ -11,6 +11,8 @@ export const SLICE_MAX_RANGE_SECONDS = 604800
 export const SLICE_DEFAULT_MAX_ROWS = 200000
 export const SLICE_MAX_ROWS = 1000000
 export const SLICE_BUILD_LIMIT_SECONDS = 60
+/** The epoch seconds a bound may take: up to the last second of the year 9999. */
+export const SLICE_MAX_EPOCH = 253402300799
 
 /**
  * The recorder's event types (`EventType` in the recorder schema). The form
@@ -140,6 +142,11 @@ function isOffset(text: string): boolean {
   return value >= MIN_OFFSET && value <= MAX_OFFSET
 }
 
+/** Length in characters (code points), as the server counts it; `.length` counts UTF-16 units. */
+function charCount(text: string): number {
+  return [...text].length
+}
+
 function isWholeNumber(n: number | undefined, min: number, max: number): boolean {
   return n !== undefined && Number.isInteger(n) && n >= min && n <= max
 }
@@ -150,7 +157,7 @@ function isWholeNumber(n: number | undefined, min: number, max: number): boolean
  * it is not checked for a whole-cluster request, which sends no sources.
  */
 export function validateSliceRequest(r: SliceRequest, available: readonly string[]): string | null {
-  if (!Number.isFinite(r.from) || !Number.isFinite(r.to)) {
+  if (![r.from, r.to].every((t) => Number.isFinite(t) && t >= 0 && t <= SLICE_MAX_EPOCH)) {
     return 'from and to must be finite numbers of epoch seconds'
   }
   if (r.to <= r.from) return 'to must be greater than from'
@@ -180,7 +187,7 @@ export function validateSliceRequest(r: SliceRequest, available: readonly string
   ) {
     return 'offset_from must not be greater than offset_to'
   }
-  if (r.task_id !== undefined && (r.task_id.length < 1 || r.task_id.length > MAX_TASK_ID)) {
+  if (r.task_id !== undefined && (charCount(r.task_id) < 1 || charCount(r.task_id) > MAX_TASK_ID)) {
     return 'task_id must be 1 to 256 characters'
   }
   if ((r.events ?? []).length > MAX_EVENTS) return 'events must name at most 40 event types'
@@ -191,13 +198,15 @@ export function validateSliceRequest(r: SliceRequest, available: readonly string
   }
   if (
     r.label_key !== undefined &&
-    (r.label_key.length < 1 || r.label_key.length > MAX_LABEL_KEY || /["\\]/.test(r.label_key))
+    (charCount(r.label_key) < 1 ||
+      charCount(r.label_key) > MAX_LABEL_KEY ||
+      /["\\]/.test(r.label_key))
   ) {
     return 'label_key must be 1 to 128 characters without " or \\'
   }
   if (
     r.label_value !== undefined &&
-    (r.label_value.length < 1 || r.label_value.length > MAX_LABEL_VALUE)
+    (charCount(r.label_value) < 1 || charCount(r.label_value) > MAX_LABEL_VALUE)
   ) {
     return 'label_value must be 1 to 1024 characters'
   }

@@ -243,6 +243,30 @@ describe('validation (messages and order of the server)', () => {
     expect(validateSliceRequest(request, sources)).toBe(message)
   })
 
+  it('refuses a bound outside the years a file name can spell', () => {
+    expect(validateSliceRequest({ from: -1, to: 10 }, sources)).toBe(
+      'from and to must be finite numbers of epoch seconds',
+    )
+    expect(validateSliceRequest({ from: 253402300000, to: 253402300800 }, sources)).toBe(
+      'from and to must be finite numbers of epoch seconds',
+    )
+    expect(validateSliceRequest({ from: 253402300000, to: 253402300799 }, sources)).toBeNull()
+  })
+
+  it('counts characters, not UTF-16 units, as the server does', () => {
+    const emoji = '\u{1F600}'
+    expect(validateSliceRequest({ ...base, task_id: emoji.repeat(256) }, sources)).toBeNull()
+    expect(validateSliceRequest({ ...base, task_id: emoji.repeat(257) }, sources)).toBe(
+      'task_id must be 1 to 256 characters',
+    )
+    expect(
+      validateSliceRequest(
+        { ...base, label_key: emoji.repeat(128), label_value: emoji.repeat(1024) },
+        sources,
+      ),
+    ).toBeNull()
+  })
+
   it('says none when the worker has no source', () => {
     expect(validateSliceRequest({ ...base, sources: ['memory'] }, [])).toBe(
       "source 'memory' is not available on this worker; available: none",
