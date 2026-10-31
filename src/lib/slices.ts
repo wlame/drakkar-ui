@@ -54,12 +54,18 @@ export const RECORDER_EVENT_TYPES = [
 const MAX_PARTITION = 2147483647
 const MAX_TASK_ID = 256
 const MAX_LABEL_KEY = 128
+const MAX_LABEL_VALUE = 1024
+const MAX_EVENTS = 40
+const MIN_OFFSET = -(2n ** 63n)
+const MAX_OFFSET = 2n ** 63n - 1n
+const OFFSET_RE = /^-?[0-9]+$/
 const EVENT_TYPE_RE = /^[a-z][a-z0-9_]*$/
 const UNSAFE_NAME_CHARS = /[^a-zA-Z0-9_-]/g
 
 /** The limits the server enforces, shown next to the form. */
 export const SLICE_LIMITS_TEXT = [
   'A range of at most 7 days.',
+  'A file of at most 1 GiB, or 64 MiB on a worker without storage.dir (built in memory).',
   `At most ${SLICE_DEFAULT_MAX_ROWS.toLocaleString()} rows unless you raise it (up to ${SLICE_MAX_ROWS.toLocaleString()}).`,
   `One build at a time on a worker, at most ${SLICE_BUILD_LIMIT_SECONDS} s; a limit ends the file early and marks it partial.`,
   'Archives are never read: download the archive itself.',
@@ -127,6 +133,13 @@ export function buildSliceRequest(
   return request
 }
 
+/** A signed 64-bit whole number written in ASCII digits. */
+function isOffset(text: string): boolean {
+  if (!OFFSET_RE.test(text)) return false
+  const value = BigInt(text)
+  return value >= MIN_OFFSET && value <= MAX_OFFSET
+}
+
 function isWholeNumber(n: number | undefined, min: number, max: number): boolean {
   return n !== undefined && Number.isInteger(n) && n >= min && n <= max
 }
@@ -148,7 +161,8 @@ export function validateSliceRequest(r: SliceRequest, available: readonly string
   if (r.scope !== 'cluster') {
     const missing = (r.sources ?? []).find((s) => !available.includes(s))
     if (missing !== undefined) {
-      return `source '${missing}' is not available on this worker; available: ${[...available].sort().join(', ')}`
+      const listed = available.length ? [...available].sort().join(', ') : 'none'
+      return `source '${missing}' is not available on this worker; available: ${listed}`
     }
   }
   if (r.partition !== undefined && !isWholeNumber(r.partition, 0, MAX_PARTITION)) {
@@ -156,6 +170,9 @@ export function validateSliceRequest(r: SliceRequest, available: readonly string
   }
   const hasOffsets = r.offset_from !== undefined || r.offset_to !== undefined
   if (hasOffsets && r.partition === undefined) return 'offset_from and offset_to need partition'
+  if (![r.offset_from, r.offset_to].every((o) => o === undefined || isOffset(o))) {
+    return 'offset_from and offset_to must be whole numbers from -9223372036854775808 to 9223372036854775807'
+  }
   if (
     r.offset_from !== undefined &&
     r.offset_to !== undefined &&
@@ -166,6 +183,7 @@ export function validateSliceRequest(r: SliceRequest, available: readonly string
   if (r.task_id !== undefined && (r.task_id.length < 1 || r.task_id.length > MAX_TASK_ID)) {
     return 'task_id must be 1 to 256 characters'
   }
+  if ((r.events ?? []).length > MAX_EVENTS) return 'events must name at most 40 event types'
   const badEvent = (r.events ?? []).find((e) => !EVENT_TYPE_RE.test(e))
   if (badEvent !== undefined) return `event '${badEvent}' is not a recorder event type`
   if ((r.label_key === undefined) !== (r.label_value === undefined)) {
@@ -176,6 +194,12 @@ export function validateSliceRequest(r: SliceRequest, available: readonly string
     (r.label_key.length < 1 || r.label_key.length > MAX_LABEL_KEY || /["\\]/.test(r.label_key))
   ) {
     return 'label_key must be 1 to 128 characters without " or \\'
+  }
+  if (
+    r.label_value !== undefined &&
+    (r.label_value.length < 1 || r.label_value.length > MAX_LABEL_VALUE)
+  ) {
+    return 'label_value must be 1 to 1024 characters'
   }
   if (r.max_rows !== undefined && !isWholeNumber(r.max_rows, 1, SLICE_MAX_ROWS)) {
     return 'max_rows must be a whole number from 1 to 1000000'

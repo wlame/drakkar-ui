@@ -201,7 +201,22 @@ describe('validation (messages and order of the server)', () => {
       },
       'offset_from must not be greater than offset_to',
     ],
+    [
+      'offset not a whole number',
+      { ...base, partition: 0, offset_from: '1.5' },
+      'offset_from and offset_to must be whole numbers from -9223372036854775808 to 9223372036854775807',
+    ],
+    [
+      'offset past signed 64 bits',
+      { ...base, partition: 0, offset_to: '9223372036854775808' },
+      'offset_from and offset_to must be whole numbers from -9223372036854775808 to 9223372036854775807',
+    ],
     ['empty task id', { ...base, task_id: '' }, 'task_id must be 1 to 256 characters'],
+    [
+      'more than 40 events',
+      { ...base, events: Array(41).fill('consumed') },
+      'events must name at most 40 event types',
+    ],
     [
       'bad event',
       { ...base, events: ['Bad Event'] },
@@ -214,6 +229,11 @@ describe('validation (messages and order of the server)', () => {
       'label_key must be 1 to 128 characters without " or \\',
     ],
     [
+      'empty label value',
+      { ...base, label_key: 'k', label_value: '' },
+      'label_value must be 1 to 1024 characters',
+    ],
+    [
       'too many rows',
       { ...base, max_rows: 1000001 },
       'max_rows must be a whole number from 1 to 1000000',
@@ -221,6 +241,12 @@ describe('validation (messages and order of the server)', () => {
   ]
   it.each(cases)('%s', (_name, request, message) => {
     expect(validateSliceRequest(request, sources)).toBe(message)
+  })
+
+  it('says none when the worker has no source', () => {
+    expect(validateSliceRequest({ ...base, sources: ['memory'] }, [])).toBe(
+      "source 'memory' is not available on this worker; available: none",
+    )
   })
 
   it('accepts a good request, and checks sources only for the worker scope', () => {
