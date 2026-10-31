@@ -62,7 +62,9 @@ the appendix.
 - **Error envelopes:** `{"detail":"..."}` for 401/404/500/503;
   `{"detail":[{"loc":[...],"msg":"..."}]}` for 422; legacy `{"error":"..."}`
   for merge/download 400/404, merge 500, `download-live` 400/404/500,
-  `/debug/databases` 400 (v1.30), `/debug/slice` 400/409/429/500/503 (v1.30), the
+  `/debug/databases` 400 (v1.30), `/debug/slice` 400/409/429/500/503 (v1.30),
+  `/debug/databases/postgres` 404/503, `/debug/files` 403/404/409 and
+  `/debug/autodiscover` 404 (v1.30), the
   `/api/v1/peer/` routes and the CORS preflight 403. The 422 shape is pinned **minimal** (`loc`+`msg`);
   the UI relies only on the HTTP status and `detail[].msg`, never on
   framework-specific extras (`type`/`input`/`ctx`/`url`).
@@ -252,6 +254,18 @@ the appendix.
   → a SQLite file of the recorder events of one time range, built by the
   serving worker and streamed as an attachment (v1.30). Token may ride as
   `?token=`. See [v1.30 changes](#get-apiv1debugslice-new).
+- `GET /api/v1/debug/databases/postgres` → the hour partitions of the
+  recorder's Postgres table and the partitions the next upkeep drops (v1.30).
+  See [v1.30 changes](#get-apiv1debugdatabasespostgres-new).
+- `DELETE /api/v1/debug/files/{path}` → `204`; deletes one merge result
+  (`merged/<name>.db`) when `ui.delete_enabled` is true (v1.30). See
+  [v1.30 changes](#delete-apiv1debugfilespath-new).
+- `GET /api/v1/debug/autodiscover` → `{registry, worker, workers:[...],
+  truncated}`, the registry cards from the worker's last refresh (v1.30).
+  See [v1.30 changes](#get-apiv1debugautodiscover-new).
+- `GET /api/v1/debug/autodiscover/leases` → `{election, leases:[...]}`, the
+  holder of each cluster task's lease as the store reports it (v1.30). See
+  [v1.30 changes](#get-apiv1debugautodiscoverleases-new).
 - `GET /api/v1/debug/archives` → `{archives:[{name, cluster, folder, path,
   from_ts, to_ts, size_bytes}]}`, newest-first by `to_ts`, from every
   `history/<cluster>/` folder. See v1.8 and v1.23 below.
@@ -2125,7 +2139,10 @@ subsections here together with the routes that serve it. Every addition is
 optional, and a client MUST degrade when a key or a route is missing.
 
 The first part changes three existing routes. The second part adds
-`GET /api/v1/debug/slice`.
+`GET /api/v1/debug/slice`. The third part adds
+`GET /api/v1/debug/databases/postgres`, `DELETE /api/v1/debug/files/{path}`,
+`GET /api/v1/debug/autodiscover` and `GET /api/v1/debug/autodiscover/leases`,
+and the `delete_enabled` key of the `history` part.
 
 ### `GET /api/v1/debug/databases`: the `parts` parameter
 
@@ -2488,6 +2505,207 @@ worker's origin), which the UI lists before the cluster file. With
 seconds may be missing. With the recorder off there is no cluster file
 (409); the UI offers one memory link per worker.
 
+### `GET /api/v1/debug/databases`: `delete_enabled` in the `history` part
+
+The `history` object gains **`delete_enabled`** (boolean): the value of
+`ui.delete_enabled`. The UI offers the delete of a merge result only when it
+is `true`, so it never sends a `DELETE` that the worker refuses. A backend
+that predates the third part sends no key: the UI then offers no delete.
+
+### `GET /api/v1/debug/databases/postgres` (new)
+
+The hour partitions of the recorder's Postgres table and what the next
+upkeep drops. Only on a worker whose effective recorder provider is
+`postgres`; the table is the one of the `recorder.postgres` block of
+`/debug/databases`. No query parameter. Not a CORS path: the UI reads it on
+its own worker only.
+
+The worker opens one connection of its own (never the write pool), takes one
+of the read slots that the history search and the slice download share (2 per
+worker process; a third read does not wait), and runs four existing
+statements in one transaction after `statement_timeout` (the time of
+`recorder.search.timeout` in whole milliseconds, at most 3600 s) and
+`jit off`: `server_now`, `retention_read`, `partitions_list` and
+`partition_sizes`. No other SQL is sent. The answer never names the DSN.
+
+```json
+{
+  "server_now": 1762596000.25,
+  "stored_retention_hours": 6,
+  "partitions": [
+    {"name": "recorder_events_p2026110804", "from_ts": 1762574400, "to_ts": 1762578000, "size_bytes": 8192}
+  ],
+  "total_bytes": 8192,
+  "next_drops": {"retention": [], "size": []}
+}
+```
+
+- `server_now`: the database server's clock, epoch seconds. The upkeep
+  judges every hour by this clock.
+- `stored_retention_hours`: the retention stored in the table comment
+  (`retention_hours=<n>`, 1 to 168), or `null` when the comment holds none.
+  The upkeep drops by this value only, never by this worker's
+  `recorder.postgres.initial_retention`.
+- `partitions`: every partition of the table whose name is `<table>_p` plus a
+  UTC hour, ascending; `from_ts` and `to_ts` are the hour bounds in epoch
+  seconds; `size_bytes` is `pg_total_relation_size`, or `null` when the
+  partition went away during the read. A child table of another name is left
+  out.
+- `total_bytes`: the sum of the known sizes.
+- `next_drops.retention`: the partitions whose hour ended
+  `stored_retention_hours` before `server_now` or earlier (none without a
+  stored retention). `next_drops.size`: the oldest partitions the size cap
+  drops after those, while the rest is above this worker's
+  `recorder.postgres.max_size` (none when it is 0). Both use the same rules
+  as the upkeep, so they show what the next upkeep would drop at
+  `server_now`.
+
+Answers: 200 as above; 404 `{"error": "the recorder provider is not postgres"}`;
+503 `{"error": "postgres read failed"}` when the read failed, ran out of
+time or found no free slot. A 503 logs `ui_read_postgres_failed` (warning,
+`endpoint`, `reason` `error`, `timeout` or `busy`, `error`), at most one line
+per 60 s for this endpoint.
+
+### `DELETE /api/v1/debug/files/{path}` (new)
+
+Deletes one merge result. It is the only delete of the UI: sealed files,
+archives, the own folder, other worker folders, task locks and Postgres
+partitions are never deleted from the UI.
+
+- `path` is relative to the shared folder and must be `merged/<name>.db`,
+  with the same checks as `GET /api/v1/debug/download/{path}` (safe
+  segments, no link, the resolved file inside the folder).
+- **403** `{"error": "The delete endpoint is disabled by configuration (set
+  ui.delete_enabled=true to enable it)"}` while `ui.delete_enabled` is false
+  (the default). Checked first, before the path.
+- **404** `{"error": "File not found"}` for a path of another shape (a
+  sealed file or an archive included), an unsafe segment, a link, or a file
+  that does not exist.
+- **409** `{"error": "the file is in use on this worker"}` while this
+  worker sends the file to a client (`/debug/download/{path}`) or reads it
+  as the source of a merge. Another worker that reads the file is not
+  known; on a local folder its read goes on (the file is removed when the
+  last reader closes it).
+- **204** with no body after the file is deleted. The worker logs
+  `debug_file_deleted` (info, `category` `debug`, `path`).
+
+Not a CORS path. A worker with no shared folder answers 404.
+
+### `GET /api/v1/debug/autodiscover` (new)
+
+The registry as this worker sees it, from the snapshot of its last refresh.
+No store is read. No query parameter.
+
+```json
+{
+  "registry": {
+    "provider": "postgres",
+    "connection": "main",
+    "started": true,
+    "refreshed_at": "2026-11-08T10:00:00.125000Z",
+    "last_publish_at": "2026-11-08T10:00:02.500000Z",
+    "breaker_open": false,
+    "offline_after_seconds": 60
+  },
+  "worker": {"name": "w-1", "cluster": "search", "instance": "0123456789abcdef", "key": "drakkar.fleet_workers (worker = 'w-1')"},
+  "workers": [
+    {
+      "worker": "w-2", "instance": "fedcba9876543210", "cluster": "search", "state": "running",
+      "backend": "python", "version": "2.5.0", "url": "http://10.0.0.2:8080/",
+      "started_at": "2026-11-08T09:00:00.000000Z", "heartbeat_at": "2026-11-08T09:59:58.000000Z",
+      "age_seconds": 2.1, "online": true, "key": "drakkar.fleet_workers (worker = 'w-2')",
+      "features": {}
+    }
+  ],
+  "truncated": false
+}
+```
+
+- `registry.connection`: the name of the connection entry, `null` for the
+  `filesystem` provider. No DSN, URL or token is sent.
+- `registry.refreshed_at` and `last_publish_at`: the last successful refresh
+  and the last successful publish of this worker's own card, `null` before
+  the first. `started`: a provider start succeeded. `breaker_open`: the
+  registry's breaker.
+- `worker`: this worker. Its own card is not in `workers` (the registry
+  leaves it out of its snapshot); `key` is where the store keeps it.
+- `workers`: one row per card of the last refresh, the own cluster first,
+  then by cluster and worker name; at most 1000 rows, and `truncated` is
+  `true` when more were listed. `age_seconds` and `online` follow the
+  liveness rule of `/api/v1/workers`. The card fields are sent as the card
+  holds them (`features` as an object, `{}` when absent).
+- `key` (here and in `worker`): where the store keeps the card, `null`
+  before the provider started. `filesystem`: the card file relative to the
+  shared folder (`fleet/workers/<worker>.json`); `postgres`:
+  `<schema>.fleet_workers (worker = '<worker>')`; `redis`:
+  `<prefix>fleet:workers:<worker>`; `consul`:
+  `<prefix>/fleet/workers/<worker>`.
+
+Answers: 200; 404 `{"error": "autodiscover is off"}`.
+
+### `GET /api/v1/debug/autodiscover/leases` (new)
+
+The cluster tasks of this worker and who holds the lease of each, as the
+election's store reports it. No query parameter.
+
+```json
+{
+  "election": {"provider": "redis", "started": true, "breaker_open": false},
+  "leases": [
+    {
+      "task": "history.archive", "scope": "search/history.archive", "system": true,
+      "lease_seconds": 60, "next_slot_ts": 1762599600,
+      "last_slot": {"slot": 1762596000, "outcome": "won", "at": "2026-11-08T10:00:00.004000Z"},
+      "status": "held",
+      "holder": {"worker": "w-2", "instance": "fedcba9876543210", "acquired_at": "2026-11-08T10:00:00.010000Z",
+                 "age_seconds": null, "expires_in_seconds": 41.5},
+      "key": "drakkar:task-locks:search/history.archive"
+    }
+  ]
+}
+```
+
+- `election` is `null` when the worker runs no cluster task (it then has no
+  election), and `leases` is empty. `started`: the provider has started. It
+  starts at the first slot that needs it; this read never starts it.
+- One row per cluster task of the worker, sorted by name: the user tasks and
+  `history.archive` when the worker runs it as a cluster task. `system` is
+  true for a framework task. `next_slot_ts` is the next slot (epoch
+  seconds). `last_slot` is the last slot of the task on this worker, `null`
+  before the first: its slot, its outcome (`won`, `held_elsewhere`, `late`,
+  `election_failed`) and when it was decided.
+- `status`: `held` (`holder` is set), `free` (no lease is stored),
+  `not_started` (the election has not started: no store call), `breaker_open`
+  (the election's breaker is open: no store call), or `failed` (the read
+  failed or did not answer in time).
+- `holder`: `worker`, `instance` and `acquired_at` (text, as the store keeps
+  it; `null` when the stored lease names no holder); `age_seconds`: the time
+  since the last refresh on the store's clock, when the store keeps it
+  (`filesystem`, `postgres`); `expires_in_seconds`: the time left before the
+  lease ends, from the store (`redis`), or the lease length minus the age
+  (`filesystem`, `postgres`). A negative value means the lease ran out and the
+  store keeps it until another worker takes the scope. `consul` reports
+  neither. `holder` is `null` unless `status` is `held`.
+- `key`: where the store keeps the lease, `null` before the provider started.
+  `filesystem`: the lock file relative to the shared folder
+  (`tasks/<cluster>/<task>.lock`); `postgres`:
+  `<schema>.task_locks (scope = '<scope>')`; `redis`:
+  `<prefix>task-locks:<scope>`; `consul`: `<prefix>/task-locks/<scope>`.
+
+Each read is one call of the election's own provider with the operation
+`holder` (one attempt, at most 2 s), at most 4 at once, on the worker's main
+loop. The provider metrics count it like every other call
+(`drakkar_provider_calls_total{feature="election",op="holder"}`), and a
+failed read counts against the election's breaker. A failed row logs
+`ui_read_provider_failed` (warning, `category` `debug`, `endpoint`,
+`provider`, `op`, `error`), at most one line per 60 s for this endpoint. The
+whole read ends after 5 s; rows that did not answer are `failed`. The
+Postgres provider reads with the statement `holder` and the Redis provider
+with `GET` and `PTTL` (pinned in `tests/fixtures/fleet_providers.json` of the
+Python backend).
+
+Answers: 200.
+
 ### Absence (normative)
 
 - A backend older than v1.30 ignores `parts` and answers every part; it
@@ -2506,6 +2724,12 @@ seconds may be missing. With the recorder off there is no cluster file
   UI probes its own worker with a request that has no parameters (400
   means the route exists) and counts a peer without the `recorder` block as
   one without the route.
+- A backend older than the third part answers 404 on
+  `/debug/databases/postgres`, `/debug/autodiscover` and
+  `/debug/autodiscover/leases`, and 404 or 405 on `DELETE /debug/files`. It
+  sends no `history.delete_enabled`. The UI hides the Postgres partitions
+  and the Autodiscover blocks it cannot read, says "not available on this
+  worker", and offers no delete.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 

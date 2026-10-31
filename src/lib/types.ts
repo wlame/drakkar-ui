@@ -667,7 +667,9 @@ export interface DatabasesResponse {
   // With `?parts=` (v1.30) a part not asked for is absent, so both are
   // optional; a backend older than v1.30 always sends both.
   own?: OwnDb[]
-  history?: { folders: HistoryFolder[] }
+  // delete_enabled (v1.30, third part): ui.delete_enabled; absent on an older
+  // backend, which means the delete of a merge result is not offered.
+  history?: { folders: HistoryFolder[]; delete_enabled?: boolean }
   // v1.30 (all optional): a backend that predates it sends none of these.
   worker?: { name: string; cluster: string | null; instance: string }
   storage?: StorageStatus
@@ -749,6 +751,71 @@ export interface PostgresPartitions {
   partitions: { name: string; from_ts: number; to_ts: number; size_bytes: number | null }[]
   total_bytes: number
   next_drops: { retention: string[]; size: string[] }
+}
+
+// GET /api/v1/debug/autodiscover (v1.30): the registry and its cards, from
+// the worker's last refresh. The own card is not in `workers`.
+export interface RegistryStatus {
+  provider: string
+  /** The connection entry's name; null for the filesystem provider. Never a DSN. */
+  connection: string | null
+  started: boolean
+  refreshed_at: string | null
+  last_publish_at: string | null
+  breaker_open: boolean
+  offline_after_seconds: number
+}
+
+export interface CardRow {
+  worker: string
+  instance: string
+  cluster: string
+  state: string
+  backend: string | null
+  version: string | null
+  url: string
+  started_at: string | null
+  heartbeat_at: string | null
+  age_seconds: number | null
+  online: boolean | null
+  /** Where the store keeps the card; null before the provider started. */
+  key: string | null
+  features: Record<string, unknown>
+}
+
+export interface AutodiscoverResponse {
+  registry: RegistryStatus
+  worker: { name: string; cluster: string | null; instance: string; key: string | null }
+  workers: CardRow[]
+  truncated: boolean
+}
+
+// GET /api/v1/debug/autodiscover/leases (v1.30): one row per cluster task.
+export type LeaseStatus = 'held' | 'free' | 'not_started' | 'breaker_open' | 'failed'
+
+export interface LeaseRow {
+  task: string
+  scope: string
+  system: boolean
+  lease_seconds: number
+  next_slot_ts: number | null
+  last_slot: { slot: number; outcome: string; at: string } | null
+  status: LeaseStatus | string
+  holder: {
+    worker: string | null
+    instance: string | null
+    acquired_at: string | null
+    age_seconds: number | null
+    /** Negative when the lease ran out and the store still keeps it. */
+    expires_in_seconds: number | null
+  } | null
+  key: string | null
+}
+
+export interface LeasesResponse {
+  /** null when the worker runs no cluster task. */
+  election: { provider: string; started: boolean; breaker_open: boolean } | null
+  leases: LeaseRow[]
 }
 
 // The filters of GET /api/v1/debug/slice (v1.30), one field per query
