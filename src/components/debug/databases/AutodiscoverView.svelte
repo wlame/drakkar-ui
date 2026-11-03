@@ -8,7 +8,10 @@
   import { api, type AutodiscoverResponse, type LeasesResponse } from '../../../lib/api'
   import {
     cardLink,
+    clusterHashText,
+    featureNames,
     groupByCluster,
+    leaseAgeText,
     lastSlotText,
     leaseStatusText,
     livenessText,
@@ -47,6 +50,9 @@
   function fmtAge(seconds: number | null): string {
     return seconds === null ? '-' : `${Math.round(seconds)}s`
   }
+  function fmtClock(text: string | null): string {
+    return text ? localClock(Date.parse(text) / 1000) : '-'
+  }
 </script>
 
 <div class="bar">
@@ -74,8 +80,9 @@
     <table>
       <thead>
         <tr>
-          <th>Worker</th><th>Instance</th><th>State</th><th>Backend</th><th class="num">Age</th>
-          <th>Liveness</th><th>Store key</th>
+          <th>Worker</th><th>Instance</th><th>State</th><th>Backend</th><th>URL</th><th>Started</th>
+          <th>Heartbeat</th><th class="num">Age</th><th>Liveness</th><th>Task hash</th><th>Features</th>
+          <th>Store key</th>
         </tr>
       </thead>
       <tbody>
@@ -91,8 +98,13 @@
             <td class="mono">{card.instance}</td>
             <td>{card.state}</td>
             <td>{card.backend ?? '-'} {card.version ?? ''}</td>
+            <td class="mono key">{card.url}</td>
+            <td class="nowrap">{fmtClock(card.started_at)}</td>
+            <td class="nowrap">{fmtClock(card.heartbeat_at)}</td>
             <td class="num mono">{fmtAge(card.age_seconds)}</td>
             <td>{livenessText(card.online)}</td>
+            <td class="mono">{clusterHashText(card)}</td>
+            <td>{featureNames(card)}</td>
             <td class="mono key">{card.key ?? '-'}</td>
           </tr>
         {/each}
@@ -120,8 +132,9 @@
     <table>
       <thead>
         <tr>
-          <th>Task</th><th>Holder</th><th class="num">Lease</th><th class="num">Time left</th>
-          <th>Next slot</th><th>Last slot here</th><th>Store key</th>
+          <th>Task</th><th>Holder</th><th>Acquired</th><th class="num">Refreshed ago</th>
+          <th class="num">Lease</th><th class="num">Time left</th><th>Next slot</th><th>Last slot here</th>
+          <th>Store key</th>
         </tr>
       </thead>
       <tbody>
@@ -129,6 +142,12 @@
           <tr>
             <td class="mono">{lease.task}{#if lease.system}<span class="chip">system</span>{/if}</td>
             <td class="status-{lease.status}">{leaseStatusText(lease, localClock)}</td>
+            <td class="nowrap">{fmtClock(lease.holder?.acquired_at ?? null)}</td>
+            <td
+              class="num mono"
+              title={lease.holder?.age_approximate ? "Approximate: the store's file time against this worker's clock" : ''}
+              >{leaseAgeText(lease.holder)}</td
+            >
             <td class="num mono">{lease.lease_seconds}s</td>
             <td class="num mono">{timeLeftText(lease.holder?.expires_in_seconds ?? null)}</td>
             <td class="nowrap">{lease.next_slot_ts !== null ? localClock(lease.next_slot_ts) : '-'}</td>
@@ -161,6 +180,7 @@
     color: var(--muted);
   }
   .status-failed,
+  .status-busy,
   .status-breaker_open {
     color: #b45309;
   }

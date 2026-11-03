@@ -41,6 +41,29 @@ export function cardLink(card: CardRow): string | null {
   return safeHttpBase(card.url) || null
 }
 
+/** The cluster task hash a card publishes (`features.periodic.cluster_hash`), or '-'. */
+export function clusterHashText(card: CardRow): string {
+  const periodic = card.features?.periodic
+  const hash =
+    periodic && typeof periodic === 'object'
+      ? (periodic as Record<string, unknown>).cluster_hash
+      : null
+  return typeof hash === 'string' ? hash : '-'
+}
+
+/** The names of the card's features, sorted (`cache, periodic, ui`), or '-'. */
+export function featureNames(card: CardRow): string {
+  const names = Object.keys(card.features ?? {}).sort()
+  return names.length ? names.join(', ') : '-'
+}
+
+/** The age of a lease's last refresh: `12s`, `~12s` when approximate, or '-'. */
+export function leaseAgeText(holder: LeaseRow['holder']): string {
+  if (!holder || holder.age_seconds === null) return '-'
+  const text = `${Math.round(holder.age_seconds)}s`
+  return holder.age_approximate ? `~${text}` : text
+}
+
 /** A liveness verdict as a word. */
 export function livenessText(online: boolean | null): string {
   if (online === null) return 'unknown'
@@ -69,6 +92,8 @@ export function leaseStatusText(row: LeaseRow, clock: ClockFormatter): string {
         : 'the election starts at the first slot'
     case 'breaker_open':
       return 'breaker open: the store was not asked'
+    case 'busy':
+      return 'another read runs on this worker; refresh again'
     case 'failed':
       return 'the read failed or did not answer'
     default:

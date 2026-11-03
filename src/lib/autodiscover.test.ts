@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   cardLink,
+  clusterHashText,
+  featureNames,
   groupByCluster,
+  leaseAgeText,
   lastSlotText,
   leaseStatusText,
   livenessText,
@@ -121,5 +124,33 @@ describe('autodiscover', () => {
     expect(
       lastSlotText(lease({ last_slot: { slot: 7200, outcome: 'held_elsewhere', at: 'x' } }), clock),
     ).toBe('held elsewhere at 02:00')
+  })
+})
+
+describe('autodiscover columns', () => {
+  it('reads the cluster task hash and the feature names of a card', () => {
+    const withFeatures = {
+      ...card('a', 'x'),
+      features: { ui: true, periodic: { cluster_hash: '0123456789abcdef' }, cache: {} },
+    }
+    expect(clusterHashText(withFeatures)).toBe('0123456789abcdef')
+    expect(featureNames(withFeatures)).toBe('cache, periodic, ui')
+    expect(clusterHashText(card('a', 'x'))).toBe('-')
+    expect(featureNames(card('a', 'x'))).toBe('-')
+    expect(clusterHashText({ ...card('a', 'x'), features: { periodic: 'bad' } })).toBe('-')
+  })
+
+  it('marks an approximate lease age with a tilde', () => {
+    const holder = { worker: 'w', instance: null, acquired_at: null, expires_in_seconds: null }
+    expect(leaseAgeText(null)).toBe('-')
+    expect(leaseAgeText({ ...holder, age_seconds: null })).toBe('-')
+    expect(leaseAgeText({ ...holder, age_seconds: 12.4 })).toBe('12s')
+    expect(leaseAgeText({ ...holder, age_seconds: 12.4, age_approximate: true })).toBe('~12s')
+  })
+
+  it('says a busy row should be read again', () => {
+    expect(leaseStatusText(lease({ status: 'busy' }), clock)).toBe(
+      'another read runs on this worker; refresh again',
+    )
   })
 })

@@ -904,12 +904,12 @@ const autodiscoverBody = {
       backend: 'python',
       version: '2.5.0',
       url: 'http://w-2:8080/',
-      started_at: null,
-      heartbeat_at: null,
+      started_at: '2026-11-08T09:00:00.000000Z',
+      heartbeat_at: '2026-11-08T09:59:58.000000Z',
       age_seconds: 2.4,
       online: true,
       key: 'drakkar:fleet:workers:w-2',
-      features: {},
+      features: { periodic: { cluster_hash: '0123456789abcdef' }, ui: true },
     },
     {
       worker: 'w-9',
@@ -946,9 +946,28 @@ const leasesBody = {
         instance: 'fedcba9876543210',
         acquired_at: '2026-11-08T10:00:00.010000Z',
         age_seconds: null,
+        age_approximate: false,
         expires_in_seconds: 41.5,
       },
       key: 'drakkar:task-locks:search/history.archive',
+    },
+    {
+      task: 'nightly_report',
+      scope: 'search/nightly_report',
+      system: false,
+      lease_seconds: 120,
+      next_slot_ts: 1762599600,
+      last_slot: null,
+      status: 'held',
+      holder: {
+        worker: 'w-3',
+        instance: null,
+        acquired_at: null,
+        age_seconds: 12.4,
+        age_approximate: true,
+        expires_in_seconds: 107.6,
+      },
+      key: 'tasks/search/nightly_report.lock',
     },
   ],
 }
@@ -1103,6 +1122,11 @@ describe('DatabasesTab v1.30 third part', () => {
     expect(lease.textContent).toContain('held by w-2 (fedcba9876543210)')
     expect(lease.textContent).toContain('42s')
     expect(lease.textContent).toContain('drakkar:task-locks:search/history.archive')
+    expect(peer.textContent).toContain('0123456789abcdef')
+    expect(peer.textContent).toContain('periodic, ui')
+    expect(peer.textContent).toContain('http://w-2:8080/')
+    const approximate = row(target, 'nightly_report')
+    expect(approximate.textContent).toContain('~12s')
     cleanup()
   })
 
