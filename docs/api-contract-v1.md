@@ -2678,7 +2678,8 @@ election's store reports it. No query parameter.
   `not_started` (the election has not started: no store call), `breaker_open`
   (the election's breaker is open: no store call), `busy` (another request's
   reads run on this worker now: no store call; try again), or `failed` (the
-  read failed or did not answer in time).
+  read failed or did not answer in time, or the UI reads' own breaker is open
+  after earlier failed reads).
 - `holder`: `worker`, `instance` and `acquired_at` (text, as the store keeps
   it; `null` when the stored lease names no holder); `age_seconds`: the time
   since the last refresh on the store's clock, when the store keeps it
