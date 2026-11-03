@@ -19,16 +19,12 @@
   import { search, setQuery } from '../../lib/router'
   import type { WorkerPeer } from '../../lib/types'
   import { buildCoverage } from '../../lib/coverage'
+  import AutodiscoverView from './databases/AutodiscoverView.svelte'
   import CoverageBar from './databases/CoverageBar.svelte'
   import FilesView from './databases/FilesView.svelte'
+  import PostgresView from './databases/PostgresView.svelte'
   import SliceView from './databases/SliceView.svelte'
   import type { OwnSection } from './databases/types'
-
-  // The views the tab can draw; more are added here as they land.
-  const VIEW_BUTTONS: { view: DbViewState['view']; label: string }[] = [
-    { view: 'files', label: 'Files' },
-    { view: 'slice', label: 'Slice' },
-  ]
 
   // What a peer is asked for: its own part, not the shared history.
   const PEER_PARTS = ['own', 'storage', 'recorder']
@@ -43,6 +39,19 @@
 
   const view = $derived(parseDbView($search))
   const peerNames = $derived(sameClusterPeers(workers).map((w) => w.worker_name))
+
+  // The views the tab can draw. Postgres shows only for a worker whose
+  // recorder writes to Postgres (from the `recorder` block); Autodiscover
+  // only while autodiscover is on (a missing capability means on).
+  const viewButtons = $derived.by(() => {
+    const buttons: { view: DbViewState['view']; label: string }[] = [{ view: 'files', label: 'Files' }]
+    if (data?.recorder?.provider === 'postgres') buttons.push({ view: 'postgres', label: 'Postgres' })
+    buttons.push({ view: 'slice', label: 'Slice' })
+    if ($autodiscoverOn) buttons.push({ view: 'autodiscover', label: 'Autodiscover' })
+    return buttons
+  })
+  // A view the serving worker cannot show (a pasted link) falls back to Files.
+  const shownView = $derived(viewButtons.some((b) => b.view === view.view) ? view.view : 'files')
 
   /** Change the URL state: Back undoes a view or worker step, other changes replace the entry. */
   function setView(change: Partial<DbViewState>) {
@@ -173,11 +182,9 @@
 {/if}
 
 <div class="bar views" role="group" aria-label="database views">
-  {#each VIEW_BUTTONS as b (b.view)}
-    <button
-      class:on={view.view === b.view || (b.view === 'files' && !VIEW_BUTTONS.some((v) => v.view === view.view))}
-      aria-pressed={view.view === b.view}
-      onclick={() => setView({ view: b.view })}>{b.label}</button
+  {#each viewButtons as b (b.view)}
+    <button class:on={shownView === b.view} aria-pressed={shownView === b.view} onclick={() => setView({ view: b.view })}
+      >{b.label}</button
     >
   {/each}
 </div>
@@ -199,11 +206,17 @@
 {:else if unavailable}
   <p class="muted">The databases view is not available on this worker: it runs an older release.</p>
 {:else if data}
-  <CoverageBar {coverage} {selection} onselect={selectRange} />
-  {#if view.view === 'slice'}
-    <SliceView {data} {ownSections} {workers} {currentWorker} {view} {coverage} onchange={setView} />
+  {#if shownView === 'postgres'}
+    <PostgresView {data} />
+  {:else if shownView === 'autodiscover'}
+    <AutodiscoverView />
   {:else}
-    <FilesView {data} {ownSections} {unreachable} onmerged={() => load(view.worker)} />
+    <CoverageBar {coverage} {selection} onselect={selectRange} />
+    {#if shownView === 'slice'}
+      <SliceView {data} {ownSections} {workers} {currentWorker} {view} {coverage} onchange={setView} />
+    {:else}
+      <FilesView {data} {ownSections} {unreachable} onchanged={() => load(view.worker)} />
+    {/if}
   {/if}
 {/if}
 

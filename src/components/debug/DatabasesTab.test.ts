@@ -820,3 +820,378 @@ describe('DatabasesTab v1.30 panels', () => {
     cleanup()
   })
 })
+
+// v1.30, third part: the Postgres view, the Autodiscover view and the delete
+// of a merge result. Each route is stubbed by its path; the Postgres route is
+// matched before /debug/databases, whose prefix it shares.
+const postgresBody: DatabasesResponse = {
+  ...v130,
+  recorder: {
+    enabled: true,
+    provider: 'postgres',
+    memory: null,
+    sqlite: null,
+    postgres: {
+      connection: 'main',
+      schema: 'drakkar',
+      table: 'fast_recorder_events',
+      initial_retention_hours: 6,
+      max_size_bytes: 64 * 1024 * 1024,
+      store_completed_output: false,
+      writer: {
+        started: true,
+        queue_rows: 3,
+        queue_bytes: 300,
+        rows_written: 1200,
+        dropped: { queue_full: 0, rejected: 2, no_partition: 0, shutdown: 0 },
+        breaker_open: false,
+        last_upkeep: null,
+      },
+    },
+  },
+}
+
+const MIB = 1024 * 1024
+const partitionsBody = {
+  server_now: 1762596100,
+  stored_retention_hours: 24,
+  partitions: [
+    {
+      name: 'fast_recorder_events_p2026110807',
+      from_ts: 1762585200,
+      to_ts: 1762588800,
+      size_bytes: 40 * MIB,
+    },
+    {
+      name: 'fast_recorder_events_p2026110808',
+      from_ts: 1762588800,
+      to_ts: 1762592400,
+      size_bytes: 30 * MIB,
+    },
+    {
+      name: 'fast_recorder_events_p2026110809',
+      from_ts: 1762592400,
+      to_ts: 1762596000,
+      size_bytes: null,
+    },
+  ],
+  total_bytes: 70 * MIB,
+  next_drops: { retention: [], size: ['fast_recorder_events_p2026110807'] },
+}
+
+const autodiscoverBody = {
+  registry: {
+    provider: 'redis',
+    connection: 'main',
+    started: true,
+    refreshed_at: '2026-11-08T10:00:00.000000Z',
+    last_publish_at: '2026-11-08T10:00:02.000000Z',
+    breaker_open: false,
+    offline_after_seconds: 60,
+  },
+  worker: {
+    name: 'w-1',
+    cluster: 'search',
+    instance: '0123456789abcdef',
+    key: 'drakkar:fleet:workers:w-1',
+  },
+  workers: [
+    {
+      worker: 'w-2',
+      instance: 'fedcba9876543210',
+      cluster: 'search',
+      state: 'running',
+      backend: 'python',
+      version: '2.5.0',
+      url: 'http://w-2:8080/',
+      started_at: null,
+      heartbeat_at: null,
+      age_seconds: 2.4,
+      online: true,
+      key: 'drakkar:fleet:workers:w-2',
+      features: {},
+    },
+    {
+      worker: 'w-9',
+      instance: 'aaaaaaaaaaaaaaaa',
+      cluster: 'other',
+      state: 'running',
+      backend: 'python',
+      version: '2.5.0',
+      url: 'javascript:alert(1)',
+      started_at: null,
+      heartbeat_at: null,
+      age_seconds: 99,
+      online: false,
+      key: 'drakkar:fleet:workers:w-9',
+      features: {},
+    },
+  ],
+  truncated: false,
+}
+
+const leasesBody = {
+  election: { provider: 'redis', started: true, breaker_open: false },
+  leases: [
+    {
+      task: 'history.archive',
+      scope: 'search/history.archive',
+      system: true,
+      lease_seconds: 60,
+      next_slot_ts: 1762599600,
+      last_slot: { slot: 1762596000, outcome: 'held_elsewhere', at: '2026-11-08T10:00:00.004000Z' },
+      status: 'held',
+      holder: {
+        worker: 'w-2',
+        instance: 'fedcba9876543210',
+        acquired_at: '2026-11-08T10:00:00.010000Z',
+        age_seconds: null,
+        expires_in_seconds: 41.5,
+      },
+      key: 'drakkar:task-locks:search/history.archive',
+    },
+  ],
+}
+
+interface ThirdPartStub {
+  databases?: unknown
+  partitions?: unknown
+  partitionsStatus?: number
+  autodiscoverStatus?: number
+  deleteStatus?: number
+}
+
+function stubThirdPart(options: ThirdPartStub = {}) {
+  const calls: { method: string; url: string }[] = []
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input)
+    const method = init?.method ?? 'GET'
+    calls.push({ method, url })
+    const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status })
+    if (url.includes('/debug/databases/postgres')) {
+      return options.partitionsStatus
+        ? json({ error: 'postgres read failed' }, options.partitionsStatus)
+        : json(options.partitions ?? partitionsBody)
+    }
+    if (url.includes('/debug/files/')) {
+      const status = options.deleteStatus ?? 204
+      return status === 204
+        ? new Response(null, { status })
+        : json({ error: 'the file is in use on this worker' }, status)
+    }
+    if (url.includes('/debug/autodiscover/leases')) return json(leasesBody)
+    if (url.includes('/debug/autodiscover')) {
+      return options.autodiscoverStatus
+        ? json({ error: 'autodiscover is off' }, options.autodiscoverStatus)
+        : json(autodiscoverBody)
+    }
+    if (url.includes('/debug/databases')) return json(options.databases ?? v130)
+    return json([])
+  })
+  return { fetchMock, calls }
+}
+
+function viewButtons(target: HTMLElement): string[] {
+  const group = target.querySelector('[aria-label="database views"]')!
+  return [...group.querySelectorAll('button')].map((b) => b.textContent ?? '')
+}
+
+describe('DatabasesTab v1.30 third part', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    setQuery('', { replace: true })
+    localStorage.clear()
+  })
+
+  it('offers the Postgres view only for a worker whose recorder writes to Postgres', async () => {
+    const sqlite = stubThirdPart()
+    vi.stubGlobal('fetch', sqlite.fetchMock)
+    const first = renderMounted()
+    await settled()
+    expect(viewButtons(first.target)).toEqual(['Files', 'Slice', 'Autodiscover'])
+    first.cleanup()
+
+    vi.stubGlobal('fetch', stubThirdPart({ databases: postgresBody }).fetchMock)
+    const second = renderMounted()
+    await settled()
+    expect(viewButtons(second.target)).toEqual(['Files', 'Postgres', 'Slice', 'Autodiscover'])
+    second.cleanup()
+  })
+
+  it('draws the table, the writer and the partitions with the drops of the next upkeep', async () => {
+    setQuery('db_view=postgres', { replace: true })
+    const { fetchMock, calls } = stubThirdPart({ databases: postgresBody })
+    vi.stubGlobal('fetch', fetchMock)
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(target.querySelector('[data-testid=pg-table]')?.textContent).toBe(
+      'drakkar.fast_recorder_events',
+    )
+    expect(target.querySelector('[data-testid=pg-writer]')?.textContent).toBe(
+      '1,200 rows written · 3 waiting (300 B) · 2 dropped',
+    )
+    expect(target.textContent).toContain('Dropped by reason: rejected: 2')
+    expect(target.querySelector('[data-testid=pg-retention]')?.textContent?.trim()).toBe(
+      "The upkeep keeps 24h of history (stored in the table). This worker's initial_retention is 6h; it applies only to a new table.",
+    )
+    expect(target.querySelector('[data-testid=pg-size]')?.textContent).toBe(
+      'Total 70.0 MB of a cap of 64.0 MB.',
+    )
+    expect(row(target, 'fast_recorder_events_p2026110807').textContent).toContain('drops (size)')
+    expect(row(target, 'fast_recorder_events_p2026110808').textContent).toContain('keeps')
+    expect(row(target, 'fast_recorder_events_p2026110809').textContent).toContain('-')
+    expect(calls.filter((c) => c.url.includes('/debug/databases/postgres'))).toHaveLength(1)
+    cleanup()
+  })
+
+  it('says the partitions are not available when the worker answers 404, and shows a 503', async () => {
+    setQuery('db_view=postgres', { replace: true })
+    vi.stubGlobal(
+      'fetch',
+      stubThirdPart({ databases: postgresBody, partitionsStatus: 404 }).fetchMock,
+    )
+    const missing = renderMounted()
+    await settled()
+    expect(missing.target.textContent).toContain('The partitions are not available on this worker.')
+    missing.cleanup()
+
+    vi.stubGlobal(
+      'fetch',
+      stubThirdPart({ databases: postgresBody, partitionsStatus: 503 }).fetchMock,
+    )
+    const failed = renderMounted()
+    await settled()
+    expect(failed.target.querySelector('.error')?.textContent).toContain('postgres read failed')
+    failed.cleanup()
+  })
+
+  it('falls back to the Files view for a pasted Postgres link on a worker without Postgres', async () => {
+    setQuery('db_view=postgres', { replace: true })
+    const { fetchMock, calls } = stubThirdPart()
+    vi.stubGlobal('fetch', fetchMock)
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(target.querySelector('[aria-pressed=true]')?.textContent).toBe('Files')
+    expect(
+      calls.filter((c) => c.url.includes('/debug/databases/postgres')).map((c) => c.url),
+    ).toEqual([])
+    cleanup()
+  })
+
+  it('draws the registry, the cards by cluster and the lease holders', async () => {
+    setQuery('db_view=autodiscover', { replace: true })
+    vi.stubGlobal('fetch', stubThirdPart().fetchMock)
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(target.querySelector('[data-testid=registry-line]')?.textContent).toContain(
+      'redis (connection main) · started',
+    )
+    expect([...target.querySelectorAll('h3')].map((h) => h.textContent)).toEqual([
+      'Cluster search',
+      'Cluster other',
+    ])
+    const peer = row(target, 'fedcba9876543210')
+    expect(peer.querySelector('a')?.getAttribute('href')).toBe('http://w-2:8080')
+    expect(peer.textContent).toContain('online')
+    expect(peer.textContent).toContain('drakkar:fleet:workers:w-2')
+    // A card URL that is not http(s) is never a link.
+    expect(row(target, 'aaaaaaaaaaaaaaaa').querySelector('a')).toBeNull()
+    const lease = row(target, 'history.archive')
+    expect(lease.textContent).toContain('held by w-2 (fedcba9876543210)')
+    expect(lease.textContent).toContain('42s')
+    expect(lease.textContent).toContain('drakkar:task-locks:search/history.archive')
+    cleanup()
+  })
+
+  it('says the registry is not available when the worker answers 404', async () => {
+    setQuery('db_view=autodiscover', { replace: true })
+    vi.stubGlobal('fetch', stubThirdPart({ autodiscoverStatus: 404 }).fetchMock)
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(target.textContent).toContain('The registry is not available on this worker.')
+    expect(row(target, 'history.archive')).toBeTruthy()
+    cleanup()
+  })
+
+  const MERGED = 'merged-2026-10-14__10_00_00-0123456789abcdef.db'
+  const withDelete = {
+    ...v130,
+    history: { ...v130.history!, delete_enabled: true },
+  }
+
+  function deleteButton(target: HTMLElement): HTMLButtonElement | null {
+    return row(target, MERGED).querySelector<HTMLButtonElement>('button.delete')
+  }
+
+  it('offers no delete while the worker does not say it is on', async () => {
+    vi.stubGlobal('fetch', stubThirdPart().fetchMock)
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(deleteButton(target)).toBeNull()
+    cleanup()
+  })
+
+  it('offers the delete on merge results only, and sends nothing when the confirm is refused', async () => {
+    const { fetchMock, calls } = stubThirdPart({ databases: withDelete })
+    vi.stubGlobal('fetch', fetchMock)
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(row(target, 'w-1-2026-10-14__07_00_00.db').querySelector('button.delete')).toBeNull()
+    deleteButton(target)!.click()
+    await settled()
+
+    expect(confirm).toHaveBeenCalledWith(
+      `Delete the merge result ${MERGED}? The sealed files and archives it was made from stay.`,
+    )
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false)
+    cleanup()
+  })
+
+  it('deletes a confirmed merge result by path and reads the databases again', async () => {
+    const { fetchMock, calls } = stubThirdPart({ databases: withDelete })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true),
+    )
+    const { target, cleanup } = renderMounted()
+    await settled()
+    const readsBefore = calls.filter((c) => c.url.includes('/debug/databases')).length
+
+    deleteButton(target)!.click()
+    await settled()
+
+    expect(calls.filter((c) => c.method === 'DELETE').map((c) => c.url)).toEqual([
+      `/api/v1/debug/files/merged/${MERGED}`,
+    ])
+    expect(calls.filter((c) => c.url.includes('/debug/databases')).length).toBe(readsBefore + 1)
+    expect(target.querySelector('.error')).toBeNull()
+    cleanup()
+  })
+
+  it('shows the answer of a refused delete', async () => {
+    vi.stubGlobal('fetch', stubThirdPart({ databases: withDelete, deleteStatus: 409 }).fetchMock)
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true),
+    )
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    deleteButton(target)!.click()
+    await settled()
+
+    expect(target.querySelector('.error')?.textContent).toContain(
+      'the file is in use on this worker',
+    )
+    cleanup()
+  })
+})

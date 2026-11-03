@@ -6,6 +6,9 @@
 
 import type {
   ArrangeTaskState,
+  AutodiscoverResponse,
+  LeasesResponse,
+  PostgresPartitions,
   CacheEntriesResponse,
   CacheEntryDetail,
   CacheStats,
@@ -100,6 +103,20 @@ async function getFrom<T>(base: string, path: string, signal?: AbortSignal): Pro
   const res = await fetch(`${base}${API_BASE}${path}`, { headers: authHeaders(), signal })
   if (!res.ok) return fail('GET', path, res)
   return (await res.json()) as T
+}
+
+// getOptional reads a route a backend may not have: null for a 404 (an older
+// backend, or a route that does not apply to this worker).
+async function getOptional<T>(path: string): Promise<T | null> {
+  const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders() })
+  if (res.status === 404) return null
+  if (!res.ok) return fail('GET', path, res)
+  return (await res.json()) as T
+}
+
+async function del(path: string): Promise<void> {
+  const res = await fetch(`${API_BASE}${path}`, { method: 'DELETE', headers: authHeaders() })
+  if (!res.ok) return fail('DELETE', path, res)
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
@@ -324,6 +341,18 @@ export const api = {
   },
   // paths are relative to storage.shared_dir: history/<cluster>/<name>.db or merged/<name>.db.
   debugMerge: (paths: string[]) => post<MergeResult>('/debug/merge', { filenames: paths }),
+  // Delete one merge result (merged/<name>.db, v1.30). The worker answers 403
+  // while ui.delete_enabled is off and 409 while it sends or merges the file.
+  debugDeleteFile: (path: string) =>
+    del(`/debug/files/${path.split('/').map(encodeURIComponent).join('/')}`),
+  // The partitions of the recorder's Postgres table (v1.30); null when the
+  // worker's provider is not postgres or the backend predates the route.
+  debugPostgres: () => getOptional<PostgresPartitions>('/debug/databases/postgres'),
+  // The registry and its cards (v1.30); null with autodiscover off or on an
+  // older backend.
+  debugAutodiscover: () => getOptional<AutodiscoverResponse>('/debug/autodiscover'),
+  // The cluster task leases (v1.30); null on an older backend.
+  debugLeases: () => getOptional<LeasesResponse>('/debug/autodiscover/leases'),
   // Each segment is encoded; the / separators stay (the route takes a path).
   // `compress` asks for a gzip stream (v1.30); never for an archive.
   debugDownloadUrl: (path: string, compress = false) =>

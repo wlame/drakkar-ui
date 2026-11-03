@@ -26,10 +26,10 @@
     data: DatabasesResponse
     ownSections: OwnSection[]
     unreachable: Unreachable[]
-    /** Called after a merge, so the shell reads the data again. */
-    onmerged: () => void | Promise<void>
+    /** Called after a merge or a delete, so the shell reads the data again. */
+    onchanged: () => void | Promise<void>
   }
-  let { data, ownSections, unreachable, onmerged }: Props = $props()
+  let { data, ownSections, unreachable, onchanged }: Props = $props()
 
   let selected = $state<Set<string>>(new Set())
   let folded = $state<Set<string>>(new Set())
@@ -134,11 +134,39 @@
     try {
       merge = await api.debugMerge(mergeSelection)
       selected = new Set()
-      await onmerged()
+      await onchanged()
     } catch (e) {
       mergeError = e instanceof Error ? e.message : String(e)
     } finally {
       merging = false
+    }
+  }
+
+  // The delete of a merge result (v1.30): offered only when the worker says
+  // ui.delete_enabled is on; an older worker sends no key and gets no button.
+  const deleteEnabled = $derived(data.history?.delete_enabled === true)
+  let deleteError = $state<string | null>(null)
+  let deleting = $state<string | null>(null)
+
+  /** The question of the confirm dialog: it names the file and says what stays. */
+  function deleteQuestion(f: HistoryFile): string {
+    return `Delete the merge result ${f.name}? The sealed files and archives it was made from stay.`
+  }
+
+  async function doDelete(f: HistoryFile) {
+    if (!window.confirm(deleteQuestion(f))) return
+    deleting = f.path
+    deleteError = null
+    try {
+      await api.debugDeleteFile(f.path)
+      const next = new Set(selected)
+      next.delete(f.path)
+      selected = next
+      await onchanged()
+    } catch (e) {
+      deleteError = e instanceof Error ? e.message : String(e)
+    } finally {
+      deleting = null
     }
   }
 
@@ -171,6 +199,9 @@
 {/if}
 {#if mergeError}
   <p class="error">Merge failed: <code>{mergeError}</code></p>
+{/if}
+{#if deleteError}
+  <p class="error">Delete failed: <code>{deleteError}</code></p>
 {/if}
 
 
@@ -360,6 +391,14 @@
                 {#if historyCompressed && f.kind !== 'archive'}
                   <a class="gz" href={api.debugDownloadUrl(f.path, true)} title="Download gzip-compressed">↓gz</a>
                 {/if}
+                {#if deleteEnabled && f.kind === 'merged'}
+                  <button
+                    class="delete"
+                    title="Delete this merge result"
+                    disabled={deleting === f.path}
+                    onclick={() => doDelete(f)}>{deleting === f.path ? 'Deleting…' : 'Delete'}</button
+                  >
+                {/if}
               </td>
             </tr>
           {/each}
@@ -403,6 +442,11 @@
   }
   .banner a {
     margin-left: 0.5rem;
+  }
+  button.delete {
+    margin-left: 0.4rem;
+    font-size: 0.8rem;
+    color: #b91c1c;
   }
   .fold {
     display: block;

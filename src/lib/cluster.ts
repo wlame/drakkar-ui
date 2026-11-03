@@ -78,7 +78,7 @@ export function peerBaseUrl(w: WorkerPeer): string {
  * advertised and ends up in links and in `window.open`, so a `javascript:`,
  * `data:` or relative value must never pass.
  */
-function safeHttpBase(base: string): string {
+export function safeHttpBase(base: string): string {
   let parsed: URL
   try {
     parsed = new URL(base)
