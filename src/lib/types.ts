@@ -791,7 +791,7 @@ export interface AutodiscoverResponse {
 }
 
 // GET /api/v1/debug/autodiscover/leases (v1.30): one row per cluster task.
-export type LeaseStatus = 'held' | 'free' | 'not_started' | 'breaker_open' | 'failed'
+export type LeaseStatus = 'held' | 'free' | 'not_started' | 'breaker_open' | 'busy' | 'failed'
 
 export interface LeaseRow {
   task: string
@@ -806,6 +806,8 @@ export interface LeaseRow {
     instance: string | null
     acquired_at: string | null
     age_seconds: number | null
+    /** True when the age compares the store's time with the worker's own clock (filesystem). */
+    age_approximate?: boolean
     /** Negative when the lease ran out and the store still keeps it. */
     expires_in_seconds: number | null
   } | null

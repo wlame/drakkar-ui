@@ -2658,7 +2658,7 @@ election's store reports it. No query parameter.
       "last_slot": {"slot": 1762596000, "outcome": "won", "at": "2026-11-08T10:00:00.004000Z"},
       "status": "held",
       "holder": {"worker": "w-2", "instance": "fedcba9876543210", "acquired_at": "2026-11-08T10:00:00.010000Z",
-                 "age_seconds": null, "expires_in_seconds": 41.5},
+                 "age_seconds": null, "age_approximate": false, "expires_in_seconds": 41.5},
       "key": "drakkar:task-locks:search/history.archive"
     }
   ]
@@ -2676,12 +2676,16 @@ election's store reports it. No query parameter.
   `election_failed`) and when it was decided.
 - `status`: `held` (`holder` is set), `free` (no lease is stored),
   `not_started` (the election has not started: no store call), `breaker_open`
-  (the election's breaker is open: no store call), or `failed` (the read
-  failed or did not answer in time).
+  (the election's breaker is open: no store call), `busy` (another request's
+  reads run on this worker now: no store call; try again), or `failed` (the
+  read failed or did not answer in time).
 - `holder`: `worker`, `instance` and `acquired_at` (text, as the store keeps
   it; `null` when the stored lease names no holder); `age_seconds`: the time
   since the last refresh on the store's clock, when the store keeps it
-  (`filesystem`, `postgres`); `expires_in_seconds`: the time left before the
+  (`filesystem`, `postgres`); `age_approximate`: `true` when the age compares
+  the store's file time with the worker's own clock (`filesystem`, whose read
+  writes nothing to the store and so cannot sample the file server's clock);
+  `expires_in_seconds`: the time left before the
   lease ends, from the store (`redis`), or the lease length minus the age
   (`filesystem`, `postgres`). A negative value means the lease ran out and the
   store keeps it until another worker takes the scope. `consul` reports
@@ -2692,11 +2696,16 @@ election's store reports it. No query parameter.
   `<schema>.task_locks (scope = '<scope>')`; `redis`:
   `<prefix>task-locks:<scope>`; `consul`: `<prefix>/task-locks/<scope>`.
 
-Each read is one call of the election's own provider with the operation
-`holder` (one attempt, at most 2 s), at most 4 at once, on the worker's main
-loop. The provider metrics count it like every other call
-(`drakkar_provider_calls_total{feature="election",op="holder"}`), and a
-failed read counts against the election's breaker. A failed row logs
+Each read is one call of the election's provider with the operation
+`holder` (one attempt, at most 2 s), on the worker's main loop, through a
+caller of the UI's own with a breaker of its own: the provider metrics count
+it as `drakkar_provider_calls_total{feature="ui",op="holder"}`, and a failed
+or slow read never counts against the election's breaker, so it never makes a
+slot call wait or skip. One batch of reads runs per worker at a time (a
+second request answers every row `busy`); inside a batch at most 2 reads run
+at once, and one with `postgres`, whose read borrows a pooled connection. The
+`filesystem` read writes nothing to the store and runs on a thread apart from
+the slot calls. A failed row logs
 `ui_read_provider_failed` (warning, `category` `debug`, `endpoint`,
 `provider`, `op`, `error`), at most one line per 60 s for this endpoint. The
 whole read ends after 5 s; rows that did not answer are `failed`. The
