@@ -61,7 +61,7 @@ the appendix.
 - **Content-Type:** `application/json` (no charset suffix).
 - **Error envelopes:** `{"detail":"..."}` for 401/404/500/503;
   `{"detail":[{"loc":[...],"msg":"..."}]}` for 422; legacy `{"error":"..."}`
-  for merge/download 400/404, merge 500, `download-live` 400/404/500,
+  for merge/download 400/404, merge 500, `download-live` 400/404/500 (and 429 since v1.30),
   `/debug/databases` 400 (v1.30), `/debug/slice` 400/409/429/500/503 (v1.30),
   `/debug/databases/postgres` 404/503, `/debug/files` 403/404/409 and
   `/debug/autodiscover` 404 (v1.30), the
@@ -2329,6 +2329,27 @@ cache request waits up to 30 seconds for the running cache copy, then
 answers 500 `{"error": "Snapshot failed: another cache snapshot is still
 running"}`.
 
+### `GET /api/v1/debug/download-live`: limits of every source
+
+Each snapshot is an unlinked temp file in the worker's own folder (or a
+buffer in RAM) until its download ends, so the open debug UI must not be
+able to fill the disk with them. Since v1.30, for every `source`:
+
+- One live-file copy runs at a time, in a slot of its own (as the memory
+  and cache copies do). A second `source=file` request waits up to 30
+  seconds, then answers 500 `{"error": "Snapshot failed: another file
+  snapshot is still running"}`.
+- The snapshots still being sent are bounded per worker. After the 400
+  checks and before any 404, a request answers:
+
+| Case | Answer |
+|---|---|
+| snapshots still being sent hold 2 GiB on this worker | 429 `{"error": "snapshots still being sent hold 2 GiB on this worker; wait for one to end"}`, `Retry-After: 5` |
+| snapshots still being sent number 16 on this worker, after the check above | 429 `{"error": "16 snapshots are still being sent on this worker; wait for one to end"}`, `Retry-After: 5` |
+
+- A download whose client takes no chunk for 120 s is ended, and its
+  snapshot leaves the count.
+
 ### `GET /api/v1/debug/slice` (new)
 
 Builds a SQLite file with the recorder events of one time range, filtered,
@@ -2398,6 +2419,7 @@ exists (404 means it does not).
 | 409 | `scope=cluster` on a worker with no cluster source (recorder off), after every 400 check | `{"error": "scope cluster needs the shared history or the Postgres table"}` |
 | 429 | another slice is building on this worker (one build at a time), after the 409 check | `{"error": "a slice is already being built on this worker"}`, `Retry-After: 5` |
 | 429 | finished slices that are still being sent hold 2 GiB on this worker, after the check above | `{"error": "slices still being sent hold 2 GiB on this worker; wait for one to end"}`, `Retry-After: 5` |
+| 429 | finished slices that are still being sent number 16 on this worker, after the check above | `{"error": "16 slices are still being sent on this worker; wait for one to end"}`, `Retry-After: 5` |
 | 503 | the Postgres read failed or found no free read slot | `{"error": "postgres read failed"}` |
 | 500 | the slice file could not be written | `{"error": "Slice failed: <reason>"}` |
 
