@@ -168,6 +168,22 @@ describe('DatabasesTab (v1.23)', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     localStorage.clear()
+    // The worker filter lives in the URL: never leak it into the next test.
+    setQuery('', { replace: true })
+  })
+
+  it('rebuilds the worker filter from a link: a pasted db_history_worker=w-2 filters on open', async () => {
+    setQuery('db_history_worker=w-2', { replace: true })
+    vi.stubGlobal('fetch', stubFetch())
+    const { target, cleanup } = renderMounted()
+    await settled()
+
+    expect(
+      target.querySelector<HTMLSelectElement>('select[aria-label="worker filter"]')!.value,
+    ).toBe('w-2')
+    expect(row(target, 'w-2-2026-10-14__07_00_00.db')).toBeTruthy()
+    expect(() => row(target, 'w-1-2026-10-14__07_00_00.db')).toThrow()
+    cleanup()
   })
 
   it('lists the own files with their kind; only the live file downloads, as a snapshot', async () => {
@@ -320,6 +336,7 @@ describe('DatabasesTab (v1.23)', () => {
 
     expect(row(target, 'w-2-2026-10-14__07_00_00.db')).toBeTruthy()
     expect(() => row(target, 'w-1-2026-10-14__07_00_00.db')).toThrow()
+    expect(new URLSearchParams(window.location.search).get('db_history_worker')).toBe('w-2')
     cleanup()
   })
 
