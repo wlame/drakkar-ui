@@ -2339,8 +2339,10 @@ able to fill the disk with them. Since v1.30, for every `source`:
   and cache copies do). A second `source=file` request waits up to 30
   seconds, then answers 500 `{"error": "Snapshot failed: another file
   snapshot is still running"}`.
-- The snapshots still being sent are bounded per worker. After the 400
-  checks and before any 404, a request answers:
+- The snapshots being copied or still being sent are bounded per worker; a
+  request counts from the moment it passes this check, so concurrent
+  requests cannot pass it on the same room. After the 400 checks and before
+  any 404, a request answers:
 
 | Case | Answer |
 |---|---|
@@ -2419,7 +2421,7 @@ exists (404 means it does not).
 | 409 | `scope=cluster` on a worker with no cluster source (recorder off), after every 400 check | `{"error": "scope cluster needs the shared history or the Postgres table"}` |
 | 429 | another slice is building on this worker (one build at a time), after the 409 check | `{"error": "a slice is already being built on this worker"}`, `Retry-After: 5` |
 | 429 | finished slices that are still being sent hold 2 GiB on this worker, after the check above | `{"error": "slices still being sent hold 2 GiB on this worker; wait for one to end"}`, `Retry-After: 5` |
-| 429 | finished slices that are still being sent number 16 on this worker, after the check above | `{"error": "16 slices are still being sent on this worker; wait for one to end"}`, `Retry-After: 5` |
+| 429 | slices being built or still being sent number 16 on this worker (a request counts from the moment it passes this check), after the check above | `{"error": "16 slices are still being sent on this worker; wait for one to end"}`, `Retry-After: 5` |
 | 503 | the Postgres read failed or found no free read slot | `{"error": "postgres read failed"}` |
 | 500 | the slice file could not be written | `{"error": "Slice failed: <reason>"}` |
 
