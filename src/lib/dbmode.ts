@@ -86,7 +86,7 @@ export function historyCleanupNote(
   const archive = recorder?.sqlite?.archive
   if (!archive) return null
   if (archive.scope === null) {
-    return 'No archive pass runs on this worker: sealed files and merge results stay until someone deletes them.'
+    return 'No archive pass runs on this worker: sealed files and merge results stay until an operator deletes them on disk (the UI deletes merge results only).'
   }
   const sentences = [
     `Sealed files go into an archive ${fmtSpan(archive.due_after_seconds)} after their ${fmtSpan(archive.window_seconds)} window ends`,

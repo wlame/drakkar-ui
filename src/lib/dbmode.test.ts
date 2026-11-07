@@ -120,7 +120,7 @@ describe('historyCleanupNote', () => {
 
   it('says no pass runs when the archive has no scope', () => {
     expect(historyCleanupNote(sqliteRecorder({ scope: null, next_slot_ts: null }), clock)).toBe(
-      'No archive pass runs on this worker: sealed files and merge results stay until someone deletes them.',
+      'No archive pass runs on this worker: sealed files and merge results stay until an operator deletes them on disk (the UI deletes merge results only).',
     )
   })
 

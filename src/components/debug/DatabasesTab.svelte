@@ -215,7 +215,14 @@
     {#if shownView === 'slice'}
       <SliceView {data} {ownSections} {workers} {currentWorker} {view} {coverage} onchange={setView} />
     {:else}
-      <FilesView {data} {ownSections} {unreachable} onchanged={() => load(view.worker)} />
+      <FilesView
+        {data}
+        {ownSections}
+        {unreachable}
+        {view}
+        onchange={setView}
+        onchanged={() => load(view.worker)}
+      />
     {/if}
   {/if}
 {/if}

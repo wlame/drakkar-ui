@@ -6,7 +6,6 @@
 export const DB_VIEWS = ['files', 'postgres', 'slice', 'autodiscover'] as const
 export type DbViewName = (typeof DB_VIEWS)[number]
 
-export const DB_KINDS = ['sealed', 'archive', 'merged'] as const
 export const DB_RANGES = ['5m', '15m', '1h', '6h', '24h'] as const
 export const DB_SCOPES = ['worker', 'cluster'] as const
 export const DB_SOURCES = ['memory', 'files', 'history', 'postgres'] as const
@@ -18,8 +17,8 @@ export interface DbViewState {
   view: DbViewName
   /** null = the page's own worker; ALL_WORKERS = the whole cluster; else a worker name. */
   worker: string | null
-  cluster: string | null
-  kind: (typeof DB_KINDS)[number] | null
+  /** The worker filter of the Files view's history list; null = every worker. */
+  historyWorker: string | null
   range: (typeof DB_RANGES)[number]
   /** Epoch seconds; both set replace `range`. */
   from: number | null
@@ -35,8 +34,7 @@ export interface DbViewState {
 export const DB_DEFAULTS: DbViewState = {
   view: 'files',
   worker: null,
-  cluster: null,
-  kind: null,
+  historyWorker: null,
   range: '15m',
   from: null,
   to: null,
@@ -54,6 +52,11 @@ const EVENT_TYPE_RE = /^[a-z][a-z0-9_]*$/
 const OFFSETS_RE = /^(\d{1,19})-(\d{1,19})$/
 const MAX_INT64 = 9223372036854775807n
 
+/** True for a partition typed as a whole number from 0 to 2147483647. */
+export function isPartitionText(text: string): boolean {
+  return wholeNumber(text, MAX_PARTITION) !== null
+}
+
 /** True for `<from>-<to>` with both offsets whole numbers that fit a signed 64-bit integer. */
 export function isOffsetsText(text: string): boolean {
   const m = OFFSETS_RE.exec(text)
@@ -64,8 +67,7 @@ export function isOffsetsText(text: string): boolean {
 const KEYS: Record<keyof DbViewState, string> = {
   view: 'db_view',
   worker: 'db_worker',
-  cluster: 'db_cluster',
-  kind: 'db_kind',
+  historyWorker: 'db_history_worker',
   range: 'db_range',
   from: 'db_from',
   to: 'db_to',
@@ -110,8 +112,7 @@ export function parseDbView(query: string): DbViewState {
   return {
     view: oneOf(DB_VIEWS, get('view')) ?? DB_DEFAULTS.view,
     worker: name(get('worker')),
-    cluster: name(get('cluster')),
-    kind: oneOf(DB_KINDS, get('kind')),
+    historyWorker: name(get('historyWorker')),
     range: oneOf(DB_RANGES, get('range')) ?? DB_DEFAULTS.range,
     from: hasWindow ? from : null,
     to: hasWindow ? to : null,

@@ -17,8 +17,10 @@
     type HistoryFolder,
     type MergeResult,
   } from '../../../lib/api'
+  import type { DbViewState } from '../../../lib/dbview'
   import type { Unreachable } from '../../../lib/fanout'
   import type { OwnSection } from './types'
+  import { autodiscoverOn } from '../../../lib/capabilities'
   import { historyCleanupNote } from '../../../lib/dbmode'
   import { fmtBytes, fmtDateTimeMs } from '../../../lib/format'
 
@@ -26,14 +28,19 @@
     data: DatabasesResponse
     ownSections: OwnSection[]
     unreachable: Unreachable[]
+    /** The URL state of the tab; the history worker filter lives there. */
+    view: DbViewState
+    /** Write a change of the URL state (the filter is a replace, not a push). */
+    onchange: (change: Partial<DbViewState>) => void
     /** Called after a merge or a delete, so the shell reads the data again. */
     onchanged: () => void | Promise<void>
   }
-  let { data, ownSections, unreachable, onchanged }: Props = $props()
+  let { data, ownSections, unreachable, view, onchange, onchanged }: Props = $props()
 
   let selected = $state<Set<string>>(new Set())
   let folded = $state<Set<string>>(new Set())
-  let workerFilter = $state('')
+  // In the URL (db_history_worker), so a shared link shows the same list.
+  const workerFilter = $derived(view.historyWorker ?? '')
   let merge = $state<MergeResult | null>(null)
   let mergeError = $state<string | null>(null)
   let merging = $state(false)
@@ -183,7 +190,11 @@
   <button class="primary" onclick={doMerge} disabled={mergeSelection.length < 2 || merging}>
     {merging ? 'Merging…' : `Merge${mergeSelection.length >= 2 ? ` (${mergeSelection.length})` : ''}`}
   </button>
-  <select value={workerFilter} onchange={(e) => (workerFilter = e.currentTarget.value)} aria-label="worker filter">
+  <select
+    value={workerFilter}
+    onchange={(e) => onchange({ historyWorker: e.currentTarget.value || null })}
+    aria-label="worker filter"
+  >
     <option value="">All workers</option>
     {#each workers as w}<option value={w}>{w}</option>{/each}
   </select>
@@ -305,6 +316,8 @@
     <p class="muted">
       The orphan pass of any worker of this cluster seals and removes a folder whose lock is free, whose files are idle
       for 5 minutes, and whose worker is not online.
+      {#if !$autodiscoverOn}With autodiscover off nothing proves a worker is not online, so the pass only logs such a
+        folder and the folder stays.{/if}
     </p>
     {#if siblings.length > 0}
       <table class="siblings">

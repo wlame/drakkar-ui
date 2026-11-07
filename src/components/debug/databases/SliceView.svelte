@@ -7,8 +7,15 @@
   import { onDestroy, onMount, untrack } from 'svelte'
   import { api, type DatabasesResponse, type WorkerPeer } from '../../../lib/api'
   import { coverageSummary, type Coverage } from '../../../lib/coverage'
-  import { DB_RANGES, DB_SOURCES, isOffsetsText, type DbViewState, ALL_WORKERS } from '../../../lib/dbview'
-    import { fanOutTargets } from '../../../lib/fanout'
+  import {
+    DB_RANGES,
+    DB_SOURCES,
+    isOffsetsText,
+    isPartitionText,
+    type DbViewState,
+    ALL_WORKERS,
+  } from '../../../lib/dbview'
+  import { fanOutTargets } from '../../../lib/fanout'
   import { fmtDateTimeMs } from '../../../lib/format'
   import {
     EMPTY_SLICE_FORM,
@@ -49,6 +56,8 @@
   let draft = $state<{ from: number; to: number } | null>(null)
   let offsetsText = $state(untrack(() => view.offsets ?? ''))
   let offsetsBad = $state(false)
+  let partitionText = $state(untrack(() => (view.partition === null ? '' : String(view.partition))))
+  let partitionBad = $state(false)
   let building = $state<string | null>(null)
   // Whether this page's own worker has the slice route; null until probed.
   let ownSupported = $state<boolean | null>(null)
@@ -131,6 +140,15 @@
     const current = view.types ?? []
     const next = current.includes(type) ? current.filter((t) => t !== type) : [...current, type]
     onchange({ types: next.length ? next : null })
+  }
+
+  // A typed value that is not a partition stays in the field with a message,
+  // instead of going into the URL, failing its check there and vanishing.
+  function setPartition(text: string) {
+    partitionText = text
+    partitionBad = text !== '' && !isPartitionText(text)
+    if (text === '') onchange({ partition: null })
+    else if (!partitionBad) onchange({ partition: Number(text) })
   }
 
   function setOffsets(text: string) {
@@ -231,7 +249,8 @@
       {/each}
     </div>
     <div class="row">
-      <label>partition <input type="number" min="0" max="2147483647" value={view.partition ?? ''} onchange={(e) => onchange({ partition: e.currentTarget.value === '' ? null : Number(e.currentTarget.value) })} aria-label="partition" /></label>
+      <label>partition <input type="text" inputmode="numeric" value={partitionText} oninput={(e) => setPartition(e.currentTarget.value)} aria-label="partition" /></label>
+      {#if partitionBad}<span class="error">the partition is a whole number from 0 to 2147483647</span>{/if}
       <label>offsets <input type="text" placeholder="from-to" value={offsetsText} oninput={(e) => setOffsets(e.currentTarget.value)} aria-label="offsets" /></label>
       {#if offsetsBad}<span class="error">write the offsets as from-to, for example 100-200</span>{/if}
     </div>
