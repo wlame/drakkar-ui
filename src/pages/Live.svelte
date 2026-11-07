@@ -591,7 +591,7 @@
   {#if offload}
     <span
       class="offload"
-      title="Handler offload() thread pool: computations running / queued for a free thread, out of offload.max_threads. Sustained queueing means the pool is undersized."
+      title="Handler offload() thread pool: computations running / queued for a free thread, out of threads.offload. Sustained queueing means the pool is undersized."
     >Offload: {offload.running} / {offload.max_threads} busy, <span class="waiting">{offload.queued}</span> queued</span>
   {/if}
   <!-- pool.max has exactly one source (the overview fetch); until it lands,
