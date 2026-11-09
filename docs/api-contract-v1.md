@@ -2111,6 +2111,8 @@ Stored in `events.metadata` and sent on `/ws`:
 | `run_started_at` | number | Unix seconds of the spawn, 6 decimals. Absent for a launch failure and a precomputed result. |
 | `exit_notice_ms` | number | Milliseconds from the process exit to the moment the worker handled it, 1 decimal. A loop-stall signal. `0` means the worker handled the exit before the backend's exit watcher reported it, so the loop was not stalled; on a healthy worker this is the common value. Absent when the exit could not be timed off the loop, when a descendant of the process kept its output pipes open after the process exited (the run then ends when the pipes close), and for a timed-out task. |
 | `reported_run_seconds` | number | The run time the handler's optional `task_run_seconds` hook reported for this task, 6 decimals. Present only when the hook gave a valid value (a finite number from 0 to `duration` plus 0.05). |
+| `kind` | string | v1.31, `task_failed` only. The failure kind: `nonzero_exit`, `timeout`, `launch_failure` or `internal`. Absent in rows written before v1.31. |
+| `source_offsets` | [int] | v1.31, `task_failed` only. The Kafka offsets of the source messages of the task, in the task's order. Absent for a task of the HTTP source and in rows written before v1.31. The row's `offset` column stays unset. |
 
 `task_started` does not change: its `ts` is the spawn time within
 microseconds, and it stays the key of a retry's archived row
@@ -2958,27 +2960,28 @@ readers; nothing new is measured.
            "current_lag_ms": number|null, "window_peak_lag_ms": number|null,
            "stalls_total": int, "open_episode": str|null,
            "uptime_seconds": number}
-"budget": {"tasks": int, "max_tasks": int, "bytes": int, "max_bytes": int,
+"budget": null | {"tasks": int, "max_tasks": int, "bytes": int, "max_bytes": int,
            "waiting_loops": int, "backpressure_active": bool,
            "pool_active": int, "pool_max": int, "pool_waiting": int}
-"partitions": [ {"partition": int, "queued": int, "pending_offsets": int,
+"partitions": null | [ {"partition": int, "queued": int, "pending_offsets": int,
                  "committed": int|null, "lag": int|null, "paused": bool,
                  "paused_by": [str], "dead": bool} ]
-"sinks": [ {"type": str, "name": str, "breaker_open": bool,
+"sinks": null | [ {"type": str, "name": str, "breaker_open": bool,
             "delivered_total": int, "failed_total": int,
             "last_delivery_seconds": number|null} ]
 "recorder": the `recorder` block of /api/v1/debug/databases (v1.30)
 "autodiscover": {"enabled": bool, "provider": str|null,
                  "peers_online": int|null, "peers_offline": int|null,
                  "cluster_tasks_match": bool|null}
-"recent_failures": {"failures": [ {"task_id": str, "ts": number,
+"recent_failures": null | {"failures": [ {"task_id": str, "ts": number,
                                    "partition": int|null,
                                    "offset": int|null,
                                    "exit_code": int|null,
                                    "duration": number|null,
                                    "error_kind": str|null,
                                    "stderr_tail": str,    // payloads only
-                                   "args": [str]} ],       // payloads only
+                                   "args": [str],          // payloads only
+                                   "args_truncated": bool} ],  // payloads only
                     "note": str}                          // see below
 ```
 
@@ -2986,9 +2989,19 @@ readers; nothing new is measured.
   `/api/v1/runtime/health`), and `"off"` when `runtime_health.enabled` is
   false.
 - `open_episode` is the verdict of the open lag episode, `null` when none.
+- `budget`, `partitions`, `sinks` and `recent_failures` are read on the
+  worker's main loop. Each of them is `null` when the main loop did not
+  answer within the dispatch limit (a stalled worker); an empty list means
+  there is nothing to list.
 - `paused_by` is a sorted list of `backpressure`, `debug` and `death`.
-  `lag` is `null` when unknown. `partitions` is empty without a Kafka
-  source.
+  `lag` is the cached value of `drakkar_consumer_lag` for the partition (no
+  broker request), `null` before its first refresh. `partitions` is empty
+  without a Kafka source.
+- `sinks[].breaker_open` is true while the circuit breaker is open or half
+  open. `delivered_total` and `failed_total` count delivery calls, not
+  payloads; a delivery skipped on an open circuit counts as failed.
+  `last_delivery_seconds` is the age in seconds of the last successful
+  delivery, `null` before the first.
 - The `autodiscover` fields other than `enabled` are `null` with
   autodiscover off.
 - `recent_failures` holds the last 20 `task_failed` events, newest first
@@ -2997,11 +3010,17 @@ readers; nothing new is measured.
   is seconds (float) or `null`. With no memory store, `failures` is empty
   and `note` is `"no recorder store on this worker"`; `note` is absent
   otherwise.
-- `stderr_tail` (the last 2048 bytes of stderr, cut at a UTF-8 boundary)
-  and `args` are present only when `agent.include_payloads` is true. They
-  are the only payload text any agent route can send: the snapshot that
-  diagnose rules read holds them only with the switch on, and evidence
-  never carries payload text.
+- `offset` is the smallest of the `source_offsets` of the failed task (the
+  `task_failed` metadata, v1.31), `null` when the event has none.
+- `stderr_tail` (the last 2048 bytes of stderr, cut at a UTF-8 boundary),
+  `args` and `args_truncated` are present only when
+  `agent.include_payloads` is true. `args` keeps the task args while the
+  compact JSON of the kept list stays within 2048 UTF-8 bytes; it stops at
+  the first arg that does not fit, and `args_truncated` is true when an arg
+  was left out. A stored arg that is not a string is written as its
+  compact JSON text. These fields are the only payload text any agent
+  route can send: the snapshot that diagnose rules read holds them only
+  with the switch on, and evidence never carries payload text.
 
 ### `GET /api/v1/agent/diagnose`
 
@@ -3024,6 +3043,11 @@ Runs every diagnose rule on one state snapshot plus the metric values.
   not part of the contract) and does not stop the others. A handler rule runs off the event loop with a limit of
   1 second; a rule that exceeds it is listed in `failed` with
   `timed out after 1 s`.
+- A rule reads only the parts and fields it needs. A part that is `null`,
+  or a row without one of the fields a rule reads, gives no finding for
+  that part or row; it does not fail the rule. `lag-growing` sums only the
+  known lags (`null` lags are left out; with no known lag the call changes
+  nothing).
 - The rules `lag-growing`, `recorder-dropping` and `dlq-writing` compare
   with a baseline kept in memory on the worker process, each with its own.
   Calls are serialized on the baselines; the first call ever only sets

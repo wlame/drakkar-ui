@@ -1318,6 +1318,8 @@ export interface AgentFailure {
   stderr_tail?: string
   /** Only with agent.include_payloads. */
   args?: string[]
+  /** Only with agent.include_payloads: true when args left out an item. */
+  args_truncated?: boolean
 }
 
 export interface AgentState {
@@ -1330,6 +1332,7 @@ export interface AgentState {
     open_episode: string | null
     uptime_seconds: number
   }
+  /** null when the main loop did not answer in time. */
   budget?: {
     tasks: number
     max_tasks: number
@@ -1340,9 +1343,9 @@ export interface AgentState {
     pool_active: number
     pool_max: number
     pool_waiting: number
-  }
-  partitions?: AgentPartitionState[]
-  sinks?: AgentSinkState[]
+  } | null
+  partitions?: AgentPartitionState[] | null
+  sinks?: AgentSinkState[] | null
   /** The `recorder` block of /api/v1/debug/databases. */
   recorder?: Record<string, unknown>
   autodiscover?: {
@@ -1352,7 +1355,7 @@ export interface AgentState {
     peers_offline: number | null
     cluster_tasks_match: boolean | null
   }
-  recent_failures?: { failures: AgentFailure[]; note?: string }
+  recent_failures?: { failures: AgentFailure[]; note?: string } | null
 }
 
 export interface AgentFinding {
