@@ -2828,7 +2828,7 @@ The index takes no parameters.
   "worker": {"name": str, "cluster": str|null, "instance": str},
   "capabilities": Capabilities,                 // as /api/v1/identity (v1.28)
   "include_payloads": bool,                     // agent.include_payloads
-  "app_notes": bool,                            // the handler gave notes
+  "app_notes": bool,                            // the handler gave notes: entries or app key meanings
   "routes": [ {"path": str, "parts": [str], "approx_tokens": {part: int},
                "use": str} ],
   "start_here": str
@@ -2903,6 +2903,15 @@ Parts: the root sections (`worker`, `cluster`, `connections`, `sources`,
   `config-metadata.json` (units as text, such as `30s`).
 - A secret value is `"***"` when set and `""` when empty. This covers every
   secret flag of the config metadata, and `agent.auth_token`.
+- The secret-like key words are `password`, `passwd`, `secret`, `token`,
+  `key`, `dsn`, `credential`, `auth`, `private`, `cert`, `salt` and the text
+  `oauthbearer.config`, matched as a part of a key name in any letter case
+  (the words that the UI config reference masks, plus `dsn` and
+  `oauthbearer.config`). Inside any list or map value, at any depth (the
+  `app` section, `client_config` maps, `executor.env`, any free map), the
+  value of a key whose name holds one of them is `"***"` when set and `""`
+  when empty; every other text loses the user name and password of a URL.
+  `tests/fixtures/agent_contract.json` (`config_masking_cases`) pins cases.
 - `origin`: `default` (not given), `yaml` (given in the file), `env` (given
   by a `DK_` variable), `on_startup` (value changed by the handler's
   `on_startup`). Precedence: `on_startup` over `env` over `yaml` over
@@ -2910,8 +2919,8 @@ Parts: the root sections (`worker`, `cluster`, `connections`, `sources`,
 - `meaning` is the description of the key in the config metadata; `advice`
   comes from the registry and is absent when the registry has none.
 - The `app` section is open: its keys are listed with their origin. A key
-  whose name contains `password`, `secret`, `token`, `key` or `dsn` (any
-  letter case) has its value masked like a secret and `secret: true`. `meaning` is the
+  whose path holds a secret-like key word (above) has its value masked like
+  a secret and `secret: true`. `meaning` is the
   description from the handler's notes, else `""`.
 
 ### `GET /api/v1/agent/metrics`
@@ -3040,7 +3049,13 @@ Runs every diagnose rule on one state snapshot plus the metric values.
   of the registry (framework rules first, then the handler's). A handler
   rule is named `app:<key>`.
 - A rule that raises is listed in `failed` with its error text (free text,
-  not part of the contract) and does not stop the others. A handler rule runs off the event loop with a limit of
+  not part of the contract) and does not stop the others. The text is cut
+  to 500 bytes at a UTF-8 character boundary, for framework and handler
+  rules (`rule_error_cases` of the fixture).
+- No rule reads task output text: diagnose reads the state without the
+  payload fields, also with `agent.include_payloads: true`, and the snapshot
+  a handler rule gets holds no `stderr_tail`, `args` or `args_truncated`.
+- A handler rule runs off the event loop with a limit of
   1 second; a rule that exceeds it is listed in `failed` with
   `timed out after 1 s`. Two calls at the same time share a run of a
   handler rule that is still within its limit; a run past its limit is
