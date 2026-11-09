@@ -2925,7 +2925,8 @@ prefix). The two combine: a metric must match one of `names` or the
                "related": [str],                           // full only
                "samples": [ {"labels": {str: str}, "value": number}
                           | {"labels": {str: str}, "count": number,
-                             "sum": number, "buckets": [[le, number]]} ],
+                             "sum": number,
+                             "buckets": [{"le": str, "count": int}]} ],
                "samples_total": int} ],
  "unknown": [str]}
 ```
