@@ -2923,9 +2923,9 @@ prefix). The two combine: a metric must match one of `names` or the
                "meaning": str|null, "healthy": str|null,
                "promql": [{"title": str, "query": str}],   // full only
                "related": [str],                           // full only
-               "samples": [ {"labels": {str: str}, "value": number}
-                          | {"labels": {str: str}, "count": number,
-                             "sum": number,
+               "samples": [ {"labels": {str: str}, "value": number|null}
+                          | {"labels": {str: str}, "count": number|null,
+                             "sum": number|null,
                              "buckets": [{"le": str, "count": int}]} ],
                "samples_total": int} ],
  "unknown": [str]}
@@ -2942,6 +2942,7 @@ prefix). The two combine: a metric must match one of `names` or the
   and `buckets`, a list of `{"le": "<upper bound>", "count": <cumulative
   integer>}` objects in bound order, `le` a string in the Prometheus text
   form (`"0.005"`, `"1"`, `"+Inf"`).
+- A NaN or infinite `value`, `count` or `sum` is `null`.
 - `unknown` lists the asked `names` that no metric has, in the asked order.
 - `promql` and `related` are present only with `detail=full`, with the
   `{{worker}}` and `{{cluster}}` placeholders filled.
