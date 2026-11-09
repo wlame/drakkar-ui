@@ -64,7 +64,8 @@ the appendix.
   for merge/download 400/404, merge 500, `download-live` 400/404/500 (and 429 since v1.30),
   `/debug/databases` 400 (v1.30), `/debug/slice` 400/409/429/500/503 (v1.30),
   `/debug/databases/postgres` 404/503, `/debug/files` 403/404/409 and
-  `/debug/autodiscover` 404 (v1.30), the
+  `/debug/autodiscover` 404 (v1.30), the six `/agent` routes
+  400/401/404 (v1.31), the
   `/api/v1/peer/` routes and the CORS preflight 403. The 422 shape is pinned **minimal** (`loc`+`msg`);
   the UI relies only on the HTTP status and `detail[].msg`, never on
   framework-specific extras (`type`/`input`/`ctx`/`url`).
@@ -266,6 +267,10 @@ the appendix.
 - `GET /api/v1/debug/autodiscover/leases` → `{election, leases:[...]}`, the
   holder of each cluster task's lease as the store reports it (v1.30). See
   [v1.30 changes](#get-apiv1debugautodiscoverleases-new).
+- `GET /api/v1/agent`, `/agent/manual`, `/agent/config`, `/agent/metrics`,
+  `/agent/state` and `/agent/diagnose` → the agent insight routes (v1.31):
+  read-only, off unless `agent.enabled`, with a token of their own. The UI
+  does not call them. See [v1.31 changes](#v131-changes-2026-11-09).
 - `GET /api/v1/debug/archives` → `{archives:[{name, cluster, folder, path,
   from_ts, to_ts, size_bytes}]}`, newest-first by `to_ts`, from every
   `history/<cluster>/` folder. See v1.8 and v1.23 below.
@@ -2764,6 +2769,249 @@ Answers: 200.
   sends no `history.delete_enabled`. The UI hides the Postgres partitions
   and the Autodiscover blocks it cannot read, says "not available on this
   worker", and offers no delete.
+
+## v1.31 changes (2026-11-09)
+
+The agent insight routes explain a running worker to an AI agent: the
+concepts of the framework, the meaning of config keys, metrics and events,
+recipes for common questions, the live state and rule-based findings. They
+are read-only. The UI does not call them. A client MUST degrade when a
+route is missing: a backend older than v1.31 answers 404 on all six.
+
+### Switch, token and common rules
+
+All six routes are `GET` under `/api/v1/agent`. They are served by the API
+server and need `api.enabled` only: they exist with `ui.enabled: false`,
+like `/healthz`.
+
+Every route checks, in this order:
+
+| Step | Case | Answer |
+|---|---|---|
+| 1 | `agent.enabled` is false (the default) | 404 `{"error": "the agent surface is off; set agent.enabled to true"}` |
+| 2 | `agent.auth_token` is not empty and the request has no `Authorization: Bearer <token>` header, or the token is wrong (compared in constant time) | 401 `{"error": "agent token required"}` |
+| 3 | a parameter is not understood | 400 `{"error": "<message>"}`, the messages below |
+
+The agent token is its own: `ui.auth_token` and `?token=` do not apply to
+these routes. Answers are `application/json` with `Cache-Control: no-store`
+(the Markdown form of the manual is the one exception, see below). Errors
+use the legacy `{"error": "..."}` envelope.
+
+Common parameters:
+
+- **`parts`**: a comma list; each route names its parts. Absent: all parts.
+  An unknown or empty item (`parts=`, `parts=a,`) answers 400
+  `{"error": "unknown part '<p>'; known: <sorted parts joined with ", ">"}`,
+  for the first such item. Repeats are allowed. `parts` is not used by
+  `/agent/metrics` and `/agent/diagnose`.
+- **`detail`**: `brief` (default) or `full`; another value answers 400
+  `{"error": "detail must be brief or full"}`. `brief` gives `key` and
+  `summary` of an entry (and the live values); `full` gives every field.
+
+### `GET /api/v1/agent`: the index
+
+```
+{
+  "schema": 1,
+  "framework": {"backend": "python"|"go", "version": str,
+                "registry_version": str},       // 16 hex characters
+  "worker": {"name": str, "cluster": str|null, "instance": str},
+  "capabilities": Capabilities,                 // as /api/v1/identity (v1.28)
+  "include_payloads": bool,                     // agent.include_payloads
+  "app_notes": bool,                            // the handler gave notes
+  "routes": [ {"path": str, "parts": [str], "approx_tokens": {part: int},
+               "use": str} ],
+  "start_here": str
+}
+```
+
+- `registry_version` is the first 16 hex characters of the SHA-256 of the
+  canonical bytes of the knowledge registry. A cache of manual answers is
+  valid while it is unchanged.
+- `cluster` is `null` when the worker has no cluster name.
+- `routes` has one row for each of `/api/v1/agent/manual`,
+  `/api/v1/agent/config`, `/api/v1/agent/metrics`, `/api/v1/agent/state`
+  and `/api/v1/agent/diagnose`, in this order. `parts` lists the parts the
+  route accepts (empty for a route with no `parts`).
+- `approx_tokens` is `ceil(bytes / 4)` where `bytes` is the UTF-8 size of
+  the `detail=brief` JSON answer of that part. For the manual it is
+  computed once at start; for a live part it is estimated from the last
+  answer (0 before the first).
+- `start_here` is one sentence that names the first concepts to read and
+  the next route to call.
+
+### `GET /api/v1/agent/manual`
+
+Parts: `concepts`, `config`, `metrics`, `events`, `recipes`, `routes`,
+`rules`, `app` (the notes of the handler; an empty list when it gave none).
+
+Extra parameters:
+
+| Parameter | Rule | Error |
+|---|---|---|
+| `topic` | a reference `<kind>:<key>` (kinds `concept`, `config`, `metric`, `event`, `recipe`, `route`, `rule`; a handler entry is `app:<kind>:<key>`). Answers that entry and the entries it references, one level deep. | 404 `{"error": "no such topic '<ref>'"}` |
+| `format` | `json` (default) or `markdown` | 400 `{"error": "format must be json or markdown"}` |
+
+JSON answer: `{"parts": {"<part>": [entry, ...]}}`, entries in registry
+file order; with `topic`, the same shape with the entries found. An entry
+of `detail=brief` is `{"key", "summary"}`; of `detail=full` it has every
+field of its kind:
+
+| Part | Fields of a full entry (after `key` and `summary`) |
+|---|---|
+| `concepts` | `body` (Markdown), `principles` (list of text), `related` (list of references) |
+| `config` | `advice`, `related` |
+| `metrics` | `meaning`, `healthy`, `promql` (list of `{title, query}`; `{{worker}}` and `{{cluster}}` filled from `ui.prometheus.worker_label` and `cluster_label`), `related` |
+| `events` | `when`, `fields` (map field to meaning), `action`, `related` |
+| `recipes` | `question`, `steps` (list of `{do, why}`), `causes` (list of `{cause, check, fix}`), `related` |
+| `routes` | `use`, `cost` (`cheap`, `moderate`, `heavy`), `related` |
+| `rules` | `severity` (`info`, `warning`, `critical`), `title`, `explain` (a reference), `suggestion`, `inputs` (list of state paths and metric names) |
+| `app` | the handler's entries as it gave them, each `key` prefixed `app:` |
+
+An optional field with no value is absent. Markdown answer
+(`Content-Type: text/markdown; charset=utf-8`): one `#` heading per part and
+one `##` heading per entry, in the same order; the rendering is pinned by
+the worked example of `tests/fixtures/agent_contract.json`.
+
+### `GET /api/v1/agent/config`
+
+Parts: the root sections (`worker`, `cluster`, `connections`, `sources`,
+`executor`, `threads`, `sinks`, `dlq`, `storage`, `recorder`, `cache`,
+`autodiscover`, `metrics`, `logging`, `runtime_health`, `api`, `ui`,
+`agent`, `app`).
+
+```
+{"entries": [ {"path": str, "value": str, "default": str,
+               "origin": "default"|"yaml"|"env"|"on_startup",
+               "type": str, "secret": bool, "meaning": str,
+               "advice": str} ]}                // advice: detail=full only
+```
+
+- Sorted by `path`. `value` and `default` are in the canonical text of
+  `config-metadata.json` (units as text, such as `30s`).
+- A secret value is `"***"` when set and `""` when empty. This covers every
+  secret flag of the config metadata, and `agent.auth_token`.
+- `origin`: `default` (not given), `yaml` (given in the file), `env` (given
+  by a `DK_` variable; env wins over yaml), `on_startup` (changed by the
+  handler's `on_startup`).
+- `meaning` is the description of the key in the config metadata; `advice`
+  comes from the registry and is absent when the registry has none.
+- The `app` section is open: its keys are listed with their origin. A key
+  whose name contains `password`, `secret`, `token`, `key` or `dsn` (any
+  letter case) has its value masked like a secret. `meaning` is the
+  description from the handler's notes, else `""`.
+
+### `GET /api/v1/agent/metrics`
+
+Parameters: `names` (comma list of metric names), `prefix` (a name
+prefix). The two combine: a metric must match one of `names` or the
+`prefix` (when both are absent, every metric). `parts` is not used.
+
+```
+{"metrics": [ {"name": str, "type": str, "help": str,
+               "meaning": str|null, "healthy": str|null,
+               "promql": [{"title": str, "query": str}],   // full only
+               "related": [str],                           // full only
+               "samples": [ {"labels": {str: str}, "value": number}
+                          | {"labels": {str: str}, "count": number,
+                             "sum": number, "buckets": [[le, number]]} ],
+               "samples_total": int} ],
+ "unknown": [str]}
+```
+
+- Framework metrics and the handler's metrics. A handler metric carries
+  the handler's notes when given, else `meaning` and `healthy` are `null`.
+- At most 100 samples per family: the first 100 in label order.
+  `samples_total` is the full count. A histogram sample is `count`, `sum`
+  and `buckets`, a list of `[upper bound, cumulative count]` pairs.
+- `unknown` lists the asked `names` that no metric has, in the asked order.
+- `promql` and `related` are present only with `detail=full`, with the
+  `{{worker}}` and `{{cluster}}` placeholders filled.
+
+### `GET /api/v1/agent/state`
+
+Parts: `health`, `budget`, `partitions`, `sinks`, `recorder`,
+`autodiscover`, `recent_failures`. One snapshot, read from the existing
+readers; nothing new is measured.
+
+```
+"health": {"state": str, "heartbeat_age_ms": number|null,
+           "current_lag_ms": number|null, "window_peak_lag_ms": number|null,
+           "stalls_total": int, "open_episode": str|null,
+           "uptime_seconds": number}
+"budget": {"tasks": int, "max_tasks": int, "bytes": int, "max_bytes": int,
+           "waiting_loops": int, "backpressure_active": bool,
+           "pool_active": int, "pool_max": int, "pool_waiting": int}
+"partitions": [ {"partition": int, "queued": int, "pending_offsets": int,
+                 "committed": int|null, "lag": int|null, "paused": bool,
+                 "paused_by": [str], "dead": bool} ]
+"sinks": [ {"type": str, "name": str, "breaker_open": bool,
+            "delivered_total": int, "failed_total": int,
+            "last_delivery_seconds": number|null} ]
+"recorder": the `recorder` block of /api/v1/debug/databases (v1.30)
+"autodiscover": {"enabled": bool, "provider": str|null,
+                 "peers_online": int|null, "peers_offline": int|null,
+                 "cluster_tasks_match": bool|null}
+"recent_failures": {"failures": [ {"task_id": str, "ts": number,
+                                   "partition": int|null,
+                                   "offset": int|null,
+                                   "exit_code": int|null,
+                                   "duration": number|null,
+                                   "error_kind": str|null,
+                                   "stderr_tail": str,    // payloads only
+                                   "args": [str]} ],       // payloads only
+                    "note": str}                          // see below
+```
+
+- `open_episode` is the verdict of the open lag episode, `null` when none.
+- `paused_by` is a sorted list of `backpressure`, `debug` and `death`.
+  `lag` is `null` when unknown. `partitions` is empty without a Kafka
+  source.
+- The `autodiscover` fields other than `enabled` are `null` with
+  autodiscover off.
+- `recent_failures` holds the last 20 `task_failed` events from the
+  recorder memory store (or the live file). With the memory
+  store absent the list is empty and `note` is
+  `"no recorder store on this worker"`; `note` is absent otherwise.
+- `stderr_tail` (the last 2048 bytes of stderr, cut at a UTF-8 boundary)
+  and `args` are present only when `agent.include_payloads` is true. They
+  are the only payload text any agent route can send.
+
+### `GET /api/v1/agent/diagnose`
+
+Runs every diagnose rule on one state snapshot plus the metric values.
+
+```
+{"findings": [ {"rule": str, "severity": "critical"|"warning"|"info",
+                "title": str, "evidence": object, "explain": str,
+                "suggestion": str} ],
+ "checked": [str],
+ "failed": [ {"rule": str, "error": str} ]}
+```
+
+- `findings` are sorted by severity (`critical`, `warning`, `info`), then
+  by `rule`. `explain` is a reference into the manual.
+- `checked` lists every rule that ran, in the order of the registry
+  (framework rules first, then the handler's).
+- A rule that raises is listed in `failed` with its error text and does not
+  stop the others. A handler rule runs off the event loop with a limit of
+  1 second; a rule that exceeds it is listed in `failed` with
+  `timed out after 1 s`.
+- The rules `lag-growing`, `recorder-dropping` and `dlq-writing` compare
+  with the previous call of this route on the same worker process (a
+  baseline kept in memory and updated after each call). The first call
+  never reports them. `lag-growing` also needs the previous call to be at
+  least 60 seconds old.
+
+### Status codes
+
+| Route | Codes |
+|---|---|
+| all six | 200, 404 (switch off), 401 (token) |
+| index, state, config | 400 (`parts`, `detail`) |
+| manual | 400 (`parts`, `detail`, `format`), 404 `no such topic '<ref>'` |
+| metrics | 400 (`detail`) |
+| diagnose | 400 (`detail`) |
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 

@@ -1210,3 +1210,162 @@ export interface DebugReport {
   user_details?: ProbeUserDetails | null
   truncated: boolean
 }
+
+// Agent insight routes (v1.31, GET /api/v1/agent/*). Read-only, off unless
+// the worker sets agent.enabled. No page calls them; the types describe the
+// answers for tools and tests.
+export type AgentDetail = 'brief' | 'full'
+export type AgentSeverity = 'critical' | 'warning' | 'info'
+
+export interface AgentIndexRoute {
+  path: string
+  parts: string[]
+  approx_tokens: Record<string, number>
+  use: string
+}
+
+export interface AgentIndex {
+  schema: 1
+  framework: { backend: 'python' | 'go'; version: string; registry_version: string }
+  worker: { name: string; cluster: string | null; instance: string }
+  capabilities: Capabilities
+  include_payloads: boolean
+  app_notes: boolean
+  routes: AgentIndexRoute[]
+  start_here: string
+}
+
+/** A registry entry: key and summary always, the rest by kind in detail=full. */
+export interface AgentEntry {
+  key: string
+  summary: string
+  [field: string]: unknown
+}
+
+export interface AgentManual {
+  parts: Record<string, AgentEntry[]>
+}
+
+export interface AgentConfigEntry {
+  path: string
+  value: string
+  default: string
+  origin: 'default' | 'yaml' | 'env' | 'on_startup'
+  type: string
+  secret: boolean
+  meaning: string
+  advice?: string
+}
+
+export interface AgentConfig {
+  entries: AgentConfigEntry[]
+}
+
+export interface AgentMetricSample {
+  labels: Record<string, string>
+  value?: number
+  count?: number
+  sum?: number
+  buckets?: [number, number][]
+}
+
+export interface AgentMetric {
+  name: string
+  type: string
+  help: string
+  meaning: string | null
+  healthy: string | null
+  promql?: { title: string; query: string }[]
+  related?: string[]
+  samples: AgentMetricSample[]
+  samples_total: number
+}
+
+export interface AgentMetrics {
+  metrics: AgentMetric[]
+  unknown: string[]
+}
+
+export interface AgentPartitionState {
+  partition: number
+  queued: number
+  pending_offsets: number
+  committed: number | null
+  lag: number | null
+  paused: boolean
+  paused_by: ('backpressure' | 'debug' | 'death')[]
+  dead: boolean
+}
+
+export interface AgentSinkState {
+  type: string
+  name: string
+  breaker_open: boolean
+  delivered_total: number
+  failed_total: number
+  last_delivery_seconds: number | null
+}
+
+export interface AgentFailure {
+  task_id: string
+  ts: number
+  partition: number | null
+  offset: number | null
+  exit_code: number | null
+  duration: number | null
+  error_kind: string | null
+  /** Only with agent.include_payloads. */
+  stderr_tail?: string
+  /** Only with agent.include_payloads. */
+  args?: string[]
+}
+
+export interface AgentState {
+  health?: {
+    state: string
+    heartbeat_age_ms: number | null
+    current_lag_ms: number | null
+    window_peak_lag_ms: number | null
+    stalls_total: number
+    open_episode: string | null
+    uptime_seconds: number
+  }
+  budget?: {
+    tasks: number
+    max_tasks: number
+    bytes: number
+    max_bytes: number
+    waiting_loops: number
+    backpressure_active: boolean
+    pool_active: number
+    pool_max: number
+    pool_waiting: number
+  }
+  partitions?: AgentPartitionState[]
+  sinks?: AgentSinkState[]
+  /** The `recorder` block of /api/v1/debug/databases. */
+  recorder?: Record<string, unknown>
+  autodiscover?: {
+    enabled: boolean
+    provider: string | null
+    peers_online: number | null
+    peers_offline: number | null
+    cluster_tasks_match: boolean | null
+  }
+  recent_failures?: { failures: AgentFailure[]; note?: string }
+}
+
+export interface AgentFinding {
+  rule: string
+  severity: AgentSeverity
+  title: string
+  evidence: Record<string, unknown>
+  explain: string
+  suggestion: string
+}
+
+export interface AgentDiagnose {
+  findings: AgentFinding[]
+  checked: string[]
+  failed: { rule: string; error: string }[]
+}
