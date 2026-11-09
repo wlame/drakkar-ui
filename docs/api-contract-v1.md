@@ -2877,7 +2877,7 @@ field of its kind:
 | `recipes` | `question`, `steps` (list of `{do, why}`), `causes` (list of `{cause, check, fix}`), `related` |
 | `routes` | `use`, `cost` (`cheap`, `moderate`, `heavy`), `related` |
 | `rules` | `severity` (`info`, `warning`, `critical`), `title`, `explain` (a reference), `suggestion`, `inputs` (list of state paths and metric names) |
-| `app` | the handler's entries as it gave them, each `key` prefixed `app:` |
+| `app` | the handler's notes, as manual entries with keys `app:<kind>:<key>`; see [Handler notes](#handler-notes-the-manual-part-app) |
 
 An optional field with no value is absent. Markdown answer
 (`Content-Type: text/markdown; charset=utf-8`): one `#` heading per part and
@@ -3042,7 +3042,13 @@ Runs every diagnose rule on one state snapshot plus the metric values.
 - A rule that raises is listed in `failed` with its error text (free text,
   not part of the contract) and does not stop the others. A handler rule runs off the event loop with a limit of
   1 second; a rule that exceeds it is listed in `failed` with
-  `timed out after 1 s`.
+  `timed out after 1 s`. Two calls at the same time share a run of a
+  handler rule that is still within its limit; a run past its limit is
+  abandoned, and while it still runs every call lists that rule in `failed`
+  with `timed out after 1 s` at once. A handler finding's `explain` is the
+  rule's `explain`, else `app:rule:<key>`. Handler evidence larger than 4096
+  bytes of compact JSON fails the rule with
+  `the evidence is larger than 4096 bytes`.
 - A rule reads only the parts and fields it needs. A part that is `null`,
   or a row without one of the fields a rule reads, gives no finding for
   that part or row; it does not fail the rule. `lag-growing` sums only the
@@ -3056,6 +3062,41 @@ Runs every diagnose rule on one state snapshot plus the metric values.
   it and then replaces it, and a call within 60 seconds compares nothing and
   keeps it. `recorder-dropping` and `dlq-writing`: any later call compares
   with the baseline and replaces it, with no minimum age.
+
+### Handler notes (the manual part `app`)
+
+A handler may give notes (concepts, recipes, notes for its own metrics,
+meanings of `app` config keys, and diagnose rules). The worker checks them
+once at startup and serves the notes that pass as entries of the manual part
+`app`, in this kind order: `concept`, `metric`, `recipe`, `rule`; within a
+kind, in the order the handler gave them. Entry fields follow the field order
+of the other parts; an optional field with no value is absent.
+
+| Kind | Key | Fields after `key` |
+|---|---|---|
+| concept | `app:concept:<key>` | `summary`, `body`?, `related`? |
+| metric | `app:metric:<exposed name>` (a counter with `_total`) | `summary` (the metric's help text: its first line, cut to 200 characters with `...` as the last three; the meaning when the help text is empty), `meaning`, `healthy`?, `promql`? |
+| recipe | `app:recipe:<key>` | `summary`, `question`, `steps`, `causes`?, `related`? |
+| rule | `app:rule:<key>` | `summary` (the rule's summary, else its title), `severity`, `title`, `explain`? (only when the handler gave one), `suggestion`; no `inputs` |
+
+A reference in `related` or `explain` names a framework entry, a config
+metadata path, or another kept note (`app:<kind>:<key>`). A note is dropped
+when its key is used twice in its kind, when its metric is not one the
+handler declares, or when one of its references names nothing (also a note
+that names a dropped note). The worker logs one `agent_notes_invalid`
+warning with `reasons`, one text per problem, in this form:
+
+| Problem | Reason text |
+|---|---|
+| key used twice | `<kind> '<key>': the key is used twice` |
+| metric not declared | `metric '<name>': the handler declares no such metric` (the name as the handler wrote it) |
+| reference names nothing | `<kind> '<key>': the reference '<ref>' names nothing` |
+
+`<key>` of a metric note is its exposed name. `/api/v1/agent/config` gives
+the `meaning` of an `app` key from the notes (`''` without one), and
+`/api/v1/agent/metrics` gives `meaning`, `healthy` and, with `detail=full`,
+`promql` of a handler metric. `tests/fixtures/agent_contract.json`
+(`notes_cases`) pins worked cases.
 
 ### Status codes
 
