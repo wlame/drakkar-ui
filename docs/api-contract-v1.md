@@ -34,7 +34,11 @@ the appendix.
   token"}`. `/healthz` + `/readyz` are always public. `/ws` self-manages
   (accept, then close `4401` unauthorized / `4403` forbidden-origin).
   Routes under `/api/v1/peer/` are always public too: workers call them on
-  each other for the cache exchange and send no token (v1.23).
+  each other for the cache exchange and send no token (v1.23). The six
+  `/api/v1/agent` routes (v1.31) are an exception the other way: they follow
+  `agent.auth_token`, not `ui.auth_token`, and answer 401
+  `{"error": "agent token required"}`; they are served with `ui.enabled:
+  false` too.
 - **`/ws` Origin:** checked on every handshake, with or without a token. An
   absent `Origin` (non-browser clients) and a same-origin one always pass;
   a non-empty `ui.allowed_origins` is a strict allowlist. With a token
@@ -58,7 +62,9 @@ the appendix.
   blocks the answer), and auth applies as usual. No other path sends CORS
   headers. With a token set, every worker origin must be listed in
   `ui.allowed_origins` for the fan-out to work.
-- **Content-Type:** `application/json` (no charset suffix).
+- **Content-Type:** `application/json` (no charset suffix), except the
+  Markdown form of `/api/v1/agent/manual` (v1.31), which is
+  `text/markdown; charset=utf-8`.
 - **Error envelopes:** `{"detail":"..."}` for 401/404/500/503;
   `{"detail":[{"loc":[...],"msg":"..."}]}` for 422; legacy `{"error":"..."}`
   for merge/download 400/404, merge 500, `download-live` 400/404/500 (and 429 since v1.30),
@@ -2790,23 +2796,25 @@ Every route checks, in this order:
 |---|---|---|
 | 1 | `agent.enabled` is false (the default) | 404 `{"error": "the agent surface is off; set agent.enabled to true"}` |
 | 2 | `agent.auth_token` is not empty and the request has no `Authorization: Bearer <token>` header, or the token is wrong (compared in constant time) | 401 `{"error": "agent token required"}` |
-| 3 | a parameter is not understood | 400 `{"error": "<message>"}`, the messages below |
+| 3 | a parameter is not understood | 400 `{"error": "<message>"}`, the messages below. The checks run in this order and the first failure answers: `parts`, `detail`, `format`, `topic`, then `names` and `prefix`. |
 
 The agent token is its own: `ui.auth_token` and `?token=` do not apply to
-these routes. Answers are `application/json` with `Cache-Control: no-store`
-(the Markdown form of the manual is the one exception, see below). Errors
-use the legacy `{"error": "..."}` envelope.
+these routes. Every answer carries `Cache-Control: no-store`. Answers are
+`application/json`; the Markdown form of the manual is
+`text/markdown; charset=utf-8` and also carries `no-store`. Errors use the
+legacy `{"error": "..."}` envelope. A query parameter that a route does not
+list is ignored, on every route.
 
-Common parameters:
+Parameters, by route:
 
-- **`parts`**: a comma list; each route names its parts. Absent: all parts.
-  An unknown or empty item (`parts=`, `parts=a,`) answers 400
-  `{"error": "unknown part '<p>'; known: <sorted parts joined with ", ">"}`,
-  for the first such item. Repeats are allowed. `parts` is not used by
-  `/agent/metrics` and `/agent/diagnose`.
-- **`detail`**: `brief` (default) or `full`; another value answers 400
-  `{"error": "detail must be brief or full"}`. `brief` gives `key` and
-  `summary` of an entry (and the live values); `full` gives every field.
+| Parameter | Routes | Rule |
+|---|---|---|
+| `parts` | manual, config, state | a comma list of the parts the route names; absent: all parts. An unknown or empty item (`parts=`, `parts=a,`) answers 400 `{"error": "unknown part '<p>'; known: <sorted parts joined with ", ">"}`, for the first such item. Repeats are allowed. |
+| `detail` | manual, config, metrics, state, diagnose | `brief` (default) or `full`; another value answers 400 `{"error": "detail must be brief or full"}`. Effect: manual, `brief` gives `key` and `summary`, `full` every field; config, `advice` only in `full`; metrics, `promql` and `related` only in `full`; state and diagnose, none (the value is still validated). |
+| `format`, `topic` | manual | see the manual |
+| `names`, `prefix` | metrics | see the metrics route |
+
+The index takes no parameters.
 
 ### `GET /api/v1/agent`: the index
 
@@ -2834,7 +2842,8 @@ Common parameters:
   and `/api/v1/agent/diagnose`, in this order. `parts` lists the parts the
   route accepts (empty for a route with no `parts`).
 - `approx_tokens` is `ceil(bytes / 4)` where `bytes` is the UTF-8 size of
-  the `detail=brief` JSON answer of that part. For the manual it is
+  the `detail=brief` JSON answer of that part. A route with no parts
+  (metrics, diagnose) has `{"all": n}` for its whole answer. For the manual it is
   computed once at start; for a live part it is estimated from the last
   answer (0 before the first).
 - `start_here` is one sentence that names the first concepts to read and
@@ -2849,7 +2858,7 @@ Extra parameters:
 
 | Parameter | Rule | Error |
 |---|---|---|
-| `topic` | a reference `<kind>:<key>` (kinds `concept`, `config`, `metric`, `event`, `recipe`, `route`, `rule`; a handler entry is `app:<kind>:<key>`). Answers that entry and the entries it references, one level deep. | 404 `{"error": "no such topic '<ref>'"}` |
+| `topic` | a reference `<kind>:<key>` (kinds `concept`, `config`, `metric`, `event`, `recipe`, `route`, `rule`; a handler entry is `app:<kind>:<key>`). It overrides `parts`. The answer has the topic entry in `full` detail and the entries it references, one level deep, in `brief`, each under the part of its kind (`concept` under `concepts`, `config` under `config`, `metric` under `metrics`, `event` under `events`, `recipe` under `recipes`, `route` under `routes`, `rule` under `rules`, `app:` entries under `app`). `detail` is not applied to a topic answer. | 404 `{"error": "no such topic '<ref>'"}`, also for a malformed reference (no colon, unknown kind) |
 | `format` | `json` (default) or `markdown` | 400 `{"error": "format must be json or markdown"}` |
 
 JSON answer: `{"parts": {"<part>": [entry, ...]}}`, entries in registry
@@ -2887,18 +2896,20 @@ Parts: the root sections (`worker`, `cluster`, `connections`, `sources`,
                "advice": str} ]}                // advice: detail=full only
 ```
 
-- Sorted by `path`. `value` and `default` are in the canonical text of
+- One entry per configured instance: the real map names, never `*`
+  (`sinks.kafka.results.topic`). Sorted by `path` in byte order. `value` and `default` are in the canonical text of
   `config-metadata.json` (units as text, such as `30s`).
 - A secret value is `"***"` when set and `""` when empty. This covers every
   secret flag of the config metadata, and `agent.auth_token`.
 - `origin`: `default` (not given), `yaml` (given in the file), `env` (given
-  by a `DK_` variable; env wins over yaml), `on_startup` (changed by the
-  handler's `on_startup`).
+  by a `DK_` variable), `on_startup` (value changed by the handler's
+  `on_startup`). Precedence: `on_startup` over `env` over `yaml` over
+  `default`.
 - `meaning` is the description of the key in the config metadata; `advice`
   comes from the registry and is absent when the registry has none.
 - The `app` section is open: its keys are listed with their origin. A key
   whose name contains `password`, `secret`, `token`, `key` or `dsn` (any
-  letter case) has its value masked like a secret. `meaning` is the
+  letter case) has its value masked like a secret and `secret: true`. `meaning` is the
   description from the handler's notes, else `""`.
 
 ### `GET /api/v1/agent/metrics`
@@ -2921,9 +2932,15 @@ prefix). The two combine: a metric must match one of `names` or the
 
 - Framework metrics and the handler's metrics. A handler metric carries
   the handler's notes when given, else `meaning` and `healthy` are `null`.
-- At most 100 samples per family: the first 100 in label order.
-  `samples_total` is the full count. A histogram sample is `count`, `sum`
-  and `buckets`, a list of `[upper bound, cumulative count]` pairs.
+- At most 100 samples per family. Label names are sorted, and samples are
+  sorted by their label values in that name order (byte order); the first
+  100 are sent. `samples_total` is the full count. `_created` series are
+  never samples. A counter is reported under its family name with the
+  `_total` suffix as exposed. A family with no samples is listed with
+  `samples: []`. A histogram has one sample per label set: `count`, `sum`
+  and `buckets`, a list of `{"le": "<upper bound>", "count": <cumulative
+  integer>}` objects in bound order, `le` a string in the Prometheus text
+  form (`"0.005"`, `"1"`, `"+Inf"`).
 - `unknown` lists the asked `names` that no metric has, in the asked order.
 - `promql` and `related` are present only with `detail=full`, with the
   `{{worker}}` and `{{cluster}}` placeholders filled.
@@ -2963,19 +2980,26 @@ readers; nothing new is measured.
                     "note": str}                          // see below
 ```
 
+- `health.state` takes the values of the runtime health monitor (`state` of
+  `/api/v1/runtime/health`), and `"off"` when `runtime_health.enabled` is
+  false.
 - `open_episode` is the verdict of the open lag episode, `null` when none.
 - `paused_by` is a sorted list of `backpressure`, `debug` and `death`.
   `lag` is `null` when unknown. `partitions` is empty without a Kafka
   source.
 - The `autodiscover` fields other than `enabled` are `null` with
   autodiscover off.
-- `recent_failures` holds the last 20 `task_failed` events from the
-  recorder memory store (or the live file). With the memory
-  store absent the list is empty and `note` is
-  `"no recorder store on this worker"`; `note` is absent otherwise.
+- `recent_failures` holds the last 20 `task_failed` events, newest first
+  (`ts` descending, then event id descending), read from the recorder
+  memory store only. `ts` is epoch seconds (float, as stored); `duration`
+  is seconds (float) or `null`. With no memory store, `failures` is empty
+  and `note` is `"no recorder store on this worker"`; `note` is absent
+  otherwise.
 - `stderr_tail` (the last 2048 bytes of stderr, cut at a UTF-8 boundary)
   and `args` are present only when `agent.include_payloads` is true. They
-  are the only payload text any agent route can send.
+  are the only payload text any agent route can send: the snapshot that
+  diagnose rules read holds them only with the switch on, and evidence
+  never carries payload text.
 
 ### `GET /api/v1/agent/diagnose`
 
@@ -2991,27 +3015,31 @@ Runs every diagnose rule on one state snapshot plus the metric values.
 
 - `findings` are sorted by severity (`critical`, `warning`, `info`), then
   by `rule`. `explain` is a reference into the manual.
-- `checked` lists every rule that ran, in the order of the registry
-  (framework rules first, then the handler's).
-- A rule that raises is listed in `failed` with its error text and does not
-  stop the others. A handler rule runs off the event loop with a limit of
+- `checked` lists every rule that ran, failed ones included, in the order
+  of the registry (framework rules first, then the handler's). A handler
+  rule is named `app:<key>`.
+- A rule that raises is listed in `failed` with its error text (free text,
+  not part of the contract) and does not stop the others. A handler rule runs off the event loop with a limit of
   1 second; a rule that exceeds it is listed in `failed` with
   `timed out after 1 s`.
 - The rules `lag-growing`, `recorder-dropping` and `dlq-writing` compare
-  with the previous call of this route on the same worker process (a
-  baseline kept in memory and updated after each call). The first call
-  never reports them. `lag-growing` also needs the previous call to be at
-  least 60 seconds old.
+  with a baseline kept in memory on the worker process, each with its own.
+  Calls are serialized on the baselines; the first call ever only sets
+  them. `lag-growing`: the baseline (sum of lags and its time) is kept
+  until a call comes at least 60 seconds after it; that call compares with
+  it and then replaces it, and a call within 60 seconds compares nothing and
+  keeps it. `recorder-dropping` and `dlq-writing`: any later call compares
+  with the baseline and replaces it, with no minimum age.
 
 ### Status codes
 
 | Route | Codes |
 |---|---|
 | all six | 200, 404 (switch off), 401 (token) |
-| index, state, config | 400 (`parts`, `detail`) |
+| index | none besides the common three |
+| config, state | 400 (`parts`, `detail`) |
 | manual | 400 (`parts`, `detail`, `format`), 404 `no such topic '<ref>'` |
-| metrics | 400 (`detail`) |
-| diagnose | 400 (`detail`) |
+| metrics, diagnose | 400 (`detail`) |
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 

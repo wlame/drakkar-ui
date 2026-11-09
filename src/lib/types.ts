@@ -1266,7 +1266,7 @@ export interface AgentMetricSample {
   value?: number
   count?: number
   sum?: number
-  buckets?: [number, number][]
+  buckets?: { le: string; count: number }[]
 }
 
 export interface AgentMetric {

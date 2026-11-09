@@ -20,7 +20,9 @@ info:
     ui.auth_token and send `Authorization: Bearer <t>` or `?token=<t>`;
     with no token configured, auth is disabled (private-contour default).
     Routes under /api/v1/peer/ are always public (worker-to-worker cache
-    exchange).
+    exchange). The six /api/v1/agent routes (v1.31) are the exception: they
+    follow agent.auth_token (bearer header only), not ui.auth_token, and are
+    served with ui.enabled false too.
 
 
     Not modeled by OpenAPI but part of the contract: GET /api/v1/debug/trace,
@@ -1647,14 +1649,20 @@ paths:
         - name: detail
           in: query
           required: false
-          description: brief (default) gives key and summary; full gives every field.
+          description: >-
+            brief (default) or full; another value answers 400. Manual: brief
+            gives key and summary, full every field. Config: advice only in
+            full. Metrics: promql and related only in full. State and
+            diagnose: no effect, the value is still validated.
           schema: {type: string, enum: [brief, full], default: brief}
         - name: topic
           in: query
           required: false
           description: >-
-            A reference kind:key (handler entries app:kind:key). Answers that
-            entry and the entries it references, one level deep.
+            A reference kind:key (handler entries app:kind:key). Overrides
+            parts. Answers the entry in full detail and the entries it
+            references, one level deep, in brief, each under the part of its
+            kind. Unknown or malformed: 404.
           schema: {type: string}
         - name: format
           in: query
@@ -1669,6 +1677,10 @@ paths:
               schema: {$ref: '#/components/schemas/AgentManual'}
             text/markdown:
               schema: {type: string}
+          headers:
+            Cache-Control:
+              description: no-store, on every agent answer.
+              schema: {type: string, const: no-store}
         '400':
           description: >-
             A parameter is not understood; the message is in the error key.
@@ -1682,7 +1694,8 @@ paths:
               schema: {$ref: '#/components/schemas/ErrorEnvelope'}
         '404':
           description: >-
-            '{"error": "the agent surface is off; set agent.enabled to true"}' No such topic: '{"error": "no such topic '<ref>'"}'.
+            '{"error": "the agent surface is off; set agent.enabled to true"}'.
+            For the manual, also '{"error": "no such topic '<ref>'"}'.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ErrorEnvelope'}
@@ -1709,7 +1722,11 @@ paths:
         - name: detail
           in: query
           required: false
-          description: brief (default) gives key and summary; full gives every field.
+          description: >-
+            brief (default) or full; another value answers 400. Manual: brief
+            gives key and summary, full every field. Config: advice only in
+            full. Metrics: promql and related only in full. State and
+            diagnose: no effect, the value is still validated.
           schema: {type: string, enum: [brief, full], default: brief}
       responses:
         '200':
@@ -1760,7 +1777,11 @@ paths:
         - name: detail
           in: query
           required: false
-          description: brief (default) gives key and summary; full gives every field.
+          description: >-
+            brief (default) or full; another value answers 400. Manual: brief
+            gives key and summary, full every field. Config: advice only in
+            full. Metrics: promql and related only in full. State and
+            diagnose: no effect, the value is still validated.
           schema: {type: string, enum: [brief, full], default: brief}
       responses:
         '200':
@@ -1808,7 +1829,11 @@ paths:
         - name: detail
           in: query
           required: false
-          description: brief (default) gives key and summary; full gives every field.
+          description: >-
+            brief (default) or full; another value answers 400. Manual: brief
+            gives key and summary, full every field. Config: advice only in
+            full. Metrics: promql and related only in full. State and
+            diagnose: no effect, the value is still validated.
           schema: {type: string, enum: [brief, full], default: brief}
       responses:
         '200':
@@ -1849,7 +1874,11 @@ paths:
         - name: detail
           in: query
           required: false
-          description: brief (default) gives key and summary; full gives every field.
+          description: >-
+            brief (default) or full; another value answers 400. Manual: brief
+            gives key and summary, full every field. Config: advice only in
+            full. Metrics: promql and related only in full. State and
+            diagnose: no effect, the value is still validated.
           schema: {type: string, enum: [brief, full], default: brief}
       responses:
         '200':
@@ -3785,9 +3814,11 @@ components:
         buckets:
           type: array
           items:
-            type: array
-            prefixItems: [{type: number}, {type: number}]
-            description: '[upper bound, cumulative count]'
+            type: object
+            properties:
+              le: {type: string, description: 'Upper bound in Prometheus text form, such as "0.005" or "+Inf".'}
+              count: {type: integer, description: Cumulative count.}
+            required: [le, count]
       required: [labels]
 
     AgentMetric:
