@@ -3154,7 +3154,10 @@ messages are in one mode. **Stream mode** is the mode of a stream handler.
 `hook_flags` gains `group_complete` (boolean): true when the handler
 overrides `on_group_complete`. **A missing key means false.** A backend
 older than v1.32 does not send it. The UI shows a "Group Results" tab on
-the Live page when it is true, like the Message and Window tabs.
+the Live page when it is true, like the Message and Window tabs. The tab
+reads its rows from the existing sources: `GET
+/api/v1/events?event_types=group_complete` and the `/ws` event stream. There
+is no new route.
 
 ### Recorder events
 
@@ -3163,11 +3166,12 @@ the Live page when it is true, like the Message and Window tabs.
 In stream mode a backend writes one `arranged` row for each yielded group,
 not one for each window:
 
-- `message_count` is 1, and `metadata.offsets` holds the one offset of the
-  message.
-- `task_count` and `task_ids` are those of the group.
-- `duration` is the time inside the pull: the handler's preparation of that
-  group, without the time the stream waited for room in the pending budget.
+- `metadata.message_count` is 1, and `metadata.offsets` holds the one
+  offset of the message.
+- `metadata.task_count` and `metadata.task_ids` are those of the group.
+- The `duration` column is the time inside the pull: the handler's
+  preparation of that group, without the time the stream waited for room in
+  the pending budget.
 - `metadata.window_id` is the group's own id. Each group takes the next
   `window_id` of the partition's counter when its pull starts, so the
   `arranged` row and the annotations emitted while that group was prepared
@@ -3183,8 +3187,10 @@ each group.
 
 The vocabulary grows from 31 to 32 names. A backend writes one
 `group_complete` row for each group, after its `on_group_complete` call
-ends, and only when the handler overrides `on_group_complete`. A stream of groups with
-no group hook writes none.
+ends, and only when the handler overrides `on_group_complete`. A stream of
+groups with no group hook writes none. The row is also written when
+`on_group_complete` raises; its `output_message_count` is then 0, as on
+`message_complete`.
 
 | Column | Value |
 |---|---|
@@ -3197,10 +3203,14 @@ no group hook writes none.
 |---|---|---|
 | `group_index` | int | The order of the group in its message, from 0. |
 | `window_id` | int | The group's `window_id`, the same as on its `arranged` row. |
-| `task_count` | int | Tasks in the yielded list. Replacement tasks do not count. |
+| `task_count` | int | The size of the yielded list. It does not change; replacement tasks do not count. |
 | `succeeded` | int | Tasks of the group that ended in success, replacements by their own outcome. |
 | `failed` | int | Tasks of the group that ended in failure, replacements by their own outcome. |
-| `output_message_count` | int | Output messages of the `CollectResult` that the hook returned, as on `message_complete` and `window_complete`. |
+| `replaced` | int | Tasks of the group that `on_error` replaced with other tasks. |
+| `output_message_count` | int | Output messages of the `CollectResult` that the hook returned, as on `message_complete` and `window_complete`. 0 when the hook raised. |
+
+`succeeded + failed + replaced` is the number of tasks ever scheduled in the
+group.
 
 #### `message_complete` in stream mode
 
@@ -3246,7 +3256,12 @@ both are absent on a backend older than v1.32.
 - `groups`: an array with one `ProbeGroup` for each group that ran, in
   `index` order.
 - `stream_truncated` (boolean): true when the probe stopped after 5 groups
-  and the stream had more; false when the stream ended by itself.
+  and the stream had more; false when the stream ended by itself, and false
+  after a stream error.
+
+After a stream error before 5 groups, `groups` lists the groups that ran,
+`stream_truncated` is false, and the error is on the `arrange` stage
+(`arrange.error`).
 
 `ProbeGroup`:
 

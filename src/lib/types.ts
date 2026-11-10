@@ -1235,7 +1235,11 @@ export interface DebugReport {
    * 5), in index order. Absent for a list handler and on older backends.
    */
   groups?: ProbeGroup[]
-  /** Contract v1.32: true when the probe stopped after 5 groups and the stream had more. */
+  /**
+   * Contract v1.32: true when the probe stopped after 5 groups and the stream
+   * had more. False when the stream ended by itself or after a stream error
+   * (the error is then in arrange.error).
+   */
   stream_truncated?: boolean
 }
 

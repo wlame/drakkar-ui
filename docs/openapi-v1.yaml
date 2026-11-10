@@ -2470,7 +2470,8 @@ components:
               type: boolean
               description: >-
                 v1.32. True when the handler overrides on_group_complete.
-                A missing key means false.
+                A missing key means false. The Group Results rows come from
+                /api/v1/events?event_types=group_complete and /ws.
           required: [task_complete, message_complete, window_complete]
         kafka_ui_base: {type: string}
         kafka_ui_cluster: {type: string}
@@ -3419,8 +3420,9 @@ components:
           type: boolean
           description: >-
             v1.32. True when the probe stopped after 5 groups and the stream
-            had more. Present only for a handler that overrides
-            arrange_stream.
+            had more; false when the stream ended by itself or after a
+            stream error (the error is then on the arrange stage). Present
+            only for a handler that overrides arrange_stream.
       required: [input, arrange, tasks, planned_sink_payloads, cache_calls,
                  cache_summary, timing, errors, truncated]
 
