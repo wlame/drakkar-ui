@@ -28,6 +28,7 @@ export const RECORDER_EVENT_TYPES = [
   'partition_stalled',
   'message_complete',
   'window_complete',
+  'group_complete',
   'task_started',
   'task_completed',
   'task_failed',

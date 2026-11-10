@@ -1,24 +1,47 @@
 <script lang="ts">
   // Generic results tab for the Live page's on_task_complete / on_message_complete /
-  // on_window_complete feeds. Renders the per-kind table and a detail sidebar that
-  // lazily fetches the sink breakdown (POST /api/v1/live/sink-breakdown) when a row
-  // is opened. Window results have no resolvable offsets, so they show summary only.
+  // on_window_complete / on_group_complete feeds. Renders the per-kind table and a
+  // detail sidebar that lazily fetches the sink breakdown (POST
+  // /api/v1/live/sink-breakdown) when a row is opened. Window results have no
+  // resolvable offsets, so they show summary only. Group results show summary only
+  // too: the breakdown is per message, so it would count every group's outputs.
   import { api, type TaskResult, type MessageResult, type WindowResult } from '../../lib/api'
   import { link } from '../../lib/router'
   import { fmtTime, fmtTimeMs, durSec, fmtLatency } from '../../lib/format'
-  import { baseTaskId } from '../../lib/live'
+  import { baseTaskId, messageKey, type GroupResultView } from '../../lib/live'
   import KafkaIcon from '../KafkaIcon.svelte'
   import SidePanel from '../SidePanel.svelte'
 
-  type Kind = 'task' | 'message' | 'window'
+  type Kind = 'task' | 'message' | 'window' | 'group'
   let {
     kind,
     rows = [],
-  }: { kind: Kind; rows?: (TaskResult | MessageResult | WindowResult)[] } = $props()
+    groupCounts = {},
+  }: {
+    kind: Kind
+    rows?: (TaskResult | MessageResult | WindowResult | GroupResultView)[]
+    // Message rows only: the group_count of each message of a stream handler
+    // (contract v1.32), keyed by messageKey(partition, offset).
+    groupCounts?: Record<string, number>
+  } = $props()
 
   const taskRows = $derived(kind === 'task' ? (rows as TaskResult[]) : [])
   const messageRows = $derived(kind === 'message' ? (rows as MessageResult[]) : [])
   const windowRows = $derived(kind === 'window' ? (rows as WindowResult[]) : [])
+  const groupRows = $derived(kind === 'group' ? (rows as GroupResultView[]) : [])
+
+  const HOOK_NAMES: Record<Kind, string> = {
+    task: 'on_task_complete()',
+    message: 'on_message_complete()',
+    window: 'on_window_complete()',
+    group: 'on_group_complete()',
+  }
+
+  // The Groups column appears only when a shown message has a group count, so
+  // a list handler's table looks as it always did.
+  const showGroupCount = $derived(
+    messageRows.some((r) => groupCounts[messageKey(r.partition, r.offset)] !== undefined),
+  )
 
   // Sidebar state.
   let openKey = $state<string | null>(null)
@@ -48,14 +71,16 @@
 </script>
 
 {#if rows.length === 0}
-  <p class="muted">No {kind === 'task' ? 'on_task_complete()' : kind === 'message' ? 'on_message_complete()' : 'on_window_complete()'} calls yet.</p>
+  <p class="muted">No {HOOK_NAMES[kind]} calls yet.</p>
 {:else}
   <table>
     <thead>
       {#if kind === 'task'}
         <tr><th>Time</th><th>Task ID</th><th>Source</th><th class="num">Exec</th><th class="num">Hook</th><th class="num">Outputs</th><th>Status</th></tr>
       {:else if kind === 'message'}
-        <tr><th>Time</th><th>Source</th><th class="num">Hook</th><th class="num">End-to-end</th><th>Tasks</th><th class="num">Outputs</th></tr>
+        <tr><th>Time</th><th>Source</th><th class="num">Hook</th><th class="num">End-to-end</th><th>Tasks</th>{#if showGroupCount}<th class="num">Groups</th>{/if}<th class="num">Outputs</th></tr>
+      {:else if kind === 'group'}
+        <tr><th>Time</th><th>Source</th><th class="num">Group #</th><th class="num">Hook</th><th class="num">Tasks</th><th title="succeeded / failed / replaced">Outcomes</th><th class="num">Outputs</th></tr>
       {:else}
         <tr><th>Time</th><th class="num">Partition</th><th class="num">Window #</th><th class="num">Duration</th><th class="num">Tasks</th><th class="num">Outputs</th></tr>
       {/if}
@@ -86,6 +111,21 @@
             </td>
             <td class="num mono">{durSec(r.duration)}</td>
             <td class="num mono">{fmtLatency(r.end_to_end_duration)}</td>
+            <td class="mono"><span style:color="#059669">{r.succeeded}</span>/<span style:color="#dc2626">{r.failed}</span>/<span style:color="#d97706">{r.replaced}</span></td>
+            {#if showGroupCount}<td class="num mono">{groupCounts[messageKey(r.partition, r.offset)] ?? '-'}</td>{/if}
+            <td class="num mono">{r.output_message_count}</td>
+          </tr>
+        {/each}
+      {:else if kind === 'group'}
+        {#each groupRows as r, i (`${r.ts}:${r.partition}:${r.offset}:${r.group_index}:${i}`)}
+          <tr>
+            <td class="muted nowrap" title={fmtTimeMs(r.ts)}>{fmtTime(r.ts)}</td>
+            <td class="mono">
+              {#if r.partition != null && r.offset != null}P{r.partition}:{r.offset}<KafkaIcon partition={r.partition} offset={r.offset} />{/if}
+            </td>
+            <td class="num mono">{r.group_index ?? '-'}</td>
+            <td class="num mono">{durSec(r.duration)}</td>
+            <td class="num mono">{r.task_count}</td>
             <td class="mono"><span style:color="#059669">{r.succeeded}</span>/<span style:color="#dc2626">{r.failed}</span>/<span style:color="#d97706">{r.replaced}</span></td>
             <td class="num mono">{r.output_message_count}</td>
           </tr>

@@ -146,7 +146,7 @@
       </tr>
     </thead>
     <tbody>
-      {#each shown as a, i (`${a.ts}:${a.partition}`)}
+      {#each shown as a, i (`${a.ts}:${a.partition}:${a.window_id}:${i}`)}
         {@const c = counts(a)}
         <tr class="clickable" class:sel={openIdx === i} onclick={() => (openIdx = i)}>
           <td class="num mono">{a.partition}</td>
@@ -160,7 +160,7 @@
           </td>
           <td class="num mono" style:color={durationColor(a.duration)}>{dur3(a.duration)}</td>
           <td class="muted nowrap">{fmtTimeMs(a.ts)}</td>
-          <td class="muted">{labelSummary(a)}</td>
+          <td class="muted">{labelSummary(a)}{#if a.group_index != null}<span class="group-tag">group {a.group_index}</span>{/if}</td>
         </tr>
       {/each}
     </tbody>
@@ -176,6 +176,7 @@
   >
     <div class="sb-summary">
       <span>{selected.message_count} msgs</span>
+      {#if selected.group_index != null}<span>group {selected.group_index}</span>{/if}
       <span>{selected.task_count} tasks</span>
       <span style:color={durationColor(selected.duration)}>{dur3(selected.duration)}</span>
     </div>
@@ -256,6 +257,15 @@
     font-size: 0.85rem;
   }
   .nowrap {
+    white-space: nowrap;
+  }
+  /* A stream group (contract v1.32): one arranged row per yielded group. */
+  .group-tag {
+    margin-left: 0.4rem;
+    padding: 0 0.3rem;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    font-size: 0.75rem;
     white-space: nowrap;
   }
   tr.clickable {

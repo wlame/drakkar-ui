@@ -140,6 +140,10 @@ export interface ArrangeView {
   // batch with the annotations emitted from the same arrange() call. Older
   // backends omit it — null then, and annotations fall back to offset match.
   window_id: number | null
+  // The order of a stream group in its message, from 0 (contract v1.32). Its
+  // presence marks a group yielded by arrange_stream; null for an arrange()
+  // window and on older backends.
+  group_index?: number | null
 }
 
 // AnnotationView is one live handler annotation, flattened from its WS frame.
@@ -200,6 +204,7 @@ export function arrangeFromEvent(e: WsEvent): ArrangeView {
   let task_ids: string[] = []
   let message_labels: string[] = e.message_labels ?? []
   let window_id: number | null = null
+  let group_index: number | null = null
   if (e.metadata) {
     try {
       const m = JSON.parse(e.metadata) as Record<string, unknown>
@@ -207,6 +212,7 @@ export function arrangeFromEvent(e: WsEvent): ArrangeView {
       if (Array.isArray(m.task_ids)) task_ids = m.task_ids as string[]
       if (Array.isArray(m.message_labels)) message_labels = m.message_labels as string[]
       if (typeof m.window_id === 'number') window_id = m.window_id
+      if (typeof m.group_index === 'number') group_index = m.group_index
     } catch {
       // leave defaults
     }
@@ -221,5 +227,122 @@ export function arrangeFromEvent(e: WsEvent): ArrangeView {
     offsets,
     message_labels,
     window_id,
+    group_index,
   }
+}
+
+// One on_group_complete() call for the Group Results tab (contract v1.32):
+// one `group_complete` recorder row, flattened.
+export interface GroupResultView {
+  ts: number
+  partition: number | null
+  offset: number | null
+  // Seconds spent in the on_group_complete() call.
+  duration: number | null
+  group_index: number | null
+  window_id: number | null
+  task_count: number
+  succeeded: number
+  failed: number
+  replaced: number
+  output_message_count: number
+}
+
+// The columns a group_complete row is read from. Both a /events row and a WS
+// frame have this shape; every value is optional, so a malformed or older row
+// still renders.
+export interface GroupEventInput {
+  ts: number
+  partition?: number | null
+  offset?: number | null
+  duration?: number | null
+  metadata?: string | null
+}
+
+function parseMetadataObject(metadata: string | null | undefined): Record<string, unknown> {
+  if (!metadata) return {}
+  try {
+    const parsed: unknown = JSON.parse(metadata)
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+function numberOr<T>(value: unknown, fallback: T): number | T {
+  return typeof value === 'number' ? value : fallback
+}
+
+/** Flatten one group_complete row; unknown or missing keys read as null or 0. */
+export function groupResultFromEvent(e: GroupEventInput): GroupResultView {
+  const m = parseMetadataObject(e.metadata)
+  return {
+    ts: e.ts,
+    partition: e.partition ?? null,
+    offset: e.offset ?? null,
+    duration: e.duration ?? null,
+    group_index: numberOr(m.group_index, null),
+    window_id: numberOr(m.window_id, null),
+    task_count: numberOr(m.task_count, 0),
+    succeeded: numberOr(m.succeeded, 0),
+    failed: numberOr(m.failed, 0),
+    replaced: numberOr(m.replaced, 0),
+    output_message_count: numberOr(m.output_message_count, 0),
+  }
+}
+
+function groupResultKey(g: GroupResultView): string {
+  return `${g.partition}:${g.offset}:${g.group_index}:${g.window_id}:${g.ts}`
+}
+
+/**
+ * Fold a fresh /events snapshot of group rows into the rows the WS already
+ * delivered. The snapshot is the base; a live row stays only when it is newer
+ * than the snapshot's newest row and the snapshot does not hold it, so a
+ * frame that landed while the request was in flight is neither lost nor
+ * doubled. Newest first, at most `max` rows.
+ */
+export function mergeGroupResults(
+  live: GroupResultView[],
+  snapshot: GroupResultView[],
+  max: number,
+): GroupResultView[] {
+  const newestSnapshotTs = snapshot.reduce((acc, g) => Math.max(acc, g.ts), -Infinity)
+  const known = new Set(snapshot.map(groupResultKey))
+  const fresh = live.filter((g) => g.ts > newestSnapshotTs && !known.has(groupResultKey(g)))
+  return [...fresh, ...snapshot].sort((a, b) => b.ts - a.ts).slice(0, max)
+}
+
+/** The group_count of a message_complete row (stream mode only), else null. */
+export function messageGroupCount(metadata: string | null | undefined): number | null {
+  return numberOr(parseMetadataObject(metadata).group_count, null)
+}
+
+/** The key the Message Results rows and the group counts share. */
+export function messageKey(
+  partition: number | null | undefined,
+  offset: number | null | undefined,
+): string {
+  return `${partition ?? ''}:${offset ?? ''}`
+}
+
+/**
+ * Store one message's group count, keeping only the `max` newest keys, so the
+ * map does not grow with every message the page ever saw. A key written again
+ * moves to the newest place.
+ */
+export function rememberGroupCount(
+  counts: Record<string, number>,
+  key: string,
+  count: number,
+  max: number,
+): Record<string, number> {
+  const next = { ...counts }
+  delete next[key]
+  next[key] = count
+  const keys = Object.keys(next)
+  for (let i = 0; i < keys.length - max; i++) delete next[keys[i]]
+  return next
 }

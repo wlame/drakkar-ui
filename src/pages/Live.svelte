@@ -26,6 +26,12 @@
     normalizeRecentTasks,
     arrangeFromEvent,
     annotationFromEvent,
+    groupResultFromEvent,
+    mergeGroupResults,
+    messageGroupCount,
+    messageKey,
+    rememberGroupCount,
+    type GroupResultView,
     type NormalizedRecentTasks,
     type TaskView,
     type ArrangeView,
@@ -59,6 +65,12 @@
     'task_failed',
     'arranged',
     'annotation',
+    // Stream groups (contract v1.32): one row per group and one per message,
+    // not one per task, so they are cheap to receive live. group_complete
+    // feeds the Group Results tab; message_complete carries the group count
+    // the Message Results tab shows.
+    'group_complete',
+    'message_complete',
     // Runtime-health push refresh (the WS handler bumps runtimeSeq) and the
     // Host section's live pressure readings. All low-rate: one sample per
     // 10s tick, transitions/stalls/episodes only when something is wrong.
@@ -69,7 +81,12 @@
   ]
 
   // --- bootstrap config (best-effort; defaults keep the page working) ---
-  let hookFlags = $state({ task_complete: false, message_complete: false, window_complete: false })
+  let hookFlags = $state({
+    task_complete: false,
+    message_complete: false,
+    window_complete: false,
+    group_complete: false,
+  })
   let partitionCount = $state(0)
   let maxHistory = $state(5000)
   let laneCount = $state(8)
@@ -112,6 +129,12 @@
   let taskResults = $state<TaskResult[]>([])
   let messageResults = $state<MessageResult[]>([])
   let windowResults = $state<WindowResult[]>([])
+  // Group Results rows (contract v1.32), newest first, seeded from
+  // GET /api/v1/events and extended by WS frames, like the Arrange list.
+  let groupResults = $state<GroupResultView[]>([])
+  // The group_count of each recent message of a stream handler, keyed by
+  // messageKey(partition, offset), for the Message Results Groups column.
+  let messageGroupCounts = $state<Record<string, number>>({})
 
   let socket: LiveSocket | null = null
 
@@ -193,13 +216,21 @@
   }
 
   // --- tabs (hash-routed) ---
-  type Tab = 'arrange' | 'execute' | 'task-results' | 'message-results' | 'window-results' | 'runtime'
+  type Tab =
+    | 'arrange'
+    | 'execute'
+    | 'task-results'
+    | 'message-results'
+    | 'window-results'
+    | 'group-results'
+    | 'runtime'
   const availableTabs = $derived<Tab[]>([
     'arrange',
     'execute',
     ...(hookFlags.task_complete ? (['task-results'] as Tab[]) : []),
     ...(hookFlags.message_complete ? (['message-results'] as Tab[]) : []),
     ...(hookFlags.window_complete ? (['window-results'] as Tab[]) : []),
+    ...(hookFlags.group_complete ? (['group-results'] as Tab[]) : []),
     // Always offered: the tab itself explains when this worker has no
     // monitor (runtime_health.enabled=false, or a Go backend).
     'runtime',
@@ -210,6 +241,7 @@
     'task-results': 'Task Results',
     'message-results': 'Message Results',
     'window-results': 'Window Results',
+    'group-results': 'Group Results',
     runtime: 'Runtime',
   }
   const activeTab = $derived.by<Tab>(() => {
@@ -229,6 +261,8 @@
       "on_message_complete() runs after every task derived from one source message reaches a terminal state. Rows aggregate the message's fan-out outcomes.",
     'window-results':
       'on_window_complete() runs after every task in one arrange() window finishes. Rows summarize the whole window.',
+    'group-results':
+      'on_group_complete() runs after every task of one group yielded by arrange_stream() reaches a terminal state. One row per group.',
     runtime:
       "Runtime health: how promptly the worker's runtime schedules work, what blocked it (stall stacks), and a census of what it is carrying.",
   }
@@ -290,8 +324,27 @@
         if (parsed) hostPressure = parsed
         break
       }
-      // task_complete / message_complete / window_complete drive the poll-backed
-      // result feeds; the next 5s reload (and tab open) picks them up.
+      case 'group_complete': {
+        if (!hookFlags.group_complete) break
+        groupResults = [groupResultFromEvent(e), ...groupResults].slice(0, maxHistory)
+        break
+      }
+      case 'message_complete': {
+        // The rows themselves come from the poll-backed feed; only the group
+        // count of a stream handler's message is taken from the frame.
+        const count = messageGroupCount(e.metadata)
+        if (count !== null) {
+          messageGroupCounts = rememberGroupCount(
+            messageGroupCounts,
+            messageKey(e.partition, e.offset),
+            count,
+            maxHistory,
+          )
+        }
+        break
+      }
+      // task_complete / window_complete drive the poll-backed result feeds;
+      // the next 5s reload (and tab open) picks them up.
     }
   }
 
@@ -408,8 +461,13 @@
     void refreshOverviewStrip()
   }
 
+  // Row count of the poll-backed result feeds.
+  function feedLimit(): number {
+    return Math.max(10 * partitionCount, 30)
+  }
+
   async function reloadFeeds() {
-    const limit = Math.max(10 * partitionCount, 30)
+    const limit = feedLimit()
     if (hookFlags.task_complete) {
       try {
         taskResults = await api.liveTaskResults(limit)
@@ -444,7 +502,47 @@
    * was reloaded.
    */
   async function fullResync() {
-    await Promise.all([resync(), loadArrangesBoot(), loadTimelineEventsHistory()])
+    await Promise.all([
+      resync(),
+      loadArrangesBoot(),
+      loadTimelineEventsHistory(),
+      loadGroupResults(),
+      loadMessageGroupCounts(),
+    ])
+  }
+
+  // Seed the Group Results tab from the recent group_complete rows (the WS
+  // only carries new ones from connect time onward). Merged, not replaced, so
+  // a frame that lands while the request is in flight survives.
+  async function loadGroupResults() {
+    if (!hookFlags.group_complete) return
+    try {
+      const evs = await api.events({ event_types: 'group_complete', limit: maxHistory })
+      groupResults = mergeGroupResults(groupResults, evs.map(groupResultFromEvent), maxHistory)
+    } catch {
+      /* best-effort — WS frames still populate going forward */
+    }
+  }
+
+  // Seed the group counts of the messages the Message Results feed shows.
+  // The feed's rows carry no group_count, so it is read from the
+  // message_complete rows; once per (re)connect, then from WS frames.
+  async function loadMessageGroupCounts() {
+    if (!hookFlags.message_complete) return
+    try {
+      const evs = await api.events({ event_types: 'message_complete', limit: feedLimit() })
+      let counts = messageGroupCounts
+      // Oldest first, so the newest row of a replayed offset wins.
+      for (const ev of [...evs].reverse()) {
+        const count = messageGroupCount(ev.metadata)
+        if (count !== null) {
+          counts = rememberGroupCount(counts, messageKey(ev.partition, ev.offset), count, maxHistory)
+        }
+      }
+      messageGroupCounts = counts
+    } catch {
+      /* best-effort */
+    }
   }
 
   async function loadArrangesBoot() {
@@ -524,10 +622,14 @@
             task_complete: !!o.hook_flags.task_complete,
             message_complete: !!o.hook_flags.message_complete,
             window_complete: !!o.hook_flags.window_complete,
+            // Contract v1.32; a missing key means false.
+            group_complete: !!o.hook_flags.group_complete,
           }
         }
         hydrateFromOverview(o)
         void reloadFeeds()
+        void loadGroupResults()
+        void loadMessageGroupCounts()
       })
       .catch(() => {})
 
@@ -684,9 +786,11 @@
 {:else if activeTab === 'task-results'}
   <ResultsTab kind="task" rows={taskResults} />
 {:else if activeTab === 'message-results'}
-  <ResultsTab kind="message" rows={messageResults} />
+  <ResultsTab kind="message" rows={messageResults} groupCounts={messageGroupCounts} />
 {:else if activeTab === 'window-results'}
   <ResultsTab kind="window" rows={windowResults} />
+{:else if activeTab === 'group-results'}
+  <ResultsTab kind="group" rows={groupResults} />
 {:else if activeTab === 'runtime'}
   <RuntimeTab refreshSeq={runtimeSeq} {hostPressure} />
 {/if}

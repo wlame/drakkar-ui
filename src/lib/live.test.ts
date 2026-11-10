@@ -6,7 +6,12 @@ import {
   normalizeRecentTasks,
   annotationFromEvent,
   annotationsForArrange,
+  groupResultFromEvent,
+  mergeGroupResults,
+  messageGroupCount,
+  rememberGroupCount,
   type AnnotationView,
+  type GroupResultView,
 } from './live'
 import type { RecentTask, WsEvent } from './types'
 
@@ -244,6 +249,23 @@ describe('arrangeFromEvent', () => {
     expect(a.task_ids).toEqual([])
   })
 
+  it('reads group_index, which marks a stream group (contract v1.32)', () => {
+    const a = arrangeFromEvent({
+      ...base,
+      metadata: JSON.stringify({ offsets: [5], group_index: 2 }),
+    })
+    expect(a.group_index).toBe(2)
+  })
+
+  it('leaves group_index null for a list handler or a value of the wrong type', () => {
+    expect(
+      arrangeFromEvent({ ...base, metadata: JSON.stringify({ offsets: [5] }) }).group_index,
+    ).toBeNull()
+    expect(
+      arrangeFromEvent({ ...base, metadata: JSON.stringify({ group_index: '2' }) }).group_index,
+    ).toBeNull()
+  })
+
   it('defaults partition to -1 and duration to 0 when the frame omits them', () => {
     const a = arrangeFromEvent(base)
     expect(a.partition).toBe(-1)
@@ -345,5 +367,119 @@ describe('annotationsForArrange', () => {
     // side must not collapse into a match-everything.
     expect(annotationsForArrange([ann({ window_id: null })], arrange)).toHaveLength(0)
     expect(annotationsForArrange([ann({})], { ...arrange, window_id: null })).toHaveLength(0)
+  })
+})
+
+describe('groupResultFromEvent', () => {
+  it('reads the group_complete columns and metadata (contract v1.32)', () => {
+    const g = groupResultFromEvent({
+      ts: 50,
+      partition: 2,
+      offset: 900,
+      duration: 0.125,
+      metadata: JSON.stringify({
+        group_index: 3,
+        window_id: 41,
+        task_count: 100,
+        succeeded: 97,
+        failed: 2,
+        replaced: 1,
+        output_message_count: 5,
+      }),
+    })
+    expect(g).toEqual({
+      ts: 50,
+      partition: 2,
+      offset: 900,
+      duration: 0.125,
+      group_index: 3,
+      window_id: 41,
+      task_count: 100,
+      succeeded: 97,
+      failed: 2,
+      replaced: 1,
+      output_message_count: 5,
+    })
+  })
+
+  it('survives missing columns, malformed metadata and values of the wrong type', () => {
+    const g = groupResultFromEvent({ ts: 1, metadata: '{not json' })
+    expect(g.partition).toBeNull()
+    expect(g.offset).toBeNull()
+    expect(g.duration).toBeNull()
+    expect(g.group_index).toBeNull()
+    expect(g.window_id).toBeNull()
+    expect(g.task_count).toBe(0)
+    expect(g.succeeded).toBe(0)
+    const h = groupResultFromEvent({
+      ts: 1,
+      metadata: JSON.stringify({ succeeded: 'many', group_index: null }),
+    })
+    expect(h.succeeded).toBe(0)
+    expect(h.group_index).toBeNull()
+  })
+})
+
+describe('mergeGroupResults', () => {
+  const row = (ts: number, group_index: number, offset = 10): GroupResultView => ({
+    ts,
+    partition: 0,
+    offset,
+    duration: 0,
+    group_index,
+    window_id: group_index,
+    task_count: 1,
+    succeeded: 1,
+    failed: 0,
+    replaced: 0,
+    output_message_count: 0,
+  })
+
+  it('keeps live rows newer than the snapshot and orders newest first', () => {
+    const live = [row(30, 3), row(20, 2)]
+    const snapshot = [row(20, 2), row(10, 1)]
+    expect(mergeGroupResults(live, snapshot, 10).map((r) => r.group_index)).toEqual([3, 2, 1])
+  })
+
+  it('drops a live row the snapshot already holds', () => {
+    const merged = mergeGroupResults([row(20, 2)], [row(20, 2)], 10)
+    expect(merged).toHaveLength(1)
+  })
+
+  it('caps the result at the row limit, keeping the newest', () => {
+    const merged = mergeGroupResults([], [row(30, 3), row(20, 2), row(10, 1)], 2)
+    expect(merged.map((r) => r.group_index)).toEqual([3, 2])
+  })
+})
+
+describe('messageGroupCount', () => {
+  it('reads group_count from message_complete metadata (contract v1.32)', () => {
+    expect(messageGroupCount(JSON.stringify({ task_count: 4, group_count: 7 }))).toBe(7)
+    expect(messageGroupCount(JSON.stringify({ group_count: 0 }))).toBe(0)
+  })
+
+  it('is null for a list handler, malformed metadata or a value of the wrong type', () => {
+    expect(messageGroupCount(JSON.stringify({ task_count: 4 }))).toBeNull()
+    expect(messageGroupCount('nope')).toBeNull()
+    expect(messageGroupCount(JSON.stringify({ group_count: '7' }))).toBeNull()
+    expect(messageGroupCount(null)).toBeNull()
+    expect(messageGroupCount(undefined)).toBeNull()
+  })
+})
+
+describe('rememberGroupCount', () => {
+  it('stores the count under the message key and keeps the newest entries', () => {
+    let m: Record<string, number> = {}
+    m = rememberGroupCount(m, '0:1', 3, 2)
+    m = rememberGroupCount(m, '0:2', 4, 2)
+    m = rememberGroupCount(m, '0:3', 5, 2)
+    expect(m).toEqual({ '0:2': 4, '0:3': 5 })
+  })
+
+  it('moves a key that is written again to the newest place', () => {
+    let m: Record<string, number> = { '0:1': 3, '0:2': 4 }
+    m = rememberGroupCount(m, '0:1', 6, 2)
+    m = rememberGroupCount(m, '0:3', 5, 2)
+    expect(m).toEqual({ '0:1': 6, '0:3': 5 })
   })
 })

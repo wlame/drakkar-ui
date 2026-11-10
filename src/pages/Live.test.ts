@@ -87,6 +87,11 @@ let overviewPayload: Record<string, unknown>
 // backfill). `null` (the default) leaves the buffer to WS deliveries alone,
 // matching every existing test's expectations.
 let timelineEventsPayload: unknown = null
+// Recorder event rows that GET /api/v1/events answers with, by event type
+// (the stream group tests set them; every other type answers []).
+let eventRowsByType: Record<string, unknown[]> = {}
+// What GET /api/v1/live/message-results answers with.
+let messageResultsPayload: unknown[] = []
 
 function defaultOverview(): Record<string, unknown> {
   return {
@@ -112,6 +117,10 @@ async function defaultFetchDispatch(input: RequestInfo | URL) {
   if (url.includes('/workers')) return okJson(workersPayload)
   if (url.includes('/live/overview')) return okJson(overviewPayload)
   if (url.includes('/timeline/events')) return okJson(timelineEventsPayload)
+  if (url.includes('/live/message-results')) return okJson(messageResultsPayload)
+  const types = url.match(/[?&]event_types=([^&]*)/)
+  if (url.includes('/events?') && types)
+    return okJson(eventRowsByType[decodeURIComponent(types[1])] ?? [])
   return okJson([])
 }
 
@@ -126,6 +135,8 @@ beforeEach(() => {
   workersPayload = []
   overviewPayload = defaultOverview()
   timelineEventsPayload = null
+  eventRowsByType = {}
+  messageResultsPayload = []
   socketOpts = null
   fetchMock.mockReset()
   fetchMock.mockImplementation(defaultFetchDispatch)
@@ -652,6 +663,297 @@ describe('Live timeline-events ingestion dedup', () => {
     flushSync()
 
     expect(bandCount(target)).toBe(2)
+
+    teardown()
+  })
+})
+
+// One recorder row of GET /api/v1/events (stream group tests).
+function eventRow(
+  event: string,
+  ts: number,
+  over: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    id: Math.round(ts),
+    ts,
+    dt: '',
+    event,
+    partition: 0,
+    offset: null,
+    task_id: null,
+    args: null,
+    stdout_size: 0,
+    stdout: null,
+    stderr: null,
+    exit_code: null,
+    duration: null,
+    output_topic: null,
+    metadata: null,
+    pid: null,
+    labels: null,
+    origin: 'kafka',
+    client_name: null,
+    request_id: null,
+    ...over,
+  }
+}
+
+function groupRow(ts: number, groupIndex: number, over: Record<string, unknown> = {}) {
+  return eventRow('group_complete', ts, {
+    offset: 77,
+    duration: 0.25,
+    metadata: JSON.stringify({
+      group_index: groupIndex,
+      window_id: 100 + groupIndex,
+      task_count: 10,
+      succeeded: 8,
+      failed: 1,
+      replaced: 1,
+      output_message_count: 4,
+    }),
+    ...over,
+  })
+}
+
+function tabLabels(target: HTMLElement): string[] {
+  return [...target.querySelectorAll('.tab')].map((b) => b.textContent?.trim() ?? '')
+}
+
+// Data rows of the open results table, as the text of their cells.
+function tableRows(target: HTMLElement): string[][] {
+  return [...target.querySelectorAll('tbody tr')].map((tr) =>
+    [...tr.querySelectorAll('td')].map((td) => td.textContent?.trim() ?? ''),
+  )
+}
+
+describe('Live stream groups (contract v1.32)', () => {
+  it('hides the Group Results tab when the overview has no group_complete flag', async () => {
+    eventRowsByType = { group_complete: [groupRow(NOW - 1, 0)] }
+    const { target, teardown } = mountLive()
+    await settled()
+
+    expect(tabLabels(target)).not.toContain('Group Results')
+
+    teardown()
+  })
+
+  it('hides the Group Results tab when the flag is false', async () => {
+    overviewPayload = {
+      ...defaultOverview(),
+      hook_flags: {
+        task_complete: false,
+        message_complete: false,
+        window_complete: false,
+        group_complete: false,
+      },
+    }
+    const { target, teardown } = mountLive()
+    await settled()
+
+    expect(tabLabels(target)).not.toContain('Group Results')
+    hash.set('#group-results')
+    flushSync()
+    expect(target.textContent).not.toContain('on_group_complete()')
+
+    teardown()
+  })
+
+  it('lists group_complete rows newest first, with live frames on top', async () => {
+    overviewPayload = { ...defaultOverview(), hook_flags: { group_complete: true } }
+    // GET /api/v1/events answers newest first (id DESC).
+    eventRowsByType = { group_complete: [groupRow(NOW - 1, 1), groupRow(NOW - 2, 0)] }
+    const { target, teardown } = mountLive()
+    await settled()
+
+    selectTab(target, 'Group Results')
+    let rows = tableRows(target)
+    expect(rows).toHaveLength(2)
+    // Source, group index, tasks, succeeded/failed/replaced, outputs.
+    expect(rows[0]).toContain('P0:77')
+    expect(rows[0]).toContain('1')
+    expect(rows[0]).toContain('8/1/1')
+    expect(rows[1]).toContain('0')
+
+    socketOpts!.onEvent({
+      event: 'group_complete',
+      ts: NOW,
+      partition: 0,
+      offset: 77,
+      duration: 0.5,
+      metadata: JSON.stringify({
+        group_index: 2,
+        window_id: 102,
+        task_count: 3,
+        succeeded: 3,
+        failed: 0,
+        replaced: 0,
+        output_message_count: 0,
+      }),
+    })
+    flushSync()
+    rows = tableRows(target)
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toContain('3/0/0')
+
+    teardown()
+  })
+
+  it('keeps at most max_ui_rows group rows', async () => {
+    overviewPayload = { ...defaultOverview(), max_ui_rows: 2, hook_flags: { group_complete: true } }
+    eventRowsByType = {
+      group_complete: [groupRow(NOW - 1, 2), groupRow(NOW - 2, 1), groupRow(NOW - 3, 0)],
+    }
+    const { target, teardown } = mountLive()
+    await settled()
+
+    selectTab(target, 'Group Results')
+    expect(tableRows(target)).toHaveLength(2)
+
+    socketOpts!.onEvent({
+      event: 'group_complete',
+      ts: NOW,
+      partition: 0,
+      offset: 77,
+      metadata: JSON.stringify({
+        group_index: 3,
+        task_count: 1,
+        succeeded: 1,
+        failed: 0,
+        replaced: 0,
+      }),
+    })
+    flushSync()
+    expect(tableRows(target)).toHaveLength(2)
+
+    teardown()
+  })
+
+  it('shows "group N" beside the message label of an arranged row with group_index', async () => {
+    eventRowsByType = {
+      arranged: [
+        eventRow('arranged', NOW - 1, {
+          duration: 0.01,
+          metadata: JSON.stringify({
+            offsets: [77],
+            task_ids: ['t-1'],
+            message_labels: ['msg-77'],
+            group_index: 2,
+          }),
+        }),
+        eventRow('arranged', NOW - 2, {
+          duration: 0.01,
+          metadata: JSON.stringify({
+            offsets: [76],
+            task_ids: ['t-0'],
+            message_labels: ['msg-76'],
+          }),
+        }),
+      ],
+    }
+    const { target, teardown } = mountLive()
+    await settled()
+
+    selectTab(target, 'Arrange')
+    const rows = tableRows(target)
+    expect(rows).toHaveLength(2)
+    const labels = rows.map((r) => r[r.length - 1])
+    expect(labels[0]).toContain('msg-77')
+    expect(labels[0]).toContain('group 2')
+    expect(labels[1]).toBe('msg-76')
+
+    teardown()
+  })
+
+  it('shows the group count of a message_complete event in Message Results', async () => {
+    overviewPayload = { ...defaultOverview(), hook_flags: { message_complete: true } }
+    messageResultsPayload = [
+      {
+        ts: NOW - 1,
+        partition: 0,
+        offset: 77,
+        duration: 0.1,
+        end_to_end_duration: 1,
+        task_count: 30,
+        succeeded: 30,
+        failed: 0,
+        replaced: 0,
+        output_message_count: 1,
+      },
+      {
+        ts: NOW - 2,
+        partition: 0,
+        offset: 76,
+        duration: 0.1,
+        end_to_end_duration: 1,
+        task_count: 5,
+        succeeded: 5,
+        failed: 0,
+        replaced: 0,
+        output_message_count: 1,
+      },
+    ]
+    eventRowsByType = {
+      message_complete: [
+        eventRow('message_complete', NOW - 1, {
+          offset: 77,
+          metadata: JSON.stringify({ task_count: 30, group_count: 3 }),
+        }),
+        eventRow('message_complete', NOW - 2, {
+          offset: 76,
+          metadata: JSON.stringify({ task_count: 5 }),
+        }),
+      ],
+    }
+    const { target, teardown } = mountLive()
+    await settled()
+
+    selectTab(target, 'Message Results')
+    expect([...target.querySelectorAll('thead th')].map((th) => th.textContent?.trim())).toContain(
+      'Groups',
+    )
+    let rows = tableRows(target)
+    expect(rows[0]).toContain('3')
+    expect(rows[1]).toContain('-')
+
+    // A live frame of a later message carries its count too.
+    socketOpts!.onEvent({
+      event: 'message_complete',
+      ts: NOW,
+      partition: 0,
+      offset: 76,
+      metadata: JSON.stringify({ group_count: 4 }),
+    })
+    flushSync()
+    rows = tableRows(target)
+    expect(rows[1]).toContain('4')
+
+    teardown()
+  })
+
+  it('shows no Groups column when no message has a group count', async () => {
+    overviewPayload = { ...defaultOverview(), hook_flags: { message_complete: true } }
+    messageResultsPayload = [
+      {
+        ts: NOW - 1,
+        partition: 0,
+        offset: 77,
+        duration: 0.1,
+        end_to_end_duration: 1,
+        task_count: 30,
+        succeeded: 30,
+        failed: 0,
+        replaced: 0,
+        output_message_count: 1,
+      },
+    ]
+    const { target, teardown } = mountLive()
+    await settled()
+
+    selectTab(target, 'Message Results')
+    expect(
+      [...target.querySelectorAll('thead th')].map((th) => th.textContent?.trim()),
+    ).not.toContain('Groups')
 
     teardown()
   })

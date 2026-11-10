@@ -29,6 +29,10 @@ export const EVENT_COLORS: Record<string, string> = {
   task_complete: COLOR.purple,
   message_complete: COLOR.violet,
   window_complete: COLOR.lilac,
+  // Contract v1.32: one row per on_group_complete() call of a stream handler.
+  // A stream handler writes no window_complete rows, so the two never share a
+  // worker and can share the color.
+  group_complete: COLOR.lilac,
   produced: COLOR.magenta,
   committed: COLOR.gray,
   annotation: COLOR.http,
@@ -64,6 +68,7 @@ export const EVENT_TYPES = [
   'task_complete',
   'message_complete',
   'window_complete',
+  'group_complete',
   'produced',
   'committed',
   'annotation',
