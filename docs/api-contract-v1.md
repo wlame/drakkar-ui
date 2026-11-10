@@ -186,7 +186,7 @@ the appendix.
   pending_tasks:int,
   arranging:[{partition,duration,message_count,labels[≤10]}], pool_active,
   pool_waiting, pool_max, partition_count, max_ui_rows, ws_min_duration_ms,
-  hook_flags:{task_complete,message_complete,window_complete},
+  hook_flags:{task_complete,message_complete,window_complete,group_complete?},
   kafka_ui_base:str, kafka_ui_cluster:str, kafka_source_topic:str}`.
   `running_tasks` counts the in-flight tasks holding an executor slot (their
   subprocess is live); `pending_tasks` counts those arranged but still queued
@@ -195,6 +195,9 @@ the appendix.
   Kafka-UI deep-link integration is unconfigured; the UI renders deep links only
   when all three are non-empty. The UI fetches this endpoint once at boot to
   hydrate runtime config, and again on the Live page.
+  `hook_flags.group_complete` (v1.32) is true when the handler overrides
+  `on_group_complete`; a missing key means false. See
+  [v1.32 changes](#v132-changes-2026-11-16).
 - `GET /api/v1/events?limit=200&after_id=0&partitions=&event_types=&origin=` →
   array of full recorder event rows (`SELECT *`, id DESC). Malformed
   `partitions` CSV → **422**. `limit` ≤ 10000 → 422 above. No DB → `[]`.
@@ -352,7 +355,11 @@ on_message_complete:ProbeStageResult|null, on_window_complete:ProbeStageResult|n
 planned_sink_payloads:[PlannedSinkRecord], cache_calls:[ProbeCacheCall],
 cache_summary:{calls,hits,misses,writes_suppressed}, timing:{total_wallclock,
 arrange, on_message_complete, on_window_complete}, errors:[ProbeError],
-truncated:bool}`.
+truncated:bool, groups?:[ProbeGroup], stream_truncated?:bool}`.
+
+- `groups` and `stream_truncated` (v1.32) are present only for a handler
+  that overrides `arrange_stream`; the probe runs at most its first 5
+  groups. See [v1.32 changes](#message-probe-post-apiv1debugprobe).
 
 - `ProbeError` / `deserialize_error`: `{stage, exception_class, message,
   occurred_at_ms}` — **no `traceback` field** (it must not be emitted).
@@ -405,7 +412,7 @@ format `YYYY-MM-DDTHH:MM:SS.ffffffZ` (fixed six-digit microseconds); the
 
 ## Recorder event-type vocabulary (the `event` field)
 
-**PINNED (v1.28).** An `event` field carries one of these 31
+**PINNED (v1.32).** An `event` field carries one of these 32
 names and nothing else; every one of them is stored in the `events`
 table and sent on `/ws`. The UI matches on these names,
 so a name is as contractual as a column: adding, renaming or removing one is
@@ -427,6 +434,7 @@ each name and whether it is stored. The Python repo owns the fixture
 | `assigned` | both | `events` + `/ws` |
 | `committed` | both | `events` + `/ws` |
 | `consumed` | both | `events` + `/ws` |
+| `group_complete` | Python only | `events` + `/ws` |
 | `message_complete` | both | `events` + `/ws` |
 | `message_dlq` | both | `events` + `/ws` |
 | `offload` | Python only | `events` + `/ws` |
@@ -458,7 +466,8 @@ A UI must treat an unknown `event` value as renderable-but-uncategorised
 rather than an error: a mixed fleet can put rows from a newer backend in
 front of an older UI. `offload` is currently Python-only — the Go backend
 accepts `offload.*` config but does not run the pool yet, so it writes no
-such row.
+such row. `group_complete` (v1.32) is currently Python-only too: the Go
+backend has no `arrange_stream` hook yet.
 
 ## Capability gaps (future, not required for v1 conformance)
 
@@ -556,7 +565,8 @@ never emit it.
     Unknown future values must degrade gracefully.
   - `hook` — the hook that emitted it (`"arrange"`, `"on_task_complete"`,
     `"on_error"`, `"on_message_complete"`, `"on_window_complete"`,
-    `"arrange_http_request"`, `"on_http_request_complete"`).
+    `"arrange_http_request"`, `"on_http_request_complete"`; since v1.32 also
+    `"arrange_stream"` and `"on_group_complete"`).
   - `window_id` — per-partition monotone counter, or `null`. Unique only
     within one (partition, worker run); never a global id. The `arranged`
     event's metadata carries the matching `window_id` so the two can be
@@ -3125,6 +3135,149 @@ the `meaning` of an `app` key from the notes (`''` without one), and
 | config, state | 400 (`parts`, `detail`) |
 | manual | 400 (`parts`, `detail`, `format`), 404 `no such topic '<ref>'` |
 | metrics, diagnose | 400 (`detail`) |
+
+## v1.32 changes (2026-11-16)
+
+A handler may yield its tasks in groups with the hook `arrange_stream`,
+instead of returning one list from `arrange`. Each group runs as one
+admission unit, so a message with thousands of tasks runs with a bounded
+number of tasks in memory. An optional hook `on_group_complete` fires once
+for each group. All additions are optional keys and one new event name; no
+route changes.
+
+Words used below: a **stream handler** overrides `arrange_stream`; a
+**list handler** overrides `arrange`. A worker has one handler, so all its
+messages are in one mode. **Stream mode** is the mode of a stream handler.
+
+### `hook_flags.group_complete` on `GET /api/v1/live/overview`
+
+`hook_flags` gains `group_complete` (boolean): true when the handler
+overrides `on_group_complete`. **A missing key means false.** A backend
+older than v1.32 does not send it. The UI shows a "Group Results" tab on
+the Live page when it is true, like the Message and Window tabs.
+
+### Recorder events
+
+#### `arranged`: one row for each group
+
+In stream mode a backend writes one `arranged` row for each yielded group,
+not one for each window:
+
+- `message_count` is 1, and `metadata.offsets` holds the one offset of the
+  message.
+- `task_count` and `task_ids` are those of the group.
+- `duration` is the time inside the pull: the handler's preparation of that
+  group, without the time the stream waited for room in the pending budget.
+- `metadata.window_id` is the group's own id. Each group takes the next
+  `window_id` of the partition's counter when its pull starts, so the
+  `arranged` row and the annotations emitted while that group was prepared
+  carry the same id.
+- `metadata.group_index` (integer) is new: the order of the group in its
+  message, from 0. **Its presence marks a stream group.** A list handler's
+  `arranged` row never has it.
+
+The UI's Arrange tab and the timeline therefore show one arrange bar for
+each group.
+
+#### New event `group_complete`
+
+The vocabulary grows from 31 to 32 names. A backend writes one
+`group_complete` row for each group, after its `on_group_complete` call
+ends, and only when the handler overrides `on_group_complete`. A stream of groups with
+no group hook writes none.
+
+| Column | Value |
+|---|---|
+| `partition` | The partition of the message. |
+| `offset` | The offset of the message. |
+| `duration` | Seconds spent in the `on_group_complete` call. |
+| `metadata` | The object below. |
+
+| Metadata key | Type | Meaning |
+|---|---|---|
+| `group_index` | int | The order of the group in its message, from 0. |
+| `window_id` | int | The group's `window_id`, the same as on its `arranged` row. |
+| `task_count` | int | Tasks in the yielded list. Replacement tasks do not count. |
+| `succeeded` | int | Tasks of the group that ended in success, replacements by their own outcome. |
+| `failed` | int | Tasks of the group that ended in failure, replacements by their own outcome. |
+| `output_message_count` | int | Output messages of the `CollectResult` that the hook returned, as on `message_complete` and `window_complete`. |
+
+#### `message_complete` in stream mode
+
+The metadata gains `group_count` (integer): the number of groups of the
+message. It is present only in stream mode. The counters keep their
+meaning: `succeeded`, `failed` and `replaced` are the sums over the groups,
+and `task_count` is `succeeded + failed + replaced`, every task ever
+scheduled for the message, replacements included. A message whose stream
+yielded no group has `group_count: 0`.
+
+#### No `window_complete` rows in stream mode
+
+A stream handler has no window hook. A backend writes no `window_complete`
+row in stream mode.
+
+#### Annotations
+
+The `hook` values of an annotation gain `arrange_stream` and
+`on_group_complete`:
+
+- An annotation emitted inside `arrange_stream` has `scope: "window"`, the
+  `window_id` of the group being prepared, and `offsets` holding the one
+  offset of the message.
+- An annotation emitted inside `on_group_complete` has `scope: "message"`,
+  the group's `window_id`, and `offsets: []`.
+
+The size limits for one hook call apply to one pull and to one call of
+`on_group_complete`.
+
+### Message Probe (`POST /api/v1/debug/probe`)
+
+The probe runs a stream handler, but only its first groups. It pulls at
+most **5** groups (the same constant on every backend), closes the stream,
+calls `on_group_complete` for each group that ran, and then calls
+`on_message_complete` with those groups. `tasks` holds the tasks of the
+groups that ran. `arrange` reports the pulls: `duration_seconds` is their
+total time, `collect_result` is null, and `error` is the text of a stream
+error, if any. `on_window_complete` is null.
+
+`DebugReport` gains two keys. **Both are absent for a list handler**, and
+both are absent on a backend older than v1.32.
+
+- `groups`: an array with one `ProbeGroup` for each group that ran, in
+  `index` order.
+- `stream_truncated` (boolean): true when the probe stopped after 5 groups
+  and the stream had more; false when the stream ended by itself.
+
+`ProbeGroup`:
+
+```
+{index:int, task_count:int, succeeded:int, failed:int, replaced:int,
+ labels:{<label name>: [str]}, notes:{<key>: str|int|float|bool},
+ skipped_deliveries:{"<type>/<name>": int}, hook:ProbeStageResult|null}
+```
+
+- `index`, `task_count`, `succeeded`, `failed`, `replaced`: as in the
+  group object. When the group ends, `succeeded + failed + replaced` is the
+  number of tasks ever scheduled in the group.
+- `labels`: for each name in the handler's `group_labels`, the values of
+  that label on the yielded tasks, in the order of the list, one entry for
+  each task that has the label. Every declared name is a key; a name that no
+  task has gives `[]`. `{}` when the handler declares no label names.
+- `notes`: the scalar values the hooks wrote, after the framework removed
+  values of other types.
+- `skipped_deliveries`: for each sink, how many deliveries of this group
+  ended in `skip`. `{}` when none did.
+- `hook`: the outcome of `on_group_complete` for this group, in the shape
+  of the `on_message_complete` stage (`{duration_seconds, collect_result,
+  error}`); null when the handler does not override `on_group_complete`.
+
+### Absence (normative)
+
+A backend older than v1.32 sends no `hook_flags.group_complete`, no
+`group_complete` rows, no `group_index` or `group_count` metadata, and no
+`groups` or `stream_truncated` in a probe report. The UI then shows no
+Group Results tab and no groups, as before. A UI older than v1.32 shows a
+`group_complete` row as an uncategorised event.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 

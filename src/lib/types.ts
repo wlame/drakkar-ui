@@ -560,6 +560,8 @@ export interface LiveOverview {
     task_complete?: boolean
     message_complete?: boolean
     window_complete?: boolean
+    /** Contract v1.32: true when the handler overrides on_group_complete. Missing means false. */
+    group_complete?: boolean
   }
   kafka_ui_base?: string
   kafka_ui_cluster?: string
@@ -1016,6 +1018,25 @@ export interface ProbeStageResult {
   error: string | null
 }
 
+/**
+ * One group yielded by arrange_stream that the probe ran (contract v1.32).
+ * Counters and small values only; it never holds a task or a result.
+ */
+export interface ProbeGroup {
+  index: number
+  task_count: number
+  succeeded: number
+  failed: number
+  replaced: number
+  /** For each name in the handler's group_labels: the label values of the yielded tasks, in list order. */
+  labels: Record<string, string[]>
+  notes: Record<string, string | number | boolean>
+  /** For each sink "<type>/<name>": deliveries of this group that ended in skip. */
+  skipped_deliveries: Record<string, number>
+  /** Null when the handler does not override on_group_complete. */
+  hook: ProbeStageResult | null
+}
+
 export interface ProbeTaskEntry {
   task_id: string
   parent_task_id: string | null
@@ -1209,6 +1230,13 @@ export interface DebugReport {
    */
   user_details?: ProbeUserDetails | null
   truncated: boolean
+  /**
+   * Contract v1.32: the groups of a stream handler that the probe ran (at most
+   * 5), in index order. Absent for a list handler and on older backends.
+   */
+  groups?: ProbeGroup[]
+  /** Contract v1.32: true when the probe stopped after 5 groups and the stream had more. */
+  stream_truncated?: boolean
 }
 
 // Agent insight routes (v1.31, GET /api/v1/agent/*). Read-only, off unless
