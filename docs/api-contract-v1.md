@@ -1969,6 +1969,9 @@ Two new event types, both stored in `events` and sent on `/ws`:
   `origin` is `"http"`, `request_id` is set, `partition` is `-1` and
   `offset` is null. `metadata`: `stage`, `sink`, `error`,
   `delivered_sinks`, `attempts`.
+  Since the request id change (no shape change, 2026-11): every row of a
+  Kafka message or task carries its message's `request_id` too, so
+  `origin` (`"http"`), not a set `request_id`, marks an HTTP request.
 - **`sink_not_started`**: the delivery of a result to a sink does not
   start, because its message is on the DLQ or a `depends_on` dependency
   failed. `partition`; `metadata`: `sink`, `reason` (`message_dlq` or
