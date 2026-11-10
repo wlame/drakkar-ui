@@ -716,6 +716,9 @@ function groupRow(ts: number, groupIndex: number, over: Record<string, unknown> 
   })
 }
 
+// The Group # column of the Group Results table.
+const GROUP_INDEX_COLUMN = 2
+
 function tabLabels(target: HTMLElement): string[] {
   return [...target.querySelectorAll('.tab')].map((b) => b.textContent?.trim() ?? '')
 }
@@ -769,11 +772,12 @@ describe('Live stream groups (contract v1.32)', () => {
     selectTab(target, 'Group Results')
     let rows = tableRows(target)
     expect(rows).toHaveLength(2)
-    // Source, group index, tasks, succeeded/failed/replaced, outputs.
-    expect(rows[0]).toContain('P0:77')
-    expect(rows[0]).toContain('1')
-    expect(rows[0]).toContain('8/1/1')
-    expect(rows[1]).toContain('0')
+    // Columns: Time, Source, Group #, Hook, Tasks, Outcomes, Outputs.
+    expect(rows[0][1]).toBe('P0:77')
+    expect(rows.map((r) => r[GROUP_INDEX_COLUMN])).toEqual(['1', '0'])
+    expect(rows[0][4]).toBe('10')
+    expect(rows[0][5]).toBe('8/1/1')
+    expect(rows[0][6]).toBe('4')
 
     socketOpts!.onEvent({
       event: 'group_complete',
@@ -793,8 +797,46 @@ describe('Live stream groups (contract v1.32)', () => {
     })
     flushSync()
     rows = tableRows(target)
-    expect(rows).toHaveLength(3)
-    expect(rows[0]).toContain('3/0/0')
+    expect(rows.map((r) => r[GROUP_INDEX_COLUMN])).toEqual(['2', '1', '0'])
+    expect(rows[0][5]).toBe('3/0/0')
+
+    teardown()
+  })
+
+  it('subscribes to group_complete frames but not to message_complete frames', async () => {
+    const { teardown } = mountLive()
+    await settled()
+
+    expect(socketOpts!.eventTypes).toContain('group_complete')
+    expect(socketOpts!.eventTypes).not.toContain('message_complete')
+
+    teardown()
+  })
+
+  it('ignores a group_complete frame that arrives before the overview', async () => {
+    overviewPayload = { ...defaultOverview(), hook_flags: { group_complete: true } }
+    const { target, teardown } = mountLive()
+    // Runs onMount, which opens the socket; the overview has not answered
+    // yet (no microtask has run), so the flag is still false.
+    flushSync()
+    socketOpts!.onEvent({
+      event: 'group_complete',
+      ts: NOW,
+      partition: 0,
+      offset: 77,
+      metadata: JSON.stringify({
+        group_index: 0,
+        task_count: 1,
+        succeeded: 1,
+        failed: 0,
+        replaced: 0,
+      }),
+    })
+    await settled()
+
+    selectTab(target, 'Group Results')
+    expect(tableRows(target)).toHaveLength(0)
+    expect(target.textContent).toContain('No on_group_complete() calls yet.')
 
     teardown()
   })
@@ -916,15 +958,20 @@ describe('Live stream groups (contract v1.32)', () => {
     expect(rows[0]).toContain('3')
     expect(rows[1]).toContain('-')
 
-    // A live frame of a later message carries its count too.
-    socketOpts!.onEvent({
-      event: 'message_complete',
-      ts: NOW,
-      partition: 0,
-      offset: 76,
-      metadata: JSON.stringify({ group_count: 4 }),
-    })
-    flushSync()
+    // The counts are read again with the feed on the 5s tick.
+    eventRowsByType = {
+      message_complete: [
+        eventRow('message_complete', NOW - 1, {
+          offset: 77,
+          metadata: JSON.stringify({ group_count: 3 }),
+        }),
+        eventRow('message_complete', NOW - 2, {
+          offset: 76,
+          metadata: JSON.stringify({ group_count: 4 }),
+        }),
+      ],
+    }
+    await nextResync()
     rows = tableRows(target)
     expect(rows[1]).toContain('4')
 
@@ -947,6 +994,15 @@ describe('Live stream groups (contract v1.32)', () => {
         output_message_count: 1,
       },
     ]
+    // A list handler's message_complete row has no group_count.
+    eventRowsByType = {
+      message_complete: [
+        eventRow('message_complete', NOW - 1, {
+          offset: 77,
+          metadata: JSON.stringify({ task_count: 30 }),
+        }),
+      ],
+    }
     const { target, teardown } = mountLive()
     await settled()
 
@@ -954,6 +1010,7 @@ describe('Live stream groups (contract v1.32)', () => {
     expect(
       [...target.querySelectorAll('thead th')].map((th) => th.textContent?.trim()),
     ).not.toContain('Groups')
+    expect(tableRows(target)[0]).not.toContain('-')
 
     teardown()
   })

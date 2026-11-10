@@ -117,7 +117,7 @@
           </tr>
         {/each}
       {:else if kind === 'group'}
-        {#each groupRows as r, i (`${r.ts}:${r.partition}:${r.offset}:${r.group_index}:${i}`)}
+        {#each groupRows as r (`${r.ts}:${r.partition}:${r.window_id}`)}
           <tr>
             <td class="muted nowrap" title={fmtTimeMs(r.ts)}>{fmtTime(r.ts)}</td>
             <td class="mono">

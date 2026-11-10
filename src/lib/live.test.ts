@@ -9,7 +9,7 @@ import {
   groupResultFromEvent,
   mergeGroupResults,
   messageGroupCount,
-  rememberGroupCount,
+  groupCountsFromRows,
   type AnnotationView,
   type GroupResultView,
 } from './live'
@@ -467,19 +467,22 @@ describe('messageGroupCount', () => {
   })
 })
 
-describe('rememberGroupCount', () => {
-  it('stores the count under the message key and keeps the newest entries', () => {
-    let m: Record<string, number> = {}
-    m = rememberGroupCount(m, '0:1', 3, 2)
-    m = rememberGroupCount(m, '0:2', 4, 2)
-    m = rememberGroupCount(m, '0:3', 5, 2)
-    expect(m).toEqual({ '0:2': 4, '0:3': 5 })
+describe('groupCountsFromRows', () => {
+  it('maps each message key to its group count, the newest row of an offset winning', () => {
+    // Newest first, as GET /api/v1/events answers.
+    const counts = groupCountsFromRows([
+      { partition: 0, offset: 2, metadata: JSON.stringify({ group_count: 4 }) },
+      { partition: 0, offset: 1, metadata: JSON.stringify({ group_count: 6 }) },
+      { partition: 0, offset: 1, metadata: JSON.stringify({ group_count: 3 }) },
+    ])
+    expect(counts).toEqual({ '0:2': 4, '0:1': 6 })
   })
 
-  it('moves a key that is written again to the newest place', () => {
-    let m: Record<string, number> = { '0:1': 3, '0:2': 4 }
-    m = rememberGroupCount(m, '0:1', 6, 2)
-    m = rememberGroupCount(m, '0:3', 5, 2)
-    expect(m).toEqual({ '0:1': 6, '0:3': 5 })
+  it('leaves out rows without a group count', () => {
+    const counts = groupCountsFromRows([
+      { partition: 0, offset: 1, metadata: JSON.stringify({ task_count: 5 }) },
+      { partition: 1, offset: 1, metadata: null },
+    ])
+    expect(counts).toEqual({})
   })
 })

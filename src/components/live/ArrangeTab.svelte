@@ -146,7 +146,7 @@
       </tr>
     </thead>
     <tbody>
-      {#each shown as a, i (`${a.ts}:${a.partition}:${a.window_id}:${i}`)}
+      {#each shown as a, i (`${a.ts}:${a.partition}:${a.window_id}`)}
         {@const c = counts(a)}
         <tr class="clickable" class:sel={openIdx === i} onclick={() => (openIdx = i)}>
           <td class="num mono">{a.partition}</td>

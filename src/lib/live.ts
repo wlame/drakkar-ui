@@ -329,20 +329,19 @@ export function messageKey(
 }
 
 /**
- * Store one message's group count, keeping only the `max` newest keys, so the
- * map does not grow with every message the page ever saw. A key written again
- * moves to the newest place.
+ * Map each message to its group count, read from message_complete rows given
+ * newest first (as GET /api/v1/events answers). The newest row of a replayed
+ * offset wins; rows without a group count (a list handler) are left out.
  */
-export function rememberGroupCount(
-  counts: Record<string, number>,
-  key: string,
-  count: number,
-  max: number,
+export function groupCountsFromRows(
+  rows: { partition?: number | null; offset?: number | null; metadata?: string | null }[],
 ): Record<string, number> {
-  const next = { ...counts }
-  delete next[key]
-  next[key] = count
-  const keys = Object.keys(next)
-  for (let i = 0; i < keys.length - max; i++) delete next[keys[i]]
-  return next
+  const counts: Record<string, number> = {}
+  for (const row of rows) {
+    const key = messageKey(row.partition, row.offset)
+    if (key in counts) continue
+    const count = messageGroupCount(row.metadata)
+    if (count !== null) counts[key] = count
+  }
+  return counts
 }

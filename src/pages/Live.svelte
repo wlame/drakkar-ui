@@ -28,9 +28,7 @@
     annotationFromEvent,
     groupResultFromEvent,
     mergeGroupResults,
-    messageGroupCount,
-    messageKey,
-    rememberGroupCount,
+    groupCountsFromRows,
     type GroupResultView,
     type NormalizedRecentTasks,
     type TaskView,
@@ -65,12 +63,9 @@
     'task_failed',
     'arranged',
     'annotation',
-    // Stream groups (contract v1.32): one row per group and one per message,
-    // not one per task, so they are cheap to receive live. group_complete
-    // feeds the Group Results tab; message_complete carries the group count
-    // the Message Results tab shows.
+    // Stream groups (contract v1.32): written only for a handler that
+    // overrides on_group_complete, one row per group, never per task.
     'group_complete',
-    'message_complete',
     // Runtime-health push refresh (the WS handler bumps runtimeSeq) and the
     // Host section's live pressure readings. All low-rate: one sample per
     // 10s tick, transitions/stalls/episodes only when something is wrong.
@@ -132,8 +127,9 @@
   // Group Results rows (contract v1.32), newest first, seeded from
   // GET /api/v1/events and extended by WS frames, like the Arrange list.
   let groupResults = $state<GroupResultView[]>([])
-  // The group_count of each recent message of a stream handler, keyed by
-  // messageKey(partition, offset), for the Message Results Groups column.
+  // The group_count of each message the Message Results feed shows (stream
+  // handler only), keyed by messageKey(partition, offset); rebuilt with the
+  // feed on every reload, so it is bounded by the feed's row count.
   let messageGroupCounts = $state<Record<string, number>>({})
 
   let socket: LiveSocket | null = null
@@ -329,21 +325,8 @@
         groupResults = [groupResultFromEvent(e), ...groupResults].slice(0, maxHistory)
         break
       }
-      case 'message_complete': {
-        // The rows themselves come from the poll-backed feed; only the group
-        // count of a stream handler's message is taken from the frame.
-        const count = messageGroupCount(e.metadata)
-        if (count !== null) {
-          messageGroupCounts = rememberGroupCount(
-            messageGroupCounts,
-            messageKey(e.partition, e.offset),
-            count,
-            maxHistory,
-          )
-        }
-        break
-      }
-      // task_complete / window_complete drive the poll-backed result feeds;
+      // task_complete / message_complete / window_complete drive the
+      // poll-backed result feeds;
       // the next 5s reload (and tab open) picks them up.
     }
   }
@@ -476,10 +459,16 @@
       }
     }
     if (hookFlags.message_complete) {
-      try {
-        messageResults = await api.liveMessageResults(limit)
-      } catch {
-        /* keep */
+      // The feed's rows carry no group_count (contract v1.32), so the counts
+      // of a stream handler's messages are read from the same number of
+      // message_complete rows, in parallel with the feed.
+      const [rowsResult, countsResult] = await Promise.allSettled([
+        api.liveMessageResults(limit),
+        api.events({ event_types: 'message_complete', limit }),
+      ])
+      if (rowsResult.status === 'fulfilled') messageResults = rowsResult.value
+      if (countsResult.status === 'fulfilled') {
+        messageGroupCounts = groupCountsFromRows(countsResult.value)
       }
     }
     if (hookFlags.window_complete) {
@@ -507,7 +496,6 @@
       loadArrangesBoot(),
       loadTimelineEventsHistory(),
       loadGroupResults(),
-      loadMessageGroupCounts(),
     ])
   }
 
@@ -521,27 +509,6 @@
       groupResults = mergeGroupResults(groupResults, evs.map(groupResultFromEvent), maxHistory)
     } catch {
       /* best-effort — WS frames still populate going forward */
-    }
-  }
-
-  // Seed the group counts of the messages the Message Results feed shows.
-  // The feed's rows carry no group_count, so it is read from the
-  // message_complete rows; once per (re)connect, then from WS frames.
-  async function loadMessageGroupCounts() {
-    if (!hookFlags.message_complete) return
-    try {
-      const evs = await api.events({ event_types: 'message_complete', limit: feedLimit() })
-      let counts = messageGroupCounts
-      // Oldest first, so the newest row of a replayed offset wins.
-      for (const ev of [...evs].reverse()) {
-        const count = messageGroupCount(ev.metadata)
-        if (count !== null) {
-          counts = rememberGroupCount(counts, messageKey(ev.partition, ev.offset), count, maxHistory)
-        }
-      }
-      messageGroupCounts = counts
-    } catch {
-      /* best-effort */
     }
   }
 
@@ -629,7 +596,6 @@
         hydrateFromOverview(o)
         void reloadFeeds()
         void loadGroupResults()
-        void loadMessageGroupCounts()
       })
       .catch(() => {})
 
