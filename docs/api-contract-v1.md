@@ -3243,9 +3243,9 @@ The size limits for one hook call apply to one pull and to one call of
 ### Message Probe (`POST /api/v1/debug/probe`)
 
 The probe runs a stream handler, but only its first groups. It pulls at
-most **5** groups (the same constant on every backend). It calls
-`on_group_complete` right after the tasks of each group end, before the next
-pull, as on a running worker. Then it closes the stream and calls
+most **5** groups (the same constant on every backend). When the handler
+overrides `on_group_complete`, the probe calls it right after the tasks of
+each group end, before the next pull, as on a running worker. Then it closes the stream and calls
 `on_message_complete` with the groups that ran. `tasks` holds the tasks of the
 groups that ran. `arrange` reports the pulls: `duration_seconds` is their
 total time, `collect_result` is null, and `error` is the text of a stream
@@ -3262,7 +3262,9 @@ both are absent on a backend older than v1.32.
 
 After a stream error before 5 groups, `groups` lists the groups that ran,
 `stream_truncated` is false, and the error is on the `arrange` stage
-(`arrange.error`).
+(`arrange.error`). The probe closes the stream and does not call
+`on_message_complete`, as on a running worker; `on_message_complete` in the
+report is null.
 
 `ProbeGroup`:
 
