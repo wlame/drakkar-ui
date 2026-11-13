@@ -152,7 +152,7 @@
       .join(', ')
   }
   function groupLabels(g: ProbeGroup): string {
-    return joinEntries(g.labels, (v) => (v as string[]).join(' '))
+    return joinEntries(g.labels, (v) => (Array.isArray(v) ? v.join(' ') : String(v)))
   }
   function groupNotes(g: ProbeGroup): string {
     return joinEntries(g.notes, (v) => String(v))
@@ -294,7 +294,7 @@
       <p class="error">{report.groups ? 'arrange_stream' : 'arrange'} raised: {report.arrange.error}</p>
       {#if report.groups?.length}<p class="muted">the groups that ran before the error are listed below</p>{/if}
     {:else if report.groups}
-      <p class="muted">{report.groups.length} groups · {report.tasks.length} tasks · {durSec(report.arrange.duration_seconds)} in pulls</p>
+      <p class="muted">{report.groups.length} {report.groups.length === 1 ? 'group' : 'groups'} · {report.tasks.length} tasks · {durSec(report.arrange.duration_seconds)} in pulls</p>
       {#if report.groups.length === 0}<p class="muted">arrange_stream yielded no group — message would be skipped</p>{/if}
     {:else}
       <p class="muted">{report.tasks.length} tasks generated · {durSec(report.arrange.duration_seconds)}</p>

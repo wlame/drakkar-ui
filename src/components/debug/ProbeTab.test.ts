@@ -273,6 +273,19 @@ describe('ProbeTab stream groups', () => {
     cleanup()
   })
 
+  it('says "1 group" for one group and "N groups" for more', async () => {
+    const one = await renderReport(
+      probeReport({ groups: [probeGroup(0)], stream_truncated: false }),
+    )
+    expect(one.target.textContent).toContain('1 group ·')
+    one.cleanup()
+    const two = await renderReport(
+      probeReport({ groups: [probeGroup(0), probeGroup(1)], stream_truncated: false }),
+    )
+    expect(two.target.textContent).toContain('2 groups ·')
+    two.cleanup()
+  })
+
   it('says the probe ran the first 5 groups only when the stream was cut', async () => {
     const groups = [0, 1, 2, 3, 4].map((index) => probeGroup(index))
     const { target, cleanup } = await renderReport(probeReport({ groups, stream_truncated: true }))

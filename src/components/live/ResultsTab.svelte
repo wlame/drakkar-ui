@@ -70,6 +70,11 @@
   }
 </script>
 
+<!-- The succeeded / failed / replaced cell of the message and group rows. -->
+{#snippet outcomes(r: { succeeded: number; failed: number; replaced: number })}
+  <td class="mono"><span style:color="#059669">{r.succeeded}</span>/<span style:color="#dc2626">{r.failed}</span>/<span style:color="#d97706">{r.replaced}</span></td>
+{/snippet}
+
 {#if rows.length === 0}
   <p class="muted">No {HOOK_NAMES[kind]} calls yet.</p>
 {:else}
@@ -111,8 +116,8 @@
             </td>
             <td class="num mono">{durSec(r.duration)}</td>
             <td class="num mono">{fmtLatency(r.end_to_end_duration)}</td>
-            <td class="mono"><span style:color="#059669">{r.succeeded}</span>/<span style:color="#dc2626">{r.failed}</span>/<span style:color="#d97706">{r.replaced}</span></td>
-            {#if showGroupCount}<td class="num mono">{groupCounts[messageKey(r.partition, r.offset)] ?? '-'}</td>{/if}
+            {@render outcomes(r)}
+            {#if showGroupCount}<td class="num mono">{groupCounts[messageKey(r.partition, r.offset)] ?? ''}</td>{/if}
             <td class="num mono">{r.output_message_count}</td>
           </tr>
         {/each}
@@ -126,7 +131,7 @@
             <td class="num mono">{r.group_index ?? '-'}</td>
             <td class="num mono">{durSec(r.duration)}</td>
             <td class="num mono">{r.task_count}</td>
-            <td class="mono"><span style:color="#059669">{r.succeeded}</span>/<span style:color="#dc2626">{r.failed}</span>/<span style:color="#d97706">{r.replaced}</span></td>
+            {@render outcomes(r)}
             <td class="num mono">{r.output_message_count}</td>
           </tr>
         {/each}

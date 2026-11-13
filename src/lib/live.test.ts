@@ -369,6 +369,23 @@ describe('annotationsForArrange', () => {
     expect(annotationsForArrange([ann({ window_id: null })], arrange)).toHaveLength(0)
     expect(annotationsForArrange([ann({})], { ...arrange, window_id: null })).toHaveLength(0)
   })
+  it('matches an on_group_complete annotation to its own group of the message', () => {
+    // Two groups of one message: both arranged rows hold the same offset.
+    const group0 = { ...arrange, offsets: [90], task_ids: ['g0-t'], window_id: 10, group_index: 0 }
+    const group1 = { ...arrange, offsets: [90], task_ids: ['g1-t'], window_id: 11, group_index: 1 }
+    const hookAnn = (window_id: number) =>
+      ann({ scope: 'message', hook: 'on_group_complete', offset: 90, window_id })
+    const annotations = [hookAnn(10), hookAnn(11)]
+
+    expect(annotationsForArrange(annotations, group0).map((a) => a.window_id)).toEqual([10])
+    expect(annotationsForArrange(annotations, group1).map((a) => a.window_id)).toEqual([11])
+  })
+
+  it('still matches other message annotations of a group on its offset', () => {
+    const group0 = { ...arrange, offsets: [90], window_id: 10, group_index: 0 }
+    const msgAnn = ann({ scope: 'message', hook: 'on_message_complete', offset: 90, window_id: 3 })
+    expect(annotationsForArrange([msgAnn], group0)).toHaveLength(1)
+  })
 })
 
 describe('groupResultFromEvent', () => {

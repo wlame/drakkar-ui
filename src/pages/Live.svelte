@@ -127,6 +127,9 @@
   // Group Results rows (contract v1.32), newest first, seeded from
   // GET /api/v1/events and extended by WS frames, like the Arrange list.
   let groupResults = $state<GroupResultView[]>([])
+  // True once an arranged row with a group_index was seen: the worker runs a
+  // stream handler even when it has no on_group_complete hook.
+  let streamGroupSeen = $state(false)
   // The group_count of each message the Message Results feed shows (stream
   // handler only), keyed by messageKey(partition, offset); rebuilt with the
   // feed on every reload, so it is bounded by the feed's row count.
@@ -284,6 +287,7 @@
       case 'arranged': {
         const a = arrangeFromEvent(e)
         arranges = [a, ...arranges].slice(0, maxHistory)
+        if (a.group_index != null) streamGroupSeen = true
         queueArrangeLookup(a.task_ids)
         break
       }
@@ -326,8 +330,7 @@
         break
       }
       // task_complete / message_complete / window_complete drive the
-      // poll-backed result feeds;
-      // the next 5s reload (and tab open) picks them up.
+      // poll-backed result feeds; the next 5s reload (and tab open) picks them up.
     }
   }
 
@@ -449,6 +452,14 @@
     return Math.max(10 * partitionCount, 30)
   }
 
+  // Only a stream handler's message_complete rows carry group_count, so the
+  // counts are read only in stream mode: never against an older backend or a
+  // list handler.
+  const streamMode = $derived(hookFlags.group_complete || streamGroupSeen)
+
+  // Group Results renders as many rows as the other result tables.
+  const shownGroupResults = $derived(groupResults.slice(0, feedLimit()))
+
   // Group counts of the Message Results rows; a failed read keeps the last ones.
   async function loadMessageGroupCounts(limit: number): Promise<void> {
     try {
@@ -461,7 +472,7 @@
   // Opening the Message Results tab reads the counts at once instead of on
   // the next feed reload.
   $effect(() => {
-    if (activeTab === 'message-results' && hookFlags.message_complete) {
+    if (activeTab === 'message-results' && hookFlags.message_complete && streamMode) {
       void untrack(() => loadMessageGroupCounts(feedLimit()))
     }
   })
@@ -478,11 +489,14 @@
     if (hookFlags.message_complete) {
       // The feed's rows carry no group_count (contract v1.32), so the counts
       // of a stream handler's messages are read from the same number of
-      // message_complete rows, in parallel with the feed — only while the
-      // Message Results tab is open, the one view that shows them.
+      // message_complete rows, in parallel with the feed — only in stream
+      // mode and while the Message Results tab is open, the one view that
+      // shows them.
       const [rowsResult] = await Promise.allSettled([
         api.liveMessageResults(limit),
-        activeTab === 'message-results' ? loadMessageGroupCounts(limit) : Promise.resolve(),
+        activeTab === 'message-results' && streamMode
+          ? loadMessageGroupCounts(limit)
+          : Promise.resolve(),
       ])
       if (rowsResult.status === 'fulfilled') messageResults = rowsResult.value
     }
@@ -541,6 +555,7 @@
           metadata: ev.metadata ?? undefined,
         }),
       )
+      if (arranges.some((a) => a.group_index != null)) streamGroupSeen = true
       queueArrangeLookup(arranges.flatMap((a) => a.task_ids))
     } catch {
       /* best-effort */
@@ -572,7 +587,12 @@
   function setFrozen(f: boolean) {
     frozen = f
     socket?.setFrozen(f)
-    if (!f) void resync() // catch up on unfreeze
+    if (!f) {
+      // Catch up on unfreeze. Group rows come only from the WS and the seed,
+      // and the WS dropped them while frozen.
+      void resync()
+      void loadGroupResults()
+    }
   }
   function onKey(e: KeyboardEvent) {
     const t = e.target as HTMLElement
@@ -771,7 +791,7 @@
 {:else if activeTab === 'window-results'}
   <ResultsTab kind="window" rows={windowResults} />
 {:else if activeTab === 'group-results'}
-  <ResultsTab kind="group" rows={groupResults} />
+  <ResultsTab kind="group" rows={shownGroupResults} />
 {:else if activeTab === 'runtime'}
   <RuntimeTab refreshSeq={runtimeSeq} {hostPressure} />
 {/if}

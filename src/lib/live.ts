@@ -189,8 +189,14 @@ export function annotationsForArrange(
 ): AnnotationView[] {
   const offsets = new Set(arrange.offsets)
   const taskIds = new Set(arrange.task_ids)
+  const isStreamGroup = arrange.group_index != null
   return annotations.filter((a) => {
     if (a.partition !== arrange.partition) return false
+    // Every group of one message holds the same offset, so an annotation of
+    // on_group_complete belongs to its group by window_id (contract v1.32).
+    if (isStreamGroup && a.hook === 'on_group_complete') {
+      return arrange.window_id != null && a.window_id === arrange.window_id
+    }
     if (a.task_id != null) return taskIds.has(a.task_id)
     if (a.offset != null) return offsets.has(a.offset)
     return arrange.window_id != null && a.window_id === arrange.window_id
@@ -200,23 +206,14 @@ export function annotationsForArrange(
 // arrangeFromEvent builds an ArrangeView from an 'arranged' WS frame, parsing its
 // metadata (offsets + task_ids live there).
 export function arrangeFromEvent(e: WsEvent): ArrangeView {
-  let offsets: number[] = []
-  let task_ids: string[] = []
-  let message_labels: string[] = e.message_labels ?? []
-  let window_id: number | null = null
-  let group_index: number | null = null
-  if (e.metadata) {
-    try {
-      const m = JSON.parse(e.metadata) as Record<string, unknown>
-      if (Array.isArray(m.offsets)) offsets = m.offsets as number[]
-      if (Array.isArray(m.task_ids)) task_ids = m.task_ids as string[]
-      if (Array.isArray(m.message_labels)) message_labels = m.message_labels as string[]
-      if (typeof m.window_id === 'number') window_id = m.window_id
-      if (typeof m.group_index === 'number') group_index = m.group_index
-    } catch {
-      // leave defaults
-    }
-  }
+  const m = parseMetadataObject(e.metadata)
+  const offsets = Array.isArray(m.offsets) ? (m.offsets as number[]) : []
+  const task_ids = Array.isArray(m.task_ids) ? (m.task_ids as string[]) : []
+  const message_labels = Array.isArray(m.message_labels)
+    ? (m.message_labels as string[])
+    : (e.message_labels ?? [])
+  const window_id = numberOr(m.window_id, null)
+  const group_index = numberOr(m.group_index, null)
   return {
     ts: e.ts,
     partition: e.partition ?? -1,

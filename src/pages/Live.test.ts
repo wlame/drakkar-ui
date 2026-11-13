@@ -716,6 +716,16 @@ function groupRow(ts: number, groupIndex: number, over: Record<string, unknown> 
   })
 }
 
+// The Groups column of the Message Results table, when it is shown.
+const MESSAGE_GROUPS_COLUMN = 5
+
+// How many GET /api/v1/events?event_types=message_complete requests were sent.
+function messageCountReads(): number {
+  return fetchMock.mock.calls.filter(([input]) =>
+    String(input).includes('event_types=message_complete'),
+  ).length
+}
+
 // The Group # column of the Group Results table.
 const GROUP_INDEX_COLUMN = 2
 
@@ -907,8 +917,109 @@ describe('Live stream groups (contract v1.32)', () => {
     teardown()
   })
 
-  it('shows the group count of a message_complete event in Message Results', async () => {
+  it('sends no group count read to a backend older than v1.32', async () => {
+    // No group_complete key, and arranged rows without group_index.
     overviewPayload = { ...defaultOverview(), hook_flags: { message_complete: true } }
+    eventRowsByType = {
+      arranged: [
+        eventRow('arranged', NOW - 1, {
+          metadata: JSON.stringify({ offsets: [77], task_ids: ['t-1'] }),
+        }),
+      ],
+    }
+    const { target, teardown } = mountLive()
+    await settled()
+
+    selectTab(target, 'Message Results')
+    await settled()
+    await nextResync()
+    expect(messageCountReads()).toBe(0)
+
+    teardown()
+  })
+
+  it('sends no group count read for a list handler', async () => {
+    overviewPayload = {
+      ...defaultOverview(),
+      hook_flags: { message_complete: true, group_complete: false },
+    }
+    const { target, teardown } = mountLive()
+    await settled()
+
+    selectTab(target, 'Message Results')
+    await settled()
+    await nextResync()
+    expect(messageCountReads()).toBe(0)
+
+    teardown()
+  })
+
+  it('reads group counts once an arranged row with group_index is seen', async () => {
+    // A stream handler without on_group_complete: no flag, but its arranged
+    // rows mark stream mode.
+    overviewPayload = { ...defaultOverview(), hook_flags: { message_complete: true } }
+    eventRowsByType = {
+      arranged: [
+        eventRow('arranged', NOW - 1, {
+          metadata: JSON.stringify({ offsets: [77], task_ids: ['t-1'], group_index: 0 }),
+        }),
+      ],
+    }
+    const { target, teardown } = mountLive()
+    await settled()
+
+    selectTab(target, 'Message Results')
+    await settled()
+    expect(messageCountReads()).toBeGreaterThan(0)
+
+    teardown()
+  })
+
+  it('renders at most the feed limit of group rows', async () => {
+    // partition_count 1 gives the feed limit 30; max_ui_rows keeps 40.
+    overviewPayload = {
+      ...defaultOverview(),
+      max_ui_rows: 40,
+      hook_flags: { group_complete: true },
+    }
+    eventRowsByType = {
+      group_complete: Array.from({ length: 35 }, (_, i) => groupRow(NOW - 1 - i, 34 - i)),
+    }
+    const { target, teardown } = mountLive()
+    await settled()
+
+    selectTab(target, 'Group Results')
+    const rows = tableRows(target)
+    expect(rows).toHaveLength(30)
+    expect(rows[0][GROUP_INDEX_COLUMN]).toBe('34')
+
+    teardown()
+  })
+
+  it('reloads the group results on unfreeze', async () => {
+    overviewPayload = { ...defaultOverview(), hook_flags: { group_complete: true } }
+    const { target, teardown } = mountLive()
+    await settled()
+    const groupReads = () =>
+      fetchMock.mock.calls.filter(([input]) => String(input).includes('event_types=group_complete'))
+        .length
+    const before = groupReads()
+
+    const button = target.querySelector('button.freeze') as HTMLButtonElement
+    button.click()
+    flushSync()
+    button.click()
+    await settled()
+    expect(groupReads()).toBeGreaterThan(before)
+
+    teardown()
+  })
+
+  it('shows the group count of a message_complete event in Message Results', async () => {
+    overviewPayload = {
+      ...defaultOverview(),
+      hook_flags: { message_complete: true, group_complete: true },
+    }
     messageResultsPayload = [
       {
         ts: NOW - 1,
@@ -956,8 +1067,10 @@ describe('Live stream groups (contract v1.32)', () => {
       'Groups',
     )
     let rows = tableRows(target)
-    expect(rows[0]).toContain('3')
-    expect(rows[1]).toContain('-')
+    // Columns: Time, Source, Hook, End-to-end, Tasks, Groups, Outputs. A
+    // message without a known count shows an empty cell.
+    expect(rows[0][MESSAGE_GROUPS_COLUMN]).toBe('3')
+    expect(rows[1][MESSAGE_GROUPS_COLUMN]).toBe('')
 
     // The counts are read again with the feed on the 5s tick.
     eventRowsByType = {
@@ -974,13 +1087,16 @@ describe('Live stream groups (contract v1.32)', () => {
     }
     await nextResync()
     rows = tableRows(target)
-    expect(rows[1]).toContain('4')
+    expect(rows[1][MESSAGE_GROUPS_COLUMN]).toBe('4')
 
     teardown()
   })
 
   it('reads the message group counts only while Message Results is open', async () => {
-    overviewPayload = { ...defaultOverview(), hook_flags: { message_complete: true } }
+    overviewPayload = {
+      ...defaultOverview(),
+      hook_flags: { message_complete: true, group_complete: true },
+    }
     const countReads = () =>
       fetchMock.mock.calls.filter((c) => String(c[0]).includes('event_types=message_complete'))
         .length
