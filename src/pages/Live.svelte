@@ -4,7 +4,7 @@
   // updates the Arrange tab. Every 5s a DB resync via /api/v1/recent-tasks reconciles
   // anything missed (the WS drops frames for slow consumers and hides sub-threshold
   // fast tasks). The on_*_complete result feeds poll every 5s like the reference.
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import { api } from '../lib/api'
   import type { LiveOverview } from '../lib/types'
   import type { ArrangeTaskState, TaskResult, MessageResult, WindowResult, WsEvent, WorkerPeer } from '../lib/api'
@@ -449,6 +449,23 @@
     return Math.max(10 * partitionCount, 30)
   }
 
+  // Group counts of the Message Results rows; a failed read keeps the last ones.
+  async function loadMessageGroupCounts(limit: number): Promise<void> {
+    try {
+      messageGroupCounts = groupCountsFromRows(await api.events({ event_types: 'message_complete', limit }))
+    } catch {
+      /* keep */
+    }
+  }
+
+  // Opening the Message Results tab reads the counts at once instead of on
+  // the next feed reload.
+  $effect(() => {
+    if (activeTab === 'message-results' && hookFlags.message_complete) {
+      void untrack(() => loadMessageGroupCounts(feedLimit()))
+    }
+  })
+
   async function reloadFeeds() {
     const limit = feedLimit()
     if (hookFlags.task_complete) {
@@ -461,15 +478,13 @@
     if (hookFlags.message_complete) {
       // The feed's rows carry no group_count (contract v1.32), so the counts
       // of a stream handler's messages are read from the same number of
-      // message_complete rows, in parallel with the feed.
-      const [rowsResult, countsResult] = await Promise.allSettled([
+      // message_complete rows, in parallel with the feed — only while the
+      // Message Results tab is open, the one view that shows them.
+      const [rowsResult] = await Promise.allSettled([
         api.liveMessageResults(limit),
-        api.events({ event_types: 'message_complete', limit }),
+        activeTab === 'message-results' ? loadMessageGroupCounts(limit) : Promise.resolve(),
       ])
       if (rowsResult.status === 'fulfilled') messageResults = rowsResult.value
-      if (countsResult.status === 'fulfilled') {
-        messageGroupCounts = groupCountsFromRows(countsResult.value)
-      }
     }
     if (hookFlags.window_complete) {
       try {

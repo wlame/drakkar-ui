@@ -315,6 +315,16 @@ export function mergeGroupResults(
   return [...fresh, ...snapshot].sort((a, b) => b.ts - a.ts).slice(0, max)
 }
 
+/**
+ * The list key of a Group Results row: its time, partition and window_id, or
+ * offset and group_index when the row has no window_id, so two groups of one
+ * message that end in the same millisecond keep apart.
+ */
+export function groupRowKey(g: GroupResultView): string {
+  const id = g.window_id ?? `${g.offset}:${g.group_index}`
+  return `${g.ts}:${g.partition}:${id}`
+}
+
 /** The group_count of a message_complete row (stream mode only), else null. */
 export function messageGroupCount(metadata: string | null | undefined): number | null {
   return numberOr(parseMetadataObject(metadata).group_count, null)

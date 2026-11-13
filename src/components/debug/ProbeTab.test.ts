@@ -177,3 +177,136 @@ describe('ProbeTab prefill', () => {
     cleanup()
   })
 })
+
+// A probe report as the backend sends it; `extra` adds or replaces keys.
+function probeReport(extra: Record<string, unknown> = {}) {
+  return {
+    input: {
+      value: '{}',
+      key: null,
+      partition: 0,
+      offset: 5,
+      topic: 'orders',
+      timestamp: null,
+      use_cache: false,
+    },
+    deserialize_error: null,
+    parsed_payload: {},
+    message_label: '0:5',
+    arrange: { duration_seconds: 0.01, collect_result: null, error: null },
+    tasks: [],
+    on_message_complete: { duration_seconds: 0.001, collect_result: null, error: null },
+    on_window_complete: null,
+    planned_sink_payloads: [],
+    cache_calls: [],
+    cache_summary: { calls: 0, hits: 0, misses: 0, writes_suppressed: 0 },
+    timing: {},
+    errors: [],
+    truncated: false,
+    user_details: null,
+    ...extra,
+  }
+}
+
+function probeGroup(index: number, extra: Record<string, unknown> = {}) {
+  return {
+    index,
+    task_count: 2,
+    succeeded: 2,
+    failed: 0,
+    replaced: 0,
+    labels: { kind: [`k${index}`, `j${index}`] },
+    notes: { seen: 2 },
+    skipped_deliveries: {},
+    hook: { duration_seconds: 0.002, collect_result: { kafka: [{}] }, error: null },
+    ...extra,
+  }
+}
+
+async function renderReport(report: Record<string, unknown>) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response(JSON.stringify(report), { status: 200 })),
+  )
+  const target = document.createElement('div')
+  document.body.appendChild(target)
+  const app = mount(ProbeTab, { target, props: {} })
+  await settled()
+  const value = field(target, 'Value')
+  value.value = '{}'
+  value.dispatchEvent(new Event('input', { bubbles: true }))
+  flushSync()
+  runButton(target).click()
+  await settled()
+  return {
+    target,
+    cleanup: () => {
+      unmount(app)
+      target.remove()
+    },
+  }
+}
+
+describe('ProbeTab stream groups', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('lists the groups with their counters, labels, notes and hook outcome', async () => {
+    const { target, cleanup } = await renderReport(
+      probeReport({
+        groups: [probeGroup(0), probeGroup(1, { failed: 1, succeeded: 1, hook: null })],
+        stream_truncated: false,
+      }),
+    )
+
+    const section = target.querySelector('.probe-groups')
+    expect(section?.querySelector('h3')?.textContent).toBe('Groups (2)')
+    const rows = [...section!.querySelectorAll('tbody tr')]
+    expect(rows).toHaveLength(2)
+    const first = [...rows[0].querySelectorAll('td')].map((td) => td.textContent?.trim())
+    expect(first.slice(0, 8)).toEqual(['0', '2', '2', '0', '0', 'kind=k0 j0', 'seen=2', ''])
+    expect(first[8]).toContain('kafka: 1')
+    expect(rows[1].querySelector('.group-hook')?.textContent).toContain('not overridden')
+    expect(target.querySelector('.stream-truncated')).toBeNull()
+    expect(target.textContent).toContain('arrange_stream')
+    cleanup()
+  })
+
+  it('says the probe ran the first 5 groups only when the stream was cut', async () => {
+    const groups = [0, 1, 2, 3, 4].map((index) => probeGroup(index))
+    const { target, cleanup } = await renderReport(probeReport({ groups, stream_truncated: true }))
+
+    expect(target.querySelector('.stream-truncated')?.textContent).toContain(
+      'The probe ran the first 5 groups only',
+    )
+    cleanup()
+  })
+
+  it('shows the stream error on the arrange stage and keeps the groups that ran', async () => {
+    const { target, cleanup } = await renderReport(
+      probeReport({
+        arrange: {
+          duration_seconds: 0.01,
+          collect_result: null,
+          error: 'RuntimeError: stream broke',
+        },
+        on_message_complete: null,
+        groups: [probeGroup(0)],
+        stream_truncated: false,
+      }),
+    )
+
+    expect(target.textContent).toContain('arrange_stream raised: RuntimeError: stream broke')
+    expect(target.querySelectorAll('.probe-groups tbody tr')).toHaveLength(1)
+    cleanup()
+  })
+
+  it('shows no groups for a handler that uses arrange', async () => {
+    const { target, cleanup } = await renderReport(probeReport())
+
+    expect(target.querySelector('.probe-groups')).toBeNull()
+    expect(target.textContent).toContain('arrange returned no tasks')
+    cleanup()
+  })
+})

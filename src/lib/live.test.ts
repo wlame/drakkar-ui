@@ -10,6 +10,7 @@ import {
   mergeGroupResults,
   messageGroupCount,
   groupCountsFromRows,
+  groupRowKey,
   type AnnotationView,
   type GroupResultView,
 } from './live'
@@ -484,5 +485,30 @@ describe('groupCountsFromRows', () => {
       { partition: 1, offset: 1, metadata: null },
     ])
     expect(counts).toEqual({})
+  })
+})
+
+describe('groupRowKey', () => {
+  const row = (window_id: number | null, group_index: number | null): GroupResultView => ({
+    ts: 5,
+    partition: 0,
+    offset: 10,
+    duration: 0,
+    group_index,
+    window_id,
+    task_count: 1,
+    succeeded: 1,
+    failed: 0,
+    replaced: 0,
+    output_message_count: 0,
+  })
+
+  it('keys a row by its window_id', () => {
+    expect(groupRowKey(row(42, 1))).toBe('5:0:42')
+  })
+
+  it('falls back to offset and group_index when window_id is null', () => {
+    expect(groupRowKey(row(null, 1))).toBe('5:0:10:1')
+    expect(groupRowKey(row(null, 1))).not.toBe(groupRowKey(row(null, 2)))
   })
 })

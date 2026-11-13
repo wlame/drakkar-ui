@@ -7,6 +7,7 @@
     type DebugReport,
     type ProbeRequest,
     type ProbeTaskEntry,
+    type ProbeGroup,
     type CollectResult,
     type PlannedSinkRecord,
   } from '../../lib/api'
@@ -143,6 +144,22 @@
     if (!c) return ''
     return SINK_TYPES.filter((k) => (c[k] as unknown[])?.length).map((k) => `${k}: ${(c[k] as unknown[]).length}`).join(' · ')
   }
+  // Contract v1.32: the probe runs at most this many groups of a stream handler.
+  const PROBE_MAX_STREAM_GROUPS = 5
+  function joinEntries(values: Record<string, unknown>, render: (v: unknown) => string): string {
+    return Object.entries(values)
+      .map(([k, v]) => `${k}=${render(v)}`)
+      .join(', ')
+  }
+  function groupLabels(g: ProbeGroup): string {
+    return joinEntries(g.labels, (v) => (v as string[]).join(' '))
+  }
+  function groupNotes(g: ProbeGroup): string {
+    return joinEntries(g.notes, (v) => String(v))
+  }
+  function groupSkipped(g: ProbeGroup): string {
+    return joinEntries(g.skipped_deliveries, (v) => String(v))
+  }
   function pretty(v: unknown): string {
     try {
       return typeof v === 'string' ? v : JSON.stringify(v, null, 2)
@@ -272,9 +289,13 @@
 
   <!-- Arrange -->
   <section class="card">
-    <h3>Arrange</h3>
+    <h3>{report.groups ? 'arrange_stream' : 'Arrange'}</h3>
     {#if report.arrange.error}
-      <p class="error">arrange raised: {report.arrange.error}</p>
+      <p class="error">{report.groups ? 'arrange_stream' : 'arrange'} raised: {report.arrange.error}</p>
+      {#if report.groups?.length}<p class="muted">the groups that ran before the error are listed below</p>{/if}
+    {:else if report.groups}
+      <p class="muted">{report.groups.length} groups · {report.tasks.length} tasks · {durSec(report.arrange.duration_seconds)} in pulls</p>
+      {#if report.groups.length === 0}<p class="muted">arrange_stream yielded no group — message would be skipped</p>{/if}
     {:else}
       <p class="muted">{report.tasks.length} tasks generated · {durSec(report.arrange.duration_seconds)}</p>
       {#if report.tasks.length === 0}<p class="muted">arrange returned no tasks — message would be skipped</p>{/if}
@@ -306,6 +327,54 @@
               <td class="mono argv" title={t.args.join(' ')}>{t.args.join(' ')}</td>
               <td class="num mono">{t.stdout.length || ''}</td>
               <td class="num mono" style:color={t.stderr.length ? '#dc2626' : undefined}>{t.stderr.length || ''}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </section>
+  {/if}
+
+  <!-- Stream groups (contract v1.32; absent for a handler that uses arrange) -->
+  {#if report.groups && report.groups.length}
+    <section class="card probe-groups">
+      <h3>Groups ({report.groups.length})</h3>
+      {#if report.stream_truncated}
+        <p class="warn stream-truncated">The probe ran the first {PROBE_MAX_STREAM_GROUPS} groups only; the stream had more.</p>
+      {/if}
+      <table>
+        <thead>
+          <tr>
+            <th class="num">#</th>
+            <th class="num">tasks</th>
+            <th class="num">succeeded</th>
+            <th class="num">failed</th>
+            <th class="num">replaced</th>
+            <th>labels</th>
+            <th>notes</th>
+            <th>skipped</th>
+            <th>on_group_complete</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each report.groups as g (g.index)}
+            <tr>
+              <td class="num mono">{g.index}</td>
+              <td class="num mono">{g.task_count}</td>
+              <td class="num mono">{g.succeeded}</td>
+              <td class="num mono" style:color={g.failed ? '#dc2626' : undefined}>{g.failed}</td>
+              <td class="num mono">{g.replaced}</td>
+              <td class="mono preview" title={groupLabels(g)}>{groupLabels(g)}</td>
+              <td class="mono preview" title={groupNotes(g)}>{groupNotes(g)}</td>
+              <td class="mono">{groupSkipped(g)}</td>
+              <td class="group-hook">
+                {#if !g.hook}
+                  <span class="muted">not overridden</span>
+                {:else if g.hook.error}
+                  <span class="error">{g.hook.error}</span>
+                {:else}
+                  <span class="muted">{durSec(g.hook.duration_seconds)}{#if sinkCounts(g.hook.collect_result)} · {sinkCounts(g.hook.collect_result)}{/if}</span>
+                {/if}
+              </td>
             </tr>
           {/each}
         </tbody>

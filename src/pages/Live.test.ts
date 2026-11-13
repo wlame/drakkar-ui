@@ -951,6 +951,7 @@ describe('Live stream groups (contract v1.32)', () => {
     await settled()
 
     selectTab(target, 'Message Results')
+    await settled()
     expect([...target.querySelectorAll('thead th')].map((th) => th.textContent?.trim())).toContain(
       'Groups',
     )
@@ -974,6 +975,30 @@ describe('Live stream groups (contract v1.32)', () => {
     await nextResync()
     rows = tableRows(target)
     expect(rows[1]).toContain('4')
+
+    teardown()
+  })
+
+  it('reads the message group counts only while Message Results is open', async () => {
+    overviewPayload = { ...defaultOverview(), hook_flags: { message_complete: true } }
+    const countReads = () =>
+      fetchMock.mock.calls.filter((c) => String(c[0]).includes('event_types=message_complete'))
+        .length
+    const { target, teardown } = mountLive()
+    await settled()
+    await nextResync()
+    expect(countReads()).toBe(0)
+
+    selectTab(target, 'Message Results')
+    await settled()
+    expect(countReads()).toBe(1)
+    await nextResync()
+    expect(countReads()).toBe(2)
+
+    selectTab(target, 'Executors')
+    await settled()
+    await nextResync()
+    expect(countReads()).toBe(2)
 
     teardown()
   })
@@ -1007,6 +1032,7 @@ describe('Live stream groups (contract v1.32)', () => {
     await settled()
 
     selectTab(target, 'Message Results')
+    await settled()
     expect(
       [...target.querySelectorAll('thead th')].map((th) => th.textContent?.trim()),
     ).not.toContain('Groups')

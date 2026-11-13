@@ -8,7 +8,7 @@
   import { api, type TaskResult, type MessageResult, type WindowResult } from '../../lib/api'
   import { link } from '../../lib/router'
   import { fmtTime, fmtTimeMs, durSec, fmtLatency } from '../../lib/format'
-  import { baseTaskId, messageKey, type GroupResultView } from '../../lib/live'
+  import { baseTaskId, groupRowKey, messageKey, type GroupResultView } from '../../lib/live'
   import KafkaIcon from '../KafkaIcon.svelte'
   import SidePanel from '../SidePanel.svelte'
 
@@ -117,7 +117,7 @@
           </tr>
         {/each}
       {:else if kind === 'group'}
-        {#each groupRows as r (`${r.ts}:${r.partition}:${r.window_id}`)}
+        {#each groupRows as r (groupRowKey(r))}
           <tr>
             <td class="muted nowrap" title={fmtTimeMs(r.ts)}>{fmtTime(r.ts)}</td>
             <td class="mono">
