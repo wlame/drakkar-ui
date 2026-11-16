@@ -2721,8 +2721,9 @@ election's store reports it. No query parameter.
 }
 ```
 
-- `election` is `null` when the worker runs no cluster task (it then has no
-  election), and `leases` is empty. `started`: the provider has started. It
+- `election` is `null` when the worker runs no cluster task, and `leases` is
+  empty. This holds also when the worker keeps an election only for the
+  detach budget (v1.33): the view lists cluster tasks only. `started`: the provider has started. It
   starts at the first slot that needs it; this read never starts it.
 - One row per cluster task of the worker, sorted by name: the user tasks and
   `history.archive` when the worker runs it as a cluster task. `system` is
@@ -3424,15 +3425,23 @@ UI polls the GET while `state` is `detaching` or `attaching`, then shows
 the outcome. An operator detach of a worker that the handler detached
 takes the origin and replaces the deadline.
 
-- `403 {"detail": "..."}` with a hint when `ui.detach_enabled` is false.
-- `422` (the usual envelope) for a duration out of range or a body that
-  does not parse.
+- `403 {"detail": "..."}` with a hint when `ui.detach_enabled` is false, or
+  the worker has no Kafka source.
+- `422` (the usual envelope, `loc` `["body", "duration_seconds"]` for a
+  duration out of range) for a duration out of range or a body that does
+  not parse. With the switch off, a body that does not parse may answer
+  422 before the 403; nothing is started in either case.
+- `503 {"detail": "..."}` when the worker's main loop does not answer within
+  5 s, or is closed because the worker stops. The request may or may not
+  have started; the client reads the GET before it asks again.
 
 ### `POST /api/v1/debug/attach`
 
 An operator attach. No body. It starts the same way and answers
 `202 DetachState` at once. Idempotent: on an attached worker it changes
-nothing. `403 {"detail": "..."}` when `ui.detach_enabled` is false.
+nothing. `403 {"detail": "..."}` when `ui.detach_enabled` is false, or
+the worker has no Kafka source. `503 {"detail": "..."}` as for the detach
+route, when the worker's main loop does not answer within 5 s.
 
 All three routes are UI routes: they need `api.enabled` and `ui.enabled`
 and follow `ui.auth_token`, like every other `/api/v1/debug` route.
@@ -3441,8 +3450,10 @@ and follow `ui.auth_token`, like every other `/api/v1/debug` route.
 
 Rows of `GET /api/v1/workers` gain optional `detached` (boolean or null),
 taken from `features.kafka.detached` of the worker's registry card. It is
-true while that worker is detached. **A missing key or null means
-unknown**: a worker with no Kafka source, or a backend that does not
+true while that worker is outside its group or on its way out or back (the
+states `detaching`, `detached` and `attaching`), as its registry card
+publishes it, and false while it is `attached`. **A missing key or null
+means unknown**: a worker with no Kafka source, or a backend that does not
 publish it. The UI shows a "detached" mark only for `true`.
 
 ### Recorder events `worker_detached` and `worker_attached`
