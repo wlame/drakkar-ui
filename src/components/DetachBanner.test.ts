@@ -115,4 +115,57 @@ describe('DetachBanner', () => {
     expect(target.textContent?.trim()).toBe('')
     cleanup()
   })
+
+  it('says the deadline has passed instead of counting below zero', async () => {
+    stubState(
+      detachState({
+        state: 'detached',
+        origin: 'operator',
+        since_ms: Date.now() - 120_000,
+        until_ms: Date.now() - 1_000,
+      }),
+    )
+    const { target, cleanup } = renderMounted()
+    await settled()
+    const text = target.querySelector('.detach-banner')!.textContent ?? ''
+    expect(text).toContain('the deadline has passed')
+    expect(text).not.toContain('0:00')
+    cleanup()
+  })
+
+  it('says the state is unknown after two failed reads, and drops the sign on a good read', async () => {
+    vi.setSystemTime(Date.UTC(2026, 10, 16, 14, 0, 0))
+    const detached = detachState({
+      state: 'detached',
+      origin: 'operator',
+      since_ms: Date.now(),
+      until_ms: Date.now() + 600_000,
+    })
+    let failing = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        failing
+          ? new Response('boom', { status: 500 })
+          : new Response(JSON.stringify(detached), { status: 200 }),
+      ),
+    )
+    const { target, cleanup } = renderMounted()
+    await settled()
+    failing = true
+    await vi.advanceTimersByTimeAsync(5_000)
+    flushSync()
+    expect(target.querySelector('.detach-stale')).toBeNull()
+    await vi.advanceTimersByTimeAsync(5_000)
+    flushSync()
+    expect(target.querySelector('.detach-stale')?.textContent).toBe(
+      'state unknown since 14:00:00 UTC: the worker does not answer',
+    )
+    failing = false
+    await vi.advanceTimersByTimeAsync(5_000)
+    flushSync()
+    expect(target.querySelector('.detach-stale')).toBeNull()
+    expect(target.querySelector('.detach-banner')).not.toBeNull()
+    cleanup()
+  })
 })

@@ -16,6 +16,7 @@
   import {
     DETACH_REASON_MAX_CHARS,
     controlVisible,
+    detachStaleSince,
     detachChoices,
     detachState,
     fmtDetachDuration,
@@ -36,6 +37,7 @@
   let popEl = $state<HTMLDivElement>()
 
   const snapshot = $derived($detachState)
+  const staleSince = $derived($detachStaleSince)
   const choices = $derived(snapshot ? detachChoices(snapshot.max_duration_seconds) : [])
   // The configured default when it is one of the choices, else the first.
   const duration = $derived(
@@ -149,6 +151,12 @@
       >
     {/if}
   </div>
+  {#if staleSince != null}
+    <!-- The buttons stay usable: a POST may get through when a read did not. -->
+    <p class="detach-stale" role="status">
+      The worker does not answer; this state is from {fmtUtcTimeMs(staleSince)}
+    </p>
+  {/if}
   {#if refused}
     <p class="detach-outcome" role="status">
       Last {refused.action} by {refused.origin} at {fmtUtcTimeMs(refused.at_ms)} did not
@@ -239,6 +247,7 @@
   /* The outcome and errors each own a full line of the header row the
      control sits in. */
   .detach-outcome,
+  .detach-stale,
   .error {
     flex-basis: 100%;
     margin: 0;
@@ -246,5 +255,8 @@
   }
   .detach-outcome {
     color: var(--warn);
+  }
+  .detach-stale {
+    color: var(--muted);
   }
 </style>

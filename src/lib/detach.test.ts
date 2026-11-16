@@ -11,6 +11,7 @@ import {
   bannerVisible,
   controlVisible,
   detachChoices,
+  detachStaleSince,
   detachState,
   fmtTimeLeft,
   fmtUtcTimeMs,
@@ -221,6 +222,14 @@ describe('the shared poll loop', () => {
     releaseRead(answer(state()))
     await vi.advanceTimersByTimeAsync(0)
     expect(get(detachState)?.state).toBe('detaching')
+
+    // The next read starts after the POST answer, so it is taken.
+    await vi.advanceTimersByTimeAsync(DETACH_FAST_POLL_MS)
+    releaseRead(
+      answer(state({ state: 'detached', origin: 'operator', until_ms: Date.now() + 900_000 })),
+    )
+    await vi.advanceTimersByTimeAsync(0)
+    expect(get(detachState)?.state).toBe('detached')
     leave()
   })
 
@@ -252,5 +261,65 @@ describe('the shared poll loop', () => {
     const calls = reads.mock.calls.length
     await vi.advanceTimersByTimeAsync(DETACH_SLOW_POLL_MS * 3)
     expect(reads.mock.calls.length).toBe(calls)
+  })
+})
+
+describe('the stale sign', () => {
+  afterEach(() => {
+    resetDetachForTests()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  // GET answers come from `answers` in order; the last one repeats.
+  function serve(answers: (() => Response)[]) {
+    let index = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => answers[Math.min(index++, answers.length - 1)]()),
+    )
+  }
+
+  const detached = () =>
+    answer(state({ state: 'detached', origin: 'operator', until_ms: Date.now() + 600_000 }))
+  const failure = () => new Response('boom', { status: 500 })
+
+  it('is set after two failed reads in a row, with the time of the last good read', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(Date.UTC(2026, 10, 16, 14, 0, 0))
+    serve([detached, failure])
+    const leave = useDetachState()
+    await vi.advanceTimersByTimeAsync(0)
+    const goodReadAt = Date.now()
+    expect(get(detachStaleSince)).toBeNull()
+
+    await vi.advanceTimersByTimeAsync(DETACH_SLOW_POLL_MS)
+    expect(get(detachStaleSince)).toBeNull()
+
+    await vi.advanceTimersByTimeAsync(DETACH_SLOW_POLL_MS)
+    expect(get(detachStaleSince)).toBe(goodReadAt)
+    expect(get(detachState)?.state).toBe('detached')
+    leave()
+  })
+
+  it('clears on the first good read', async () => {
+    vi.useFakeTimers()
+    serve([detached, failure, failure, detached])
+    const leave = useDetachState()
+    await vi.advanceTimersByTimeAsync(DETACH_SLOW_POLL_MS * 2)
+    expect(get(detachStaleSince)).not.toBeNull()
+    await vi.advanceTimersByTimeAsync(DETACH_SLOW_POLL_MS)
+    expect(get(detachStaleSince)).toBeNull()
+    leave()
+  })
+
+  it('a 404 still hides the feature at once and sets no sign', async () => {
+    vi.useFakeTimers()
+    serve([detached, () => new Response('Not Found', { status: 404 })])
+    const leave = useDetachState()
+    await vi.advanceTimersByTimeAsync(DETACH_SLOW_POLL_MS)
+    expect(get(detachState)).toBeNull()
+    expect(get(detachStaleSince)).toBeNull()
+    leave()
   })
 })

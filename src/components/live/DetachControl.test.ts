@@ -274,6 +274,35 @@ describe('DetachControl', () => {
     cleanup()
   })
 
+  it('keeps its view and its buttons while the worker does not answer', async () => {
+    vi.setSystemTime(Date.UTC(2026, 10, 16, 14, 0, 0))
+    const { stub, holder } = stubFetch(
+      detachState({ state: 'detached', origin: 'operator', until_ms: Date.now() + 600_000 }),
+    )
+    let failing = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+        failing && init?.method !== 'POST'
+          ? new Response('boom', { status: 502 })
+          : stub(input, init),
+      ),
+    )
+    const { target, cleanup } = renderMounted()
+    await settled()
+    failing = true
+    await settled(10_000)
+    expect(target.querySelector('.detach-stale')?.textContent).toBe(
+      'The worker does not answer; this state is from 14:00:00 UTC',
+    )
+    const attach = buttonByText(target, 'Attach now')!
+    expect(attach.disabled).toBe(false)
+    attach.click()
+    await settled()
+    expect(holder.posts.map((p) => p.url)).toEqual(['/api/v1/debug/attach'])
+    cleanup()
+  })
+
   // A POST that fails with `answer`, against an attached worker; returns the
   // error line the control shows.
   async function failedDetach(answer: () => Promise<Response>): Promise<string | null> {

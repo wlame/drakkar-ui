@@ -148,7 +148,19 @@ export function requestErrorText(error: unknown): string {
 /** The worker's detach state; null before the first answer and on an older worker. */
 export const detachState = writable<DetachState | null>(null)
 
+/**
+ * Epoch milliseconds of the last good read while the worker does not answer
+ * (two failed reads in a row); null otherwise. The last state stays shown,
+ * and this says how old it is.
+ */
+export const detachStaleSince = writable<number | null>(null)
+
+/** Failed reads in a row before the state counts as stale; one blip is not. */
+export const DETACH_STALE_AFTER_FAILED_READS = 2
+
 let users = 0
+let lastGoodReadMs: number | null = null
+let failedReads = 0
 let timer: ReturnType<typeof setTimeout> | undefined
 let fastUntilMs = 0
 let current: DetachState | null = null
@@ -162,6 +174,28 @@ let requestSeq = 0
 function publish(value: DetachState | null) {
   current = value
   detachState.set(value)
+}
+
+// A good read: the state is current again.
+function readSucceeded() {
+  lastGoodReadMs = Date.now()
+  failedReads = 0
+  detachStaleSince.set(null)
+}
+
+// A failed read (not a 404): the second one in a row marks the state stale.
+// Without any good read there is no state to mark.
+function readFailed() {
+  failedReads += 1
+  if (failedReads >= DETACH_STALE_AFTER_FAILED_READS && lastGoodReadMs !== null) {
+    detachStaleSince.set(lastGoodReadMs)
+  }
+}
+
+function forgetReads() {
+  lastGoodReadMs = null
+  failedReads = 0
+  detachStaleSince.set(null)
 }
 
 function schedule(gen: number) {
@@ -182,10 +216,13 @@ async function poll(gen: number) {
     try {
       value = await api.getDetachState()
     } catch {
+      if (gen !== generation) return
+      readFailed()
       schedule(gen)
       return
     }
     if (gen !== generation) return
+    readSucceeded()
     if (seqAtStart !== requestSeq) {
       // A POST answered while this read was in flight; its body is newer.
       schedule(gen)
@@ -217,6 +254,7 @@ export function useDetachState(): () => void {
     clearTimeout(timer)
     timer = undefined
     fastUntilMs = 0
+    forgetReads()
     publish(null)
   }
 }
@@ -239,6 +277,7 @@ export function resetDetachForTests(): void {
   timer = undefined
   fastUntilMs = 0
   requestSeq = 0
+  forgetReads()
   publish(null)
 }
 
