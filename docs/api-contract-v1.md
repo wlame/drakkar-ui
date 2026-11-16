@@ -171,7 +171,9 @@ the appendix.
   debug_port|null, debug_url|null, url, cluster, is_current}` plus the v1.18
   liveness fields, the v1.23 registry fields and the v1.24 fields
   `cluster_tasks_hash:str|null` and `cluster_tasks_match:bool|null` (see
-  "v1.24 additions"); sorted clustered-first then by name.
+  "v1.24 additions"), and the v1.33 field `detached:bool|null` (optional;
+  missing or null means unknown, see "v1.33 changes"); sorted
+  clustered-first then by name.
 - `GET /api/v1/debug/processors` → `{processors:{"<pid>":{queue_size,
   inflight_count, arranging:bool, arrange:null|{duration:float(2dp),
   message_count, labels:[...]}, pending_count, completed_count, total_tracked,
@@ -412,7 +414,7 @@ format `YYYY-MM-DDTHH:MM:SS.ffffffZ` (fixed six-digit microseconds); the
 
 ## Recorder event-type vocabulary (the `event` field)
 
-**PINNED (v1.32).** An `event` field carries one of these 32
+**PINNED (v1.33).** An `event` field carries one of these 34
 names and nothing else; every one of them is stored in the `events`
 table and sent on `/ws`. The UI matches on these names,
 so a name is as contractual as a column: adding, renaming or removing one is
@@ -461,13 +463,17 @@ each name and whether it is stored. The Python repo owns the fixture
 | `webapp_request_received` | both | `events` + `/ws` |
 | `webapp_request_timeout` | both | `events` + `/ws` |
 | `window_complete` | both | `events` + `/ws` |
+| `worker_attached` | Python only | `events` + `/ws` |
+| `worker_detached` | Python only | `events` + `/ws` |
 
 A UI must treat an unknown `event` value as renderable-but-uncategorised
 rather than an error: a mixed fleet can put rows from a newer backend in
 front of an older UI. `offload` is currently Python-only — the Go backend
 accepts `offload.*` config but does not run the pool yet, so it writes no
 such row. `group_complete` (v1.32) is currently Python-only too: the Go
-backend has no `arrange_stream` hook yet.
+backend has no `arrange_stream` hook yet. `worker_detached` and
+`worker_attached` (v1.33) are Python-only for the same reason: the Go
+backend has no detach yet.
 
 ## Capability gaps (future, not required for v1 conformance)
 
@@ -2974,7 +2980,7 @@ prefix). The two combine: a metric must match one of `names` or the
 ### `GET /api/v1/agent/state`
 
 Parts: `health`, `budget`, `partitions`, `sinks`, `recorder`,
-`autodiscover`, `recent_failures`. One snapshot, read from the existing
+`autodiscover`, `detach` (v1.33), `recent_failures`. One snapshot, read from the existing
 readers; nothing new is measured.
 
 ```
@@ -2995,6 +3001,8 @@ readers; nothing new is measured.
 "autodiscover": {"enabled": bool, "provider": str|null,
                  "peers_online": int|null, "peers_offline": int|null,
                  "cluster_tasks_match": bool|null}
+"detach": {"state": str, "origin": str|null, "reason": str,   // v1.33
+           "since": number|null, "until": number|null}
 "recent_failures": null | {"failures": [ {"task_id": str, "ts": number,
                                    "partition": int|null,
                                    "offset": int|null,
@@ -3296,6 +3304,177 @@ A backend older than v1.32 sends no `hook_flags.group_complete`, no
 `groups` or `stream_truncated` in a probe report. The UI then shows no
 Group Results tab and no groups, as before. A UI older than v1.32 shows a
 `group_complete` row as an uncategorised event.
+
+## v1.33 changes (2026-11-16)
+
+A worker can **detach**: leave its Kafka consumer group for a bounded time
+and then **attach** (join it again) without a restart. A budget of slots in
+the autodiscover store limits how many workers of one consumer group are
+detached at once. A detach is asked by the handler (origin `handler`) or by
+an operator through the routes below (origin `operator`). This version adds
+three routes, one optional key on `Worker` rows, two event names, and one
+part and one rule on the agent surface.
+
+The feature is currently Python only, like `group_complete` (v1.32): the Go
+backend does not serve the routes, writes neither event and publishes no
+`detached` value yet. A client MUST hide the detach control when
+`GET /api/v1/debug/detach` answers 404, and when `enabled` is false.
+
+### States, origins, reasons and causes (closed sets)
+
+The state of the worker's Kafka source, `state`:
+
+| State | Meaning |
+|---|---|
+| `attached` | A member of the group. The start state. |
+| `detaching` | A slot is held and the worker is leaving the group; the revoke drain runs. |
+| `detached` | Not a member of the group. The slot is held and its lease refreshed; a deadline is set. |
+| `attaching` | The worker is joining the group again; the slot is released after the join. |
+
+The origin of a detach, `origin`: `handler` or `operator`.
+
+The refusal reasons of a detach, checked in this order (the first that
+applies answers):
+
+| Reason | When |
+|---|---|
+| `not_running` | The Kafka source has not finished its first poll. |
+| `stopping` | A stop was requested. |
+| `disabled` | `sources.kafka.detach.enabled` is false, or the worker has no Kafka source. |
+| `inside_pipeline_hook` | A handler call made as part of a partition's work. |
+| `already_detached` | An operator detach is active (handler calls only). |
+| `cooldown` | A handler call sooner than `sources.kafka.detach.cooldown` after the last attach. |
+| `too_few_workers` | Fewer than `sources.kafka.detach.min_attached` attached workers would remain. |
+| `budget_full` | Every slot is held by another worker. |
+| `store_unavailable` | No slot was won, and at least one store call failed or made no attempt. |
+| `leave_failed` | The revoke did not end within its bound. |
+
+The refusal reasons of an attach: `not_running`, `stopping` and
+`held_by_operator` (a handler attach does not end an operator detach).
+
+The causes that end a detach (the `cause` of `worker_attached`):
+
+| Cause | Rule |
+|---|---|
+| `handler` | The handler asked for an attach, and the origin is `handler`. |
+| `operator` | `POST /api/v1/debug/attach`. |
+| `deadline` | The deadline passed. |
+| `lease_lost` | Another holder took the slot lease, or the lease was not confirmed for its whole length. |
+| `too_few_workers` | After a registry refresh, fewer than `min_attached` other workers of the group are attached. |
+
+### `GET /api/v1/debug/detach`
+
+Always `200 DetachState`, also when the feature is off: `enabled: false` in
+the body is the signal the UI hides its control on, as with the consume
+pause (v1.14).
+
+```
+DetachState = {
+  enabled: bool, ui_enabled: bool,
+  state: "attached"|"detaching"|"detached"|"attaching",
+  origin: "handler"|"operator"|null,
+  reason: str,
+  since_ms: int|null, until_ms: int|null,
+  max_duration_seconds: number, default_duration_seconds: number,
+  last_request: null | {origin: "handler"|"operator",
+                        action: "detach"|"attach",
+                        outcome: str, at_ms: int}
+}
+```
+
+- `enabled` is true when the Kafka source is on and
+  `sources.kafka.detach.enabled` is true. `ui_enabled` is the value of
+  `ui.detach_enabled`. The UI shows its buttons only when both are true.
+- `origin` is `null` while the state is `attached`. `reason` is the free
+  text the detach was asked with (at most 200 characters), `""` when there
+  is none.
+- `since_ms` is the epoch milliseconds when the detach began, `null` while
+  attached. `until_ms` is the deadline in epoch milliseconds while
+  `detached`, else `null`.
+- `max_duration_seconds` and `default_duration_seconds` are the configured
+  `sources.kafka.detach.max_duration` and `default_duration`, in seconds.
+  The UI offers only presets within `max_duration_seconds`.
+- `last_request` is the last detach or attach that the handler or an
+  operator asked for, `null` before the first. `at_ms` is the epoch
+  milliseconds when it was asked. `outcome` is `detached` (for `action:
+  "detach"`) or `attached` (for `action: "attach"`) on success, else one
+  refusal reason of the tables above. A client MUST show an unknown
+  `outcome` as it is. An attach that the deadline or a safety rule starts
+  does not change `last_request`.
+
+### `POST /api/v1/debug/detach`
+
+An operator detach. Body `{"duration_seconds": number, "reason"?: str}`.
+`duration_seconds` is from 10 to `max_duration_seconds`; `reason` is cut at
+200 characters.
+
+A detach can take `executor.drain_timeout` and more, so the route does not
+wait for it: it starts the transition on the worker and answers
+`202 DetachState` at once. The outcome shows later in `last_request`; the
+UI polls the GET while `state` is `detaching` or `attaching`, then shows
+the outcome. An operator detach of a worker that the handler detached
+takes the origin and replaces the deadline.
+
+- `403 {"detail": "..."}` with a hint when `ui.detach_enabled` is false.
+- `422` (the usual envelope) for a duration out of range or a body that
+  does not parse.
+
+### `POST /api/v1/debug/attach`
+
+An operator attach. No body. It starts the same way and answers
+`202 DetachState` at once. Idempotent: on an attached worker it changes
+nothing. `403 {"detail": "..."}` when `ui.detach_enabled` is false.
+
+All three routes are UI routes: they need `api.enabled` and `ui.enabled`
+and follow `ui.auth_token`, like every other `/api/v1/debug` route.
+
+### `detached` on `Worker` rows
+
+Rows of `GET /api/v1/workers` gain optional `detached` (boolean or null),
+taken from `features.kafka.detached` of the worker's registry card. It is
+true while that worker is detached. **A missing key or null means
+unknown**: a worker with no Kafka source, or a backend that does not
+publish it. The UI shows a "detached" mark only for `true`.
+
+### Recorder events `worker_detached` and `worker_attached`
+
+The vocabulary grows from 32 to 34 names. Both rows belong to the worker,
+not to a partition: `partition` is -1 and `offset` is null. Both are stored
+in `events` and sent on `/ws`.
+
+| Event | Metadata key | Type | Meaning |
+|---|---|---|---|
+| `worker_detached` | `origin` | str | `handler` or `operator`. |
+| | `reason` | str | The free text of the detach. |
+| | `until` | str | The deadline, in the canonical datetime format `YYYY-MM-DDTHH:MM:SS.ffffffZ`. |
+| | `slot` | int | The index of the budget slot this worker holds, from 0. |
+| `worker_attached` | `cause` | str | One cause of the table above. |
+| | `detached_seconds` | number | How long the worker was away, in seconds, rounded to 3 decimals. |
+
+### Agent surface
+
+- `GET /api/v1/agent/state` gains the part `detach`, placed after
+  `autodiscover` and before `recent_failures` in the list of parts (and in
+  the values of the `parts` parameter):
+
+  ```
+  "detach": {"state": str, "origin": str|null, "reason": str,
+             "since": number|null, "until": number|null}
+  ```
+
+  `state`, `origin` and `reason` as in `DetachState`; `since` and `until` in
+  epoch seconds, or `null`.
+- The diagnose rules grow from 13 to 14: `worker-detached` (severity
+  `info`) gives a finding while the state is `detached`.
+
+### Absence (normative)
+
+A backend older than v1.33, and the Go backend for now, answers 404 on the
+three routes, sends no `detached` on `Worker` rows, writes no
+`worker_detached` or `worker_attached` row, and has no `detach` agent part
+and no `worker-detached` rule. The UI then shows no detach control, no
+banner and no mark. A UI older than v1.33 shows the two new rows as
+uncategorised events.
 
 ## Appendix: divergence resolutions from the 2026-06 audit
 

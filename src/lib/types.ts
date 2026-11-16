@@ -254,6 +254,9 @@ export interface WorkerPeer {
   // v1.28, from the card's features.ui. Absent or null means on; false leaves
   // the worker out of fan-out and switcher links.
   ui_enabled?: boolean | null
+  // v1.33, from the card's features.kafka.detached: true while the worker is
+  // detached from its consumer group. Absent or null means unknown.
+  detached?: boolean | null
 }
 
 // --- Events (recorder rows) ---
@@ -867,6 +870,74 @@ export interface ConsumePauseState {
   requested_seconds: number | null
 }
 
+// --- Debug: detach (contract v1.33) ---
+
+// The state of the worker's Kafka source.
+export type DetachStateName = 'attached' | 'detaching' | 'detached' | 'attaching'
+
+// Who asked for a detach.
+export type DetachOrigin = 'handler' | 'operator'
+
+// Why a detach was refused, in the order the worker checks them.
+export type DetachRefusal =
+  | 'not_running'
+  | 'stopping'
+  | 'disabled'
+  | 'inside_pipeline_hook'
+  | 'already_detached'
+  | 'cooldown'
+  | 'too_few_workers'
+  | 'budget_full'
+  | 'store_unavailable'
+  | 'leave_failed'
+
+// Why an attach was refused.
+export type AttachRefusal = 'not_running' | 'stopping' | 'held_by_operator'
+
+// What ended a detach: the `cause` of a worker_attached event.
+export type AttachCause = 'handler' | 'operator' | 'deadline' | 'lease_lost' | 'too_few_workers'
+
+// The last detach or attach that the handler or an operator asked for.
+export interface DetachLastRequest {
+  origin: DetachOrigin
+  action: 'detach' | 'attach'
+  // 'detached' or 'attached' on success, else a refusal reason. A client
+  // shows an unknown value as it is, so the type stays open.
+  outcome: 'detached' | 'attached' | DetachRefusal | AttachRefusal | (string & {})
+  // Epoch milliseconds when it was asked.
+  at_ms: number
+}
+
+// GET /api/v1/debug/detach, and the 202 answer of both POST routes. A
+// backend without the feature answers the GET with 404; the UI hides the
+// control then, and when `enabled` is false.
+export interface DetachState {
+  // The Kafka source is on and sources.kafka.detach.enabled is true.
+  enabled: boolean
+  // ui.detach_enabled: the buttons and the two POST routes.
+  ui_enabled: boolean
+  state: DetachStateName
+  // null while attached.
+  origin: DetachOrigin | null
+  // The free text of the detach; '' when none.
+  reason: string
+  // Epoch milliseconds when the detach began; null while attached.
+  since_ms: number | null
+  // The deadline in epoch milliseconds while detached; else null.
+  until_ms: number | null
+  max_duration_seconds: number
+  default_duration_seconds: number
+  // null before the first request.
+  last_request: DetachLastRequest | null
+}
+
+// POST /api/v1/debug/detach body. duration_seconds is from 10 to
+// max_duration_seconds; reason is cut at 200 characters.
+export interface DetachRequest {
+  duration_seconds: number
+  reason?: string
+}
+
 // --- Debug: kafka read (contract v1.13) ---
 
 // Kafka record bytes ride JSON as text: utf-8 when the bytes decode,
@@ -1386,6 +1457,14 @@ export interface AgentState {
     peers_online: number | null
     peers_offline: number | null
     cluster_tasks_match: boolean | null
+  }
+  /** Contract v1.33; since and until are epoch seconds. */
+  detach?: {
+    state: DetachStateName
+    origin: DetachOrigin | null
+    reason: string
+    since: number | null
+    until: number | null
   }
   recent_failures?: { failures: AgentFailure[]; note?: string } | null
 }
