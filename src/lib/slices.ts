@@ -24,6 +24,8 @@ export const RECORDER_EVENT_TYPES = [
   'arranged',
   'assigned',
   'revoked',
+  'worker_detached',
+  'worker_attached',
   'committed',
   'partition_stalled',
   'message_complete',

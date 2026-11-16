@@ -12,6 +12,7 @@
   import WorkerSwitcher from './components/WorkerSwitcher.svelte'
   import SinkLinks from './components/SinkLinks.svelte'
   import VersionBadge from './components/VersionBadge.svelte'
+  import DetachBanner from './components/DetachBanner.svelte'
 
   // $derived recomputes the active page + its route params whenever the path
   // store changes ($currentPath auto-subscribes). The router has no per-route branching;
@@ -151,6 +152,9 @@
 </header>
 
 <main class:wide>
+  <!-- Worker-level: shown on every page while the worker is detached from
+       its consumer group (contract v1.33); nothing on an older worker. -->
+  <DetachBanner />
   {#if !redirectTo}
     <Current params={match.params} />
   {/if}

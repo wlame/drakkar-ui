@@ -88,3 +88,13 @@ export function safeHttpBase(base: string): string {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return ''
   return base.replace(/\/+$/, '')
 }
+
+/**
+ * True while the worker is detached from its consumer group (v1.33,
+ * `features.kafka.detached` of its card). Absent or null means unknown — a
+ * worker with no Kafka source, or a backend that does not publish it — so
+ * only an explicit `true` gets the mark.
+ */
+export function isDetached(w: WorkerPeer): boolean {
+  return w.detached === true
+}

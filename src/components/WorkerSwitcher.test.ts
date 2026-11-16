@@ -93,6 +93,24 @@ describe('WorkerSwitcher ui_enabled', () => {
   })
 })
 
+describe('WorkerSwitcher detached mark', () => {
+  it('marks a detached worker, the current one too, and nothing for null or absent', async () => {
+    workersPayload = [
+      worker({ worker_name: 'worker-a', is_current: true, detached: true }),
+      worker({ worker_name: 'worker-b', url: 'http://worker-b:8080/', detached: true }),
+      worker({ worker_name: 'worker-c', url: 'http://worker-c:8080/', detached: null }),
+      worker({ worker_name: 'worker-d', url: 'http://worker-d:8080/' }),
+    ]
+    const { target, cleanup } = await openMenu()
+
+    expect(item(target, 'worker-a').querySelector('.detached')?.textContent).toBe('detached')
+    expect(item(target, 'worker-b').querySelector('.detached')?.textContent).toBe('detached')
+    expect(item(target, 'worker-c').querySelector('.detached')).toBeNull()
+    expect(item(target, 'worker-d').querySelector('.detached')).toBeNull()
+    cleanup()
+  })
+})
+
 describe('WorkerSwitcher liveness', () => {
   it('renders peers without the v1.18 fields exactly as before (no offline chrome)', async () => {
     workersPayload = [

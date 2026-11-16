@@ -45,6 +45,7 @@
   } from '../lib/timelineEvents'
   import Timeline from '../components/live/Timeline.svelte'
   import ConsumePauseControl from '../components/live/ConsumePauseControl.svelte'
+  import DetachControl from '../components/live/DetachControl.svelte'
   import TimelineStats from '../components/live/TimelineStats.svelte'
   import PeerTimeline from '../components/live/PeerTimeline.svelte'
   import ArrangeTab from '../components/live/ArrangeTab.svelte'
@@ -690,6 +691,10 @@
        while a pause is active its banner wraps onto a full-width line under
        the row, so every tab sees it. -->
   <ConsumePauseControl />
+  <!-- Detach from the consumer group (contract v1.33; needs the feature and
+       ui.detach_enabled, renders nothing otherwise). The page-wide banner of
+       the app shell shows the deadline while detached. -->
+  <DetachControl />
   <span class="spacer"></span>
   {#if offload}
     <span

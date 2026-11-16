@@ -45,6 +45,10 @@ export const EVENT_COLORS: Record<string, string> = {
   // exist to explain bad moments. resource_sample is the neutral host
   // telemetry next to them.
   runtime_health: COLOR.amber,
+  // Contract v1.33: the worker left its consumer group or joined it again.
+  // Worker-level rows (partition -1), amber like the consume pause.
+  worker_detached: COLOR.amber,
+  worker_attached: COLOR.amber,
   runtime_stall: COLOR.red,
   runtime_lag_episode: COLOR.red,
   runtime_probe: COLOR.gray,
@@ -78,6 +82,8 @@ export const EVENT_TYPES = [
   'runtime_stall',
   'runtime_lag_episode',
   'runtime_probe',
+  'worker_detached',
+  'worker_attached',
 ] as const
 
 // An annotation event's metadata envelope (contract v1.3). Handler-emitted

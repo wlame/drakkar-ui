@@ -6,6 +6,7 @@
   // (different host), so they are plain anchors, not client-side routes.
   import { onMount } from 'svelte'
   import { api, type WorkerPeer } from '../lib/api'
+  import { isDetached } from '../lib/cluster'
   import { fmtAgo } from '../lib/format'
   import { currentPath } from '../lib/router'
   import { pausableInterval } from '../lib/visibility'
@@ -127,6 +128,9 @@
             {#if w.is_current}
               <div class="item current">
                 <span class="mono">{w.worker_name || '?'}</span>
+                {#if isDetached(w)}
+                  <span class="tag detached" title="Detached from its consumer group">detached</span>
+                {/if}
                 <span class="tag">current</span>
               </div>
             {:else if peerHref(w) === null}
@@ -148,6 +152,9 @@
                 {/each}
                 {#if !w.debug_url && w.ip_address && w.debug_port}
                   <span class="addr">{w.ip_address}:{w.debug_port}</span>
+                {/if}
+                {#if isDetached(w)}
+                  <span class="tag detached" title="Detached from its consumer group">detached</span>
                 {/if}
                 {#if isOffline(w)}
                   <span class="tag">offline</span>
@@ -225,6 +232,10 @@
   .meta {
     font-size: 0.7rem;
     color: #9ca3af;
+  }
+  /* v1.33: a worker outside its consumer group, in the pause amber. */
+  .tag.detached {
+    color: #fcd34d;
   }
   /* Grayed like the other muted chrome (cluster heads, trigger), same values. */
   a.item.offline {

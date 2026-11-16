@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { peerBaseUrl, sameClusterPeers } from './cluster'
+import { isDetached, peerBaseUrl, sameClusterPeers } from './cluster'
 import type { WorkerPeer } from './types'
 
 function worker(over: Partial<WorkerPeer>): WorkerPeer {
@@ -106,5 +106,14 @@ describe('peerBaseUrl scheme check', () => {
   it('accepts http and https and drops trailing slashes', () => {
     expect(peerBaseUrl(peer('http://w-2:8080/'))).toBe('http://w-2:8080')
     expect(peerBaseUrl(peer('https://w-2.example/'))).toBe('https://w-2.example')
+  })
+})
+
+describe('isDetached', () => {
+  it('is true only for detached true; null and absent mean unknown', () => {
+    expect(isDetached(worker({ detached: true }))).toBe(true)
+    expect(isDetached(worker({ detached: false }))).toBe(false)
+    expect(isDetached(worker({ detached: null }))).toBe(false)
+    expect(isDetached(worker({}))).toBe(false)
   })
 })
