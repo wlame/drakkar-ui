@@ -3432,8 +3432,9 @@ takes the origin and replaces the deadline.
   not parse. With the switch off, a body that does not parse may answer
   422 before the 403; nothing is started in either case.
 - `503 {"detail": "..."}` when the worker's main loop does not answer within
-  5 s, or is closed because the worker stops. The request may or may not
-  have started; the client reads the GET before it asks again.
+  5 s, or is closed because the worker stops. A request answered 503 is not
+  run later, when the main loop wakes. In a rare race it may already have
+  started, so a client reads the GET before it asks again.
 
 ### `POST /api/v1/debug/attach`
 
@@ -3441,7 +3442,8 @@ An operator attach. No body. It starts the same way and answers
 `202 DetachState` at once. Idempotent: on an attached worker it changes
 nothing. `403 {"detail": "..."}` when `ui.detach_enabled` is false, or
 the worker has no Kafka source. `503 {"detail": "..."}` as for the detach
-route, when the worker's main loop does not answer within 5 s.
+route, when the worker's main loop does not answer within 5 s or is closed;
+it is not run later either.
 
 All three routes are UI routes: they need `api.enabled` and `ui.enabled`
 and follow `ui.auth_token`, like every other `/api/v1/debug` route.
