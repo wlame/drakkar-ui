@@ -94,6 +94,11 @@ downloads can't set headers, so the token rides as `?token=` there
   worker switcher and the cluster view are hidden; with the history search
   off the history option is hidden; with the recorder off the event views
   (the Timeline and Event History) show the memory window note.
+- **Detach** (contract v1.33): the worker's detach state is one shared
+  store with one poll loop (`src/lib/detach.ts`), joined by reference count
+  by the banner (app shell, every page) and the control (Live page). The
+  202 answer of the POST routes is the state from before the request, so it
+  is never published; the control waits until a GET shows the change.
 - **The bundle knows its version**: `__APP_VERSION__` is injected via Vite
   `define` from `DRAKKAR_UI_VERSION` (set by `build.sh bundle` and
   release.yml) and shown in the header — operators can always tell which
@@ -150,9 +155,10 @@ src/
     capabilities.ts       what the serving worker can do (missing key = on)
     ws.ts                 live WS client (reconnect, close codes 4401/4403)
     events.ts, format.ts, kafka.ts, live.ts   presentation helpers
+    detach.ts             detach state store + its one poll loop, outcome sentences
   pages/                  one component per route (Dashboard … Live, Debug)
-  components/             chrome (WorkerSwitcher, SinkLinks, VersionBadge …)
-    live/                 Timeline, ArrangeTab, ResultsTab, ConsumePauseControl
+  components/             chrome (WorkerSwitcher, SinkLinks, VersionBadge, DetachBanner …)
+    live/                 Timeline, ArrangeTab, ResultsTab, ConsumePauseControl, DetachControl
     debug/                Metrics/Periodic/Trace/Probe/DLQ/Cache/Databases tabs
 docs/api-contract-v1.md   THE backend contract (normative)
 docs/openapi-v1.yaml      its OpenAPI 3.1 twin — vendored into both backends

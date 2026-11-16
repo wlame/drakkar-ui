@@ -3341,7 +3341,7 @@ applies answers):
 | Reason | When |
 |---|---|
 | `not_running` | The Kafka source has not finished its first poll. |
-| `stopping` | A stop was requested. |
+| `stopping` | A stop was requested, or the worker's poll loop has ended. Also when a stop comes while the detach waits for the revoke drain. |
 | `disabled` | `sources.kafka.detach.enabled` is false, or the worker has no Kafka source. |
 | `inside_pipeline_hook` | A handler call made as part of a partition's work. |
 | `already_detached` | An operator detach is active (handler calls only). |
@@ -3349,8 +3349,8 @@ applies answers):
 | `cooldown` | A handler call sooner than `sources.kafka.detach.cooldown` after the last attach. |
 | `too_few_workers` | Fewer than `sources.kafka.detach.min_attached` attached workers would remain. |
 | `budget_full` | Every slot is held by another worker. |
-| `store_unavailable` | No slot was won, and at least one store call failed or made no attempt. |
-| `leave_failed` | The revoke did not end within its bound. |
+| `store_unavailable` | No slot was won, and at least one store call failed or made no attempt. Also when the slot lease was lost while the detach was in progress. |
+| `leave_failed` | The revoke did not end within its bound, or the leave raised or was interrupted. The worker joins its group again (state `attaching` for a moment) and gives the slot back. |
 
 The answers of an attach that did not succeed:
 
@@ -3420,9 +3420,11 @@ An operator detach. Body `{"duration_seconds": number, "reason"?: str}`.
 
 A detach can take `executor.drain_timeout` and more, so the route does not
 wait for it: it starts the transition on the worker and answers
-`202 DetachState` at once. The outcome shows later in `last_request`; the
-UI polls the GET while `state` is `detaching` or `attaching`, then shows
-the outcome. An operator detach of a worker that the handler detached
+`202 DetachState` at once. **The 202 body is the state at the moment the
+request was accepted, before it takes effect**: `state` and `last_request`
+are usually unchanged in it. A client polls the GET to see the transition
+and, later, the outcome in `last_request`; the UI waits for a GET that
+shows another `state` or a newer `last_request.at_ms`. An operator detach of a worker that the handler detached
 takes the origin and replaces the deadline.
 
 - `403 {"detail": "..."}` with a hint when `ui.detach_enabled` is false, or
@@ -3439,7 +3441,9 @@ takes the origin and replaces the deadline.
 ### `POST /api/v1/debug/attach`
 
 An operator attach. No body. It starts the same way and answers
-`202 DetachState` at once. Idempotent: on an attached worker it changes
+`202 DetachState` at once, with the state at the moment the request was
+accepted (usually still `detached`, with the old `last_request`); a client
+polls the GET to see the transition. Idempotent: on an attached worker it changes
 nothing. `403 {"detail": "..."}` when `ui.detach_enabled` is false, or
 the worker has no Kafka source. `503 {"detail": "..."}` as for the detach
 route, when the worker's main loop does not answer within 5 s or is closed;
@@ -3469,7 +3473,7 @@ in `events` and sent on `/ws`.
 | `worker_detached` | `origin` | str | `handler` or `operator`. |
 | | `reason` | str | The free text of the detach. |
 | | `until` | str | The deadline, in the canonical datetime format `YYYY-MM-DDTHH:MM:SS.ffffffZ`. |
-| | `slot` | int | The index of the budget slot this worker holds, from 0. |
+| | `slot` | int | The index of the budget slot this worker holds, from 0; `-1` when the index is not known when the row is written. |
 | `worker_attached` | `cause` | str | One cause of the table above. |
 | | `detached_seconds` | number | How long the worker was away, in seconds, rounded to 3 decimals. |
 
