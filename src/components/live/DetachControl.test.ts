@@ -5,6 +5,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushSync, mount, unmount } from 'svelte'
 import DetachControl from './DetachControl.svelte'
+import DetachBanner from '../DetachBanner.svelte'
+import { resetDetachForTests } from '../../lib/detach'
 import type { DetachState } from '../../lib/types'
 
 function detachState(overrides: Partial<DetachState> = {}): DetachState {
@@ -94,6 +96,7 @@ describe('DetachControl', () => {
   })
 
   afterEach(() => {
+    resetDetachForTests()
     vi.useRealTimers()
     vi.unstubAllGlobals()
   })
@@ -141,7 +144,7 @@ describe('DetachControl', () => {
     cleanup()
   })
 
-  it('sends the detach, disables the button and polls once a second while detaching', async () => {
+  it('sends the detach, disables the button, then offers Attach and a clean form', async () => {
     const { stub, holder } = stubFetch(detachState())
     vi.stubGlobal('fetch', stub)
     const { target, cleanup } = renderMounted()
@@ -165,10 +168,6 @@ describe('DetachControl', () => {
     const busy = buttonByText(target, 'Detaching')!
     expect(busy.disabled).toBe(true)
 
-    const before = holder.gets
-    await settled(3_000)
-    expect(holder.gets - before).toBeGreaterThanOrEqual(2)
-
     holder.state = detachState({
       state: 'detached',
       origin: 'operator',
@@ -183,6 +182,37 @@ describe('DetachControl', () => {
     })
     await settled(1_000)
     expect(buttonByText(target, 'Attach now')).toBeDefined()
+
+    // Back to attached: the form opens closed-then-empty, not with the old reason.
+    holder.state = detachState()
+    await settled(5_000)
+    expect(target.querySelector('.detach-pop')).toBeNull()
+    openForm(target)
+    expect(target.querySelector<HTMLInputElement>('input.detach-reason')!.value).toBe('')
+    cleanup()
+  })
+
+  it('polls once a second while the worker is detaching', async () => {
+    const { stub, holder } = stubFetch(detachState({ state: 'detaching', origin: 'handler' }))
+    vi.stubGlobal('fetch', stub)
+    const { cleanup } = renderMounted()
+    await settled()
+    const before = holder.gets
+    await settled(3_000)
+    expect(holder.gets - before).toBe(3)
+    cleanup()
+  })
+
+  it('polls at the slow pace while the worker is attached', async () => {
+    const { stub, holder } = stubFetch(detachState())
+    vi.stubGlobal('fetch', stub)
+    const { cleanup } = renderMounted()
+    await settled()
+    const before = holder.gets
+    await settled(4_000)
+    expect(holder.gets - before).toBe(0)
+    await settled(1_000)
+    expect(holder.gets - before).toBe(1)
     cleanup()
   })
 
@@ -202,9 +232,9 @@ describe('DetachControl', () => {
     )
     const { target, cleanup } = renderMounted()
     await settled()
-    expect(target.querySelector('.detach-outcome')?.textContent).toContain(
-      'The limit of detached workers in this group is reached.',
-    )
+    const outcome = target.querySelector('.detach-outcome')?.textContent ?? ''
+    expect(outcome).toContain('The limit of detached workers in this group is reached.')
+    expect(outcome).toMatch(/at \d{2}:\d{2}:\d{2} UTC/)
     cleanup()
   })
 
@@ -244,23 +274,107 @@ describe('DetachControl', () => {
     cleanup()
   })
 
-  it('surfaces a failed request as an inline error', async () => {
+  // A POST that fails with `answer`, against an attached worker; returns the
+  // error line the control shows.
+  async function failedDetach(answer: () => Promise<Response>): Promise<string | null> {
     const { stub } = stubFetch(detachState())
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        if (init?.method === 'POST') {
-          return new Response('{"detail":"set ui.detach_enabled to true"}', { status: 403 })
-        }
-        return stub(input, init)
-      }),
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+        init?.method === 'POST' ? answer() : stub(input, init),
+      ),
     )
     const { target, cleanup } = renderMounted()
     await settled()
     openForm(target)
     buttonByText(target, 'Detach from the group')!.click()
     await settled()
-    expect(target.querySelector('.error')?.textContent).toContain('ui.detach_enabled')
+    const text = target.querySelector('.error')?.textContent ?? null
     cleanup()
+    return text
+  }
+
+  it('shows the detail of a 403 as it is', async () => {
+    const text = await failedDetach(
+      async () =>
+        new Response('{"detail":"Detach from the UI is off; set ui.detach_enabled to true."}', {
+          status: 403,
+        }),
+    )
+    expect(text).toBe('Detach from the UI is off; set ui.detach_enabled to true.')
+  })
+
+  it('shows the messages of a 422 validation answer', async () => {
+    const body = JSON.stringify({
+      detail: [
+        { loc: ['body', 'duration_seconds'], msg: 'Input should be less than or equal to 3600' },
+      ],
+    })
+    const text = await failedDetach(async () => new Response(body, { status: 422 }))
+    expect(text).toBe('Input should be less than or equal to 3600')
+  })
+
+  it('shows one sentence when the worker does not answer', async () => {
+    const text = await failedDetach(async () => {
+      throw new TypeError('Failed to fetch')
+    })
+    expect(text).toBe('The worker did not answer. Check the connection and try again.')
+  })
+})
+
+describe('DetachControl and DetachBanner together', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    resetDetachForTests()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  function mountBoth() {
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+    const banner = mount(DetachBanner, { target })
+    const control = mount(DetachControl, { target })
+    return {
+      target,
+      unmountBanner: () => unmount(banner),
+      unmountControl: () => unmount(control),
+      remove: () => target.remove(),
+    }
+  }
+
+  it('share one poll loop', async () => {
+    const { stub, holder } = stubFetch(
+      detachState({ state: 'detached', origin: 'operator', until_ms: Date.now() + 600_000 }),
+    )
+    vi.stubGlobal('fetch', stub)
+    const both = mountBoth()
+    await settled()
+    expect(both.target.querySelector('.detach-banner')).not.toBeNull()
+    expect(buttonByText(both.target, 'Attach now')).toBeDefined()
+    expect(holder.gets).toBe(1)
+    await settled(10_000)
+    // One loop at the slow pace: the first read, then one at 5 s and one at 10 s.
+    expect(holder.gets).toBe(3)
+    both.unmountBanner()
+    both.unmountControl()
+    both.remove()
+  })
+
+  it('stop polling after the last one unmounts', async () => {
+    const { stub, holder } = stubFetch(detachState())
+    vi.stubGlobal('fetch', stub)
+    const both = mountBoth()
+    await settled()
+    both.unmountBanner()
+    await settled(5_000)
+    expect(holder.gets).toBe(2)
+    both.unmountControl()
+    await settled(20_000)
+    expect(holder.gets).toBe(2)
+    both.remove()
   })
 })

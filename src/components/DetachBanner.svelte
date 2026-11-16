@@ -1,11 +1,17 @@
 <script lang="ts">
   // Page-wide detach banner (contract v1.33), rendered by the app shell so it
   // shows on every page. Detached: who did it, the reason, and the deadline
-  // as a local time with the time left. Detaching or attaching: one quieter
+  // in UTC with the time left as a countdown. Detaching or attaching: one quieter
   // line, so a short transition does not flash a full banner. Attached, the
   // feature off, or an older worker (404): nothing.
   import { onMount } from 'svelte'
-  import { bannerVisible, detachState, fmtTimeLeft, useDetachState } from '../lib/detach'
+  import {
+    bannerVisible,
+    detachState,
+    fmtTimeLeft,
+    fmtUtcTimeMs,
+    useDetachState,
+  } from '../lib/detach'
 
   let now = $state(Date.now())
   const snapshot = $derived($detachState)
@@ -31,7 +37,7 @@
       {#if snapshot.reason}<span class="reason">&ldquo;{snapshot.reason}&rdquo;</span>{/if}
       {#if snapshot.until_ms != null}
         <span class="deadline"
-          >attaches at {new Date(snapshot.until_ms).toLocaleTimeString()} (in {fmtTimeLeft(
+          >attaches at {fmtUtcTimeMs(snapshot.until_ms)} (in {fmtTimeLeft(
             snapshot.until_ms - now,
           )})</span
         >

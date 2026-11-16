@@ -1,17 +1,26 @@
 // Detach helpers (contract v1.33): presets within the maximum, the outcome
 // sentences, the poll pace, the visibility rules and the time texts.
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { get } from 'svelte/store'
+import { HttpError } from './api'
 import {
   DETACH_FAST_POLL_MS,
   DETACH_SLOW_POLL_MS,
+  NETWORK_ERROR_TEXT,
   OUTCOME_SENTENCES,
   bannerVisible,
   controlVisible,
   detachChoices,
+  detachState,
   fmtTimeLeft,
+  fmtUtcTimeMs,
   isRefusal,
   nextPollDelayMs,
   outcomeText,
+  requestDetach,
+  requestErrorText,
+  resetDetachForTests,
+  useDetachState,
 } from './detach'
 import type { DetachState } from './types'
 
@@ -129,5 +138,119 @@ describe('fmtTimeLeft', () => {
 
   it('never goes below zero', () => {
     expect(fmtTimeLeft(-5_000)).toBe('0:00')
+  })
+})
+
+describe('fmtUtcTimeMs', () => {
+  it('writes an epoch-milliseconds time in UTC with the label', () => {
+    expect(fmtUtcTimeMs(Date.UTC(2026, 10, 16, 14, 2, 11))).toBe('14:02:11 UTC')
+  })
+})
+
+describe('requestErrorText', () => {
+  it('shows a string detail as it is', () => {
+    const error = new HttpError(
+      'POST',
+      '/debug/detach',
+      403,
+      '{"detail":"Detach from the UI is off; set ui.detach_enabled to true."}',
+    )
+    expect(requestErrorText(error)).toBe(
+      'Detach from the UI is off; set ui.detach_enabled to true.',
+    )
+  })
+
+  it('joins the msg fields of a validation answer', () => {
+    const body = JSON.stringify({
+      detail: [
+        { loc: ['body', 'duration_seconds'], msg: 'must be at least 10' },
+        { loc: ['body', 'reason'], msg: 'must be a string' },
+      ],
+    })
+    expect(requestErrorText(new HttpError('POST', '/debug/detach', 422, body))).toBe(
+      'must be at least 10; must be a string',
+    )
+  })
+
+  it('gives the status for an answer without detail', () => {
+    expect(requestErrorText(new HttpError('POST', '/debug/attach', 500, 'boom'))).toBe(
+      'The worker answered HTTP 500.',
+    )
+  })
+
+  it('gives one sentence for a request that got no answer', () => {
+    expect(requestErrorText(new TypeError('Failed to fetch'))).toBe(NETWORK_ERROR_TEXT)
+    expect(NETWORK_ERROR_TEXT).toBe(
+      'The worker did not answer. Check the connection and try again.',
+    )
+  })
+})
+
+function answer(value: DetachState): Response {
+  return new Response(JSON.stringify(value), { status: 200 })
+}
+
+describe('the shared poll loop', () => {
+  afterEach(() => {
+    resetDetachForTests()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('drops a read that started before a POST answer', async () => {
+    vi.useFakeTimers()
+    let releaseRead: (r: Response) => void = () => {}
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === 'POST') {
+          return Promise.resolve(
+            new Response(JSON.stringify(state({ state: 'detaching', origin: 'operator' })), {
+              status: 202,
+            }),
+          )
+        }
+        return new Promise<Response>((resolve) => {
+          releaseRead = resolve
+        })
+      }),
+    )
+    const leave = useDetachState()
+    await requestDetach(900, '')
+    expect(get(detachState)?.state).toBe('detaching')
+    releaseRead(answer(state()))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(get(detachState)?.state).toBe('detaching')
+    leave()
+  })
+
+  it('keeps the last state when a read fails with something other than 404', async () => {
+    vi.useFakeTimers()
+    const detached = state({ state: 'detached', origin: 'handler', until_ms: Date.now() + 60_000 })
+    let failing = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => (failing ? new Response('boom', { status: 500 }) : answer(detached))),
+    )
+    const leave = useDetachState()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(get(detachState)?.state).toBe('detached')
+    failing = true
+    await vi.advanceTimersByTimeAsync(DETACH_SLOW_POLL_MS * 2)
+    expect(get(detachState)?.state).toBe('detached')
+    leave()
+  })
+
+  it('forgets every user on reset', async () => {
+    vi.useFakeTimers()
+    const reads = vi.fn(async () => answer(state()))
+    vi.stubGlobal('fetch', reads)
+    useDetachState()
+    await vi.advanceTimersByTimeAsync(0)
+    resetDetachForTests()
+    expect(get(detachState)).toBeNull()
+    const calls = reads.mock.calls.length
+    await vi.advanceTimersByTimeAsync(DETACH_SLOW_POLL_MS * 3)
+    expect(reads.mock.calls.length).toBe(calls)
   })
 })

@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushSync, mount, unmount } from 'svelte'
 import DetachBanner from './DetachBanner.svelte'
+import { resetDetachForTests } from '../lib/detach'
 import type { DetachState } from '../lib/types'
 
 function detachState(overrides: Partial<DetachState> = {}): DetachState {
@@ -61,11 +62,12 @@ describe('DetachBanner', () => {
   })
 
   afterEach(() => {
+    resetDetachForTests()
     vi.useRealTimers()
     vi.unstubAllGlobals()
   })
 
-  it('shows origin, reason and the deadline as a local time while detached', async () => {
+  it('shows origin, reason, the deadline in UTC and the time left while detached', async () => {
     const until = Date.now() + 10 * 60_000
     stubState(
       detachState({
@@ -82,7 +84,9 @@ describe('DetachBanner', () => {
     expect(banner.textContent).toContain('Detached from the consumer group')
     expect(banner.textContent).toContain('handler')
     expect(banner.textContent).toContain('database maintenance')
-    expect(banner.textContent).toContain(new Date(until).toLocaleTimeString())
+    expect(banner.textContent).toContain(
+      `attaches at ${new Date(until).toISOString().substring(11, 19)} UTC`,
+    )
     expect(banner.textContent).toMatch(/10:00|9:59/)
     cleanup()
   })

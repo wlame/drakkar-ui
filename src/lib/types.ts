@@ -885,6 +885,8 @@ export type DetachRefusal =
   | 'disabled'
   | 'inside_pipeline_hook'
   | 'already_detached'
+  // The worker is returning to its group and the join has not succeeded yet.
+  | 'join_failed'
   | 'cooldown'
   | 'too_few_workers'
   | 'budget_full'

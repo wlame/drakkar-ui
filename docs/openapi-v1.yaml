@@ -3682,7 +3682,7 @@ components:
               description: >-
                 detached or attached on success, else a refusal reason:
                 not_running, stopping, disabled, inside_pipeline_hook,
-                already_detached, cooldown, too_few_workers, budget_full,
+                already_detached, join_failed, cooldown, too_few_workers, budget_full,
                 store_unavailable, leave_failed (detach); not_running,
                 stopping, held_by_operator, join_failed (attach). A client shows an
                 unknown value as it is.

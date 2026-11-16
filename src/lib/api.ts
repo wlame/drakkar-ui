@@ -72,11 +72,14 @@ function authHeaders(): Record<string, string> {
 // renders verbatim. `status` lets a caller tell "not there" (404) apart.
 export class HttpError extends Error {
   readonly status: number
+  // The response body as text, so a caller can read a {detail} answer.
+  readonly body: string
 
   constructor(method: string, path: string, status: number, body: string) {
     super(`${method} ${path} → HTTP ${status}${body ? `: ${body}` : ''}`)
     this.name = 'HttpError'
     this.status = status
+    this.body = body
   }
 }
 

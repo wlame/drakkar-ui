@@ -3344,6 +3344,7 @@ applies answers):
 | `disabled` | `sources.kafka.detach.enabled` is false, or the worker has no Kafka source. |
 | `inside_pipeline_hook` | A handler call made as part of a partition's work. |
 | `already_detached` | An operator detach is active (handler calls only). |
+| `join_failed` | The worker is returning to its group and the join has not succeeded yet (state `attaching`); the framework finishes the attach first. |
 | `cooldown` | A handler call sooner than `sources.kafka.detach.cooldown` after the last attach. |
 | `too_few_workers` | Fewer than `sources.kafka.detach.min_attached` attached workers would remain. |
 | `budget_full` | Every slot is held by another worker. |
@@ -3405,8 +3406,8 @@ DetachState = {
   operator asked for, `null` before the first. `at_ms` is the epoch
   milliseconds when it was asked. `outcome` is `detached` (for `action:
   "detach"`) or `attached` (for `action: "attach"`) on success, else one
-  refusal reason or attach answer of the tables above (`join_failed` only
-  for `action: "attach"`). A client MUST show an unknown `outcome` as it
+  refusal reason or attach answer of the tables above (`join_failed` for
+  either action). A client MUST show an unknown `outcome` as it
   is. An attach that the deadline or a safety rule starts does not change
   `last_request`.
 

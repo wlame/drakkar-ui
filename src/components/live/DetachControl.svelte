@@ -19,10 +19,12 @@
     detachChoices,
     detachState,
     fmtDetachDuration,
+    fmtUtcTimeMs,
     isRefusal,
     outcomeText,
     requestAttach,
     requestDetach,
+    requestErrorText,
     useDetachState,
   } from '../../lib/detach'
 
@@ -47,22 +49,30 @@
     snapshot?.last_request && isRefusal(snapshot.last_request.outcome) ? snapshot.last_request : null,
   )
 
-  async function run(action: () => Promise<void>) {
+  // Runs one request; true when the worker accepted it.
+  async function run(action: () => Promise<void>): Promise<boolean> {
     busy = true
     error = null
     try {
       await action()
+      return true
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e)
+      error = requestErrorText(e)
+      return false
     } finally {
       busy = false
     }
   }
 
-  function detach() {
+  // On success the form closes and forgets its reason, so the next detach
+  // starts clean. On a failure the form stays as it was, next to the error.
+  async function detach() {
     if (duration == null) return
-    formOpen = false
-    void run(() => requestDetach(duration, reason.trim()))
+    if (await run(() => requestDetach(duration, reason.trim()))) {
+      formOpen = false
+      reason = ''
+      chosen = null
+    }
   }
 
   function attach() {
@@ -141,7 +151,7 @@
   </div>
   {#if refused}
     <p class="detach-outcome" role="status">
-      Last {refused.action} by {refused.origin} at {new Date(refused.at_ms).toLocaleTimeString()} did not
+      Last {refused.action} by {refused.origin} at {fmtUtcTimeMs(refused.at_ms)} did not
       succeed: {outcomeText(refused.outcome)}
     </p>
   {/if}

@@ -8,7 +8,8 @@
 // too, so the components only draw.
 
 import { writable } from 'svelte/store'
-import { api } from './api'
+import { api, HttpError } from './api'
+import { fmtTime } from './format'
 import { isHidden } from './visibility'
 import type { DetachState } from './types'
 
@@ -108,6 +109,42 @@ export function fmtTimeLeft(ms: number): string {
   return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${seconds}` : `${minutes}:${seconds}`
 }
 
+/** "14:02:11 UTC" — an epoch-milliseconds time, in UTC like the rest of the UI. */
+export function fmtUtcTimeMs(ms: number): string {
+  return `${fmtTime(ms / 1000)} UTC`
+}
+
+/** The sentence for a request that did not reach the worker. */
+export const NETWORK_ERROR_TEXT = 'The worker did not answer. Check the connection and try again.'
+
+interface ValidationItem {
+  msg?: unknown
+}
+
+/**
+ * The plain message of a failed POST: the `detail` of the answer as it is
+ * (a 403 hint), the joined `msg` fields of a validation answer (422), the
+ * status alone for an answer without `detail`, and one sentence for a
+ * request that got no answer.
+ */
+export function requestErrorText(error: unknown): string {
+  if (!(error instanceof HttpError)) return NETWORK_ERROR_TEXT
+  let detail: unknown
+  try {
+    detail = (JSON.parse(error.body) as { detail?: unknown }).detail
+  } catch {
+    detail = undefined
+  }
+  if (typeof detail === 'string' && detail) return detail
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item: ValidationItem) => (typeof item?.msg === 'string' ? item.msg : ''))
+      .filter(Boolean)
+    if (messages.length) return messages.join('; ')
+  }
+  return `The worker answered HTTP ${error.status}.`
+}
+
 /** The worker's detach state; null before the first answer and on an older worker. */
 export const detachState = writable<DetachState | null>(null)
 
@@ -118,6 +155,9 @@ let current: DetachState | null = null
 // Bumped by every start and stop, so a fetch that lands after a stop or a
 // restart does not schedule a second loop.
 let generation = 0
+// Bumped by every POST answer: a GET that started before it carries an older
+// state and is dropped.
+let requestSeq = 0
 
 function publish(value: DetachState | null) {
   current = value
@@ -131,21 +171,26 @@ function schedule(gen: number) {
 }
 
 // One poll: a 404 or a worker with the feature off ends the loop (nothing will
-// change without a restart); any other failure hides the state and keeps the
-// slow pace. A hidden tab skips the request and keeps the loop alive.
+// change without a restart); any other failure keeps the last state, so a
+// short outage does not hide the banner of a detached worker. A hidden tab
+// skips the request and keeps the loop alive.
 async function poll(gen: number) {
   if (gen !== generation) return
   if (!isHidden()) {
+    const seqAtStart = requestSeq
     let value: DetachState | null
     try {
       value = await api.getDetachState()
     } catch {
-      if (gen !== generation) return
-      publish(null)
       schedule(gen)
       return
     }
     if (gen !== generation) return
+    if (seqAtStart !== requestSeq) {
+      // A POST answered while this read was in flight; its body is newer.
+      schedule(gen)
+      return
+    }
     publish(value)
     if (value === null || !value.enabled) return
   }
@@ -180,9 +225,21 @@ export function useDetachState(): () => void {
 // few seconds so the outcome shows soon. A request with no loop running (no
 // user) only publishes.
 function afterRequest(value: DetachState) {
+  requestSeq += 1
   publish(value)
   fastUntilMs = Date.now() + DETACH_FAST_AFTER_REQUEST_MS
   if (users > 0) schedule(generation)
+}
+
+/** Stop the loop and forget every user; for tests, between cases. */
+export function resetDetachForTests(): void {
+  users = 0
+  generation += 1
+  clearTimeout(timer)
+  timer = undefined
+  fastUntilMs = 0
+  requestSeq = 0
+  publish(null)
 }
 
 /** POST /debug/detach, then the fast pace. Throws the HTTP error. */
