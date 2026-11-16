@@ -30,6 +30,7 @@ import type {
   SliceRequest,
   SinkStatus,
   ConsumePauseState,
+  DetachRequest,
   DetachState,
   KafkaReadMessage,
   KafkaReadTopic,
@@ -376,14 +377,16 @@ export const api = {
   // Debug: detach (contract v1.33). The worker leaves its consumer group for
   // a bounded time and joins it again. The GET answers null for a 404 (an
   // older worker, or one without the feature); the UI then hides the control
-  // and the banner. Both POST routes answer 202 at once; the outcome shows
-  // later in last_request.
+  // and the banner. Both POST routes answer 202 at once with the state from
+  // before the request; a later GET shows the transition and last_request.
   getDetachState: () => getOptional<DetachState>('/debug/detach'),
-  postDetach: (durationSeconds: number, reason: string) =>
-    post<DetachState>('/debug/detach', {
+  postDetach: (durationSeconds: number, reason: string) => {
+    const body: DetachRequest = {
       duration_seconds: durationSeconds,
       ...(reason ? { reason } : {}),
-    }),
+    }
+    return post<DetachState>('/debug/detach', body)
+  },
   postAttach: () => post<DetachState>('/debug/attach', {}),
 
   // Debug: kafka read (contract v1.13). Ad-hoc reads of the configured

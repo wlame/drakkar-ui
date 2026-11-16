@@ -4,13 +4,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { get } from 'svelte/store'
 import { HttpError } from './api'
 import {
+  DETACH_ABSENT_POLL_MS,
   DETACH_FAST_POLL_MS,
   DETACH_SLOW_POLL_MS,
   NETWORK_ERROR_TEXT,
   OUTCOME_SENTENCES,
   bannerVisible,
   controlVisible,
+  detachStateText,
   detachChoices,
+  fmtDetachDuration,
   detachStaleSince,
   detachState,
   fmtTimeLeft,
@@ -18,7 +21,8 @@ import {
   isRefusal,
   nextPollDelayMs,
   outcomeText,
-  requestDetach,
+  requestAttach,
+  requestShown,
   requestErrorText,
   resetDetachForTests,
   useDetachState,
@@ -85,6 +89,15 @@ describe('outcomeText', () => {
     )
   })
 
+  it('says what each handler-only answer means for the operator', () => {
+    expect(outcomeText('already_detached')).toBe(
+      'The handler asked to detach, but an operator detach is active. Nothing changed.',
+    )
+    expect(outcomeText('leave_failed')).toBe(
+      'The worker could not leave its group in time. It returns to the group and may show attaching for a moment.',
+    )
+  })
+
   it('shows an unknown value as it is', () => {
     expect(outcomeText('brand_new_reason')).toBe('brand_new_reason')
   })
@@ -98,19 +111,94 @@ describe('outcomeText', () => {
 })
 
 describe('nextPollDelayMs', () => {
+  const pace = (over: Partial<Parameters<typeof nextPollDelayMs>[0]> = {}) =>
+    nextPollDelayMs({
+      state: state(),
+      absent: false,
+      failedReads: 0,
+      fastUntilMs: 0,
+      nowMs: 1000,
+      ...over,
+    })
+
   it('polls about once a second during a transition', () => {
-    expect(nextPollDelayMs(state({ state: 'detaching' }), 0, 1000)).toBe(DETACH_FAST_POLL_MS)
-    expect(nextPollDelayMs(state({ state: 'attaching' }), 0, 1000)).toBe(DETACH_FAST_POLL_MS)
+    expect(pace({ state: state({ state: 'detaching' }) })).toBe(DETACH_FAST_POLL_MS)
+    expect(pace({ state: state({ state: 'attaching' }) })).toBe(DETACH_FAST_POLL_MS)
   })
 
   it('polls fast for a few seconds after a request', () => {
-    expect(nextPollDelayMs(state(), 5000, 1000)).toBe(DETACH_FAST_POLL_MS)
+    expect(pace({ fastUntilMs: 5000 })).toBe(DETACH_FAST_POLL_MS)
   })
 
   it('polls slowly otherwise', () => {
-    expect(nextPollDelayMs(state(), 0, 1000)).toBe(DETACH_SLOW_POLL_MS)
-    expect(nextPollDelayMs(state({ state: 'detached' }), 0, 1000)).toBe(DETACH_SLOW_POLL_MS)
-    expect(nextPollDelayMs(null, 0, 1000)).toBe(DETACH_SLOW_POLL_MS)
+    expect(pace()).toBe(DETACH_SLOW_POLL_MS)
+    expect(pace({ state: state({ state: 'detached' }) })).toBe(DETACH_SLOW_POLL_MS)
+    expect(pace({ state: null })).toBe(DETACH_SLOW_POLL_MS)
+  })
+
+  it('polls slowly while reads fail, even during a transition', () => {
+    expect(pace({ state: state({ state: 'detaching' }), failedReads: 2 })).toBe(DETACH_SLOW_POLL_MS)
+    expect(pace({ state: state({ state: 'detaching' }), failedReads: 1 })).toBe(DETACH_FAST_POLL_MS)
+  })
+
+  it('checks once a minute while the feature is absent', () => {
+    expect(pace({ state: null, absent: true })).toBe(DETACH_ABSENT_POLL_MS)
+    expect(DETACH_ABSENT_POLL_MS).toBe(60_000)
+  })
+})
+
+describe('fmtDetachDuration', () => {
+  it('writes whole minutes and hours, and the seconds that are left', () => {
+    expect(fmtDetachDuration(45)).toBe('45 s')
+    expect(fmtDetachDuration(90)).toBe('1 min 30 s')
+    expect(fmtDetachDuration(300)).toBe('5 min')
+    expect(fmtDetachDuration(5400)).toBe('90 min')
+    expect(fmtDetachDuration(3600)).toBe('1 h')
+    expect(fmtDetachDuration(7200)).toBe('2 h')
+  })
+})
+
+describe('detachStateText', () => {
+  it('names the two transitions and shows any other value as it is', () => {
+    expect(detachStateText('detaching')).toBe('Detaching…')
+    expect(detachStateText('attaching')).toBe('Attaching…')
+    expect(detachStateText('parked')).toBe('State: parked')
+  })
+})
+
+describe('requestShown', () => {
+  const sent = { state: 'attached', lastRequestAtMs: 1000 }
+
+  it('is false while the state and last_request are as they were', () => {
+    expect(
+      requestShown(
+        sent,
+        state({
+          last_request: { origin: 'operator', action: 'detach', outcome: 'cooldown', at_ms: 1000 },
+        }),
+      ),
+    ).toBe(false)
+  })
+
+  it('is true when the state moved', () => {
+    expect(requestShown(sent, state({ state: 'detaching' }))).toBe(true)
+  })
+
+  it('is true when last_request is newer, or appears for the first time', () => {
+    const newer = {
+      origin: 'operator' as const,
+      action: 'detach' as const,
+      outcome: 'budget_full',
+      at_ms: 2000,
+    }
+    expect(requestShown(sent, state({ last_request: newer }))).toBe(true)
+    expect(
+      requestShown({ state: 'attached', lastRequestAtMs: null }, state({ last_request: newer })),
+    ).toBe(true)
+  })
+
+  it('is false without a state to compare', () => {
+    expect(requestShown(sent, null)).toBe(false)
   })
 })
 
@@ -143,8 +231,15 @@ describe('fmtTimeLeft', () => {
 })
 
 describe('fmtUtcTimeMs', () => {
-  it('writes an epoch-milliseconds time in UTC with the label', () => {
-    expect(fmtUtcTimeMs(Date.UTC(2026, 10, 16, 14, 2, 11))).toBe('14:02:11 UTC')
+  const now = Date.UTC(2026, 10, 16, 18, 0, 0)
+
+  it('writes a time of the current UTC day without the date', () => {
+    expect(fmtUtcTimeMs(Date.UTC(2026, 10, 16, 14, 2, 11), now)).toBe('14:02:11 UTC')
+  })
+
+  it('adds the date for a time on another UTC day', () => {
+    expect(fmtUtcTimeMs(Date.UTC(2026, 10, 21, 9, 30, 0), now)).toBe('2026-11-21 09:30:00 UTC')
+    expect(fmtUtcTimeMs(Date.UTC(2026, 10, 15, 23, 59, 59), now)).toBe('2026-11-15 23:59:59 UTC')
   })
 })
 
@@ -173,6 +268,18 @@ describe('requestErrorText', () => {
     )
   })
 
+  it('gives its own sentence for a 503, whatever the detail says', () => {
+    const error = new HttpError(
+      'POST',
+      '/debug/detach',
+      503,
+      '{"detail":"The worker did not answer in time; try again"}',
+    )
+    expect(requestErrorText(error)).toBe(
+      'The worker did not answer in time. Check the state before you ask again.',
+    )
+  })
+
   it('gives the status for an answer without detail', () => {
     expect(requestErrorText(new HttpError('POST', '/debug/attach', 500, 'boom'))).toBe(
       'The worker answered HTTP 500.',
@@ -198,38 +305,84 @@ describe('the shared poll loop', () => {
     vi.unstubAllGlobals()
   })
 
-  it('drops a read that started before a POST answer', async () => {
+  it('does not publish the 202 answer as the state; the next read carries it', async () => {
     vi.useFakeTimers()
-    let releaseRead: (r: Response) => void = () => {}
+    let onWorker = state({ state: 'detached', origin: 'operator', until_ms: Date.now() + 60_000 })
     vi.stubGlobal(
       'fetch',
-      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
         if (init?.method === 'POST') {
-          return Promise.resolve(
-            new Response(JSON.stringify(state({ state: 'detaching', origin: 'operator' })), {
-              status: 202,
-            }),
-          )
+          // The worker answers with its state from before the request.
+          const before = onWorker
+          onWorker = state({ state: 'attaching', origin: 'operator' })
+          return new Response(JSON.stringify(before), { status: 202 })
         }
-        return new Promise<Response>((resolve) => {
-          releaseRead = resolve
-        })
+        return answer(onWorker)
       }),
     )
     const leave = useDetachState()
-    await requestDetach(900, '')
-    expect(get(detachState)?.state).toBe('detaching')
-    releaseRead(answer(state()))
     await vi.advanceTimersByTimeAsync(0)
-    expect(get(detachState)?.state).toBe('detaching')
+    const published = vi.fn()
+    const stop = detachState.subscribe(published)
+    published.mockClear()
 
-    // The next read starts after the POST answer, so it is taken.
-    await vi.advanceTimersByTimeAsync(DETACH_FAST_POLL_MS)
-    releaseRead(
-      answer(state({ state: 'detached', origin: 'operator', until_ms: Date.now() + 900_000 })),
-    )
-    await vi.advanceTimersByTimeAsync(0)
+    await requestAttach()
+    expect(published).not.toHaveBeenCalled()
     expect(get(detachState)?.state).toBe('detached')
+
+    // The fast pace after a request: the next read comes within a second.
+    await vi.advanceTimersByTimeAsync(DETACH_FAST_POLL_MS)
+    expect(get(detachState)?.state).toBe('attaching')
+    stop()
+    leave()
+  })
+
+  it('keeps checking once a minute after a 404, and shows the feature when it appears', async () => {
+    vi.useFakeTimers()
+    let present = false
+    const reads = vi.fn(async () =>
+      present ? answer(state()) : new Response('Not Found', { status: 404 }),
+    )
+    vi.stubGlobal('fetch', reads)
+    const leave = useDetachState()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(get(detachState)).toBeNull()
+    await vi.advanceTimersByTimeAsync(DETACH_ABSENT_POLL_MS - 1)
+    expect(reads).toHaveBeenCalledTimes(1)
+    present = true
+    await vi.advanceTimersByTimeAsync(1)
+    expect(reads).toHaveBeenCalledTimes(2)
+    expect(get(detachState)?.enabled).toBe(true)
+    leave()
+  })
+
+  it('keeps checking once a minute while the feature is off', async () => {
+    vi.useFakeTimers()
+    const reads = vi.fn(async () => answer(state({ enabled: false })))
+    vi.stubGlobal('fetch', reads)
+    const leave = useDetachState()
+    await vi.advanceTimersByTimeAsync(DETACH_ABSENT_POLL_MS * 2)
+    expect(reads).toHaveBeenCalledTimes(3)
+    leave()
+  })
+
+  it('polls slowly while reads fail during a transition', async () => {
+    vi.useFakeTimers()
+    let failing = false
+    const reads = vi.fn(async () =>
+      failing ? new Response('boom', { status: 500 }) : answer(state({ state: 'detaching' })),
+    )
+    vi.stubGlobal('fetch', reads)
+    const leave = useDetachState()
+    await vi.advanceTimersByTimeAsync(0)
+    failing = true
+    // Two failed reads at the fast pace, then the slow pace.
+    await vi.advanceTimersByTimeAsync(2 * DETACH_FAST_POLL_MS)
+    expect(reads).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(DETACH_SLOW_POLL_MS - 1)
+    expect(reads).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(reads).toHaveBeenCalledTimes(4)
     leave()
   })
 

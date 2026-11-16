@@ -1,12 +1,13 @@
 // Detach control (contract v1.33): hidden without the feature, the UI switch
-// or the route; presets within the maximum; the reason field; the POST and
-// the fast poll during a transition; the outcome sentence; Attach while
-// detached. All against a stubbed fetch and fake timers.
+// or the route; presets within the maximum; the reason field; the POST, which
+// the worker answers 202 with its state from before the request, and the wait
+// until a read shows the change; the outcome sentence; Attach while detached.
+// All against a stubbed fetch and fake timers.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushSync, mount, unmount } from 'svelte'
 import DetachControl from './DetachControl.svelte'
 import DetachBanner from '../DetachBanner.svelte'
-import { resetDetachForTests } from '../../lib/detach'
+import { DETACH_WAIT_LIMIT_MS, resetDetachForTests } from '../../lib/detach'
 import type { DetachState } from '../../lib/types'
 
 function detachState(overrides: Partial<DetachState> = {}): DetachState {
@@ -31,8 +32,10 @@ interface Holder {
   posts: { url: string; body: unknown }[]
 }
 
-// GET serves `holder.state` (404 when null); the POST routes record their
-// body and move the state like the worker would at the start of a transition.
+// GET serves `holder.state` (404 when null). A POST records its body and
+// answers 202 with the state UNCHANGED, as the worker does: it only starts
+// the transition, and a later read shows it. A test moves `holder.state` to
+// play the worker.
 function stubFetch(initial: DetachState | null) {
   const holder: Holder = { state: initial, gets: 0, posts: [] }
   const stub = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -40,11 +43,6 @@ function stubFetch(initial: DetachState | null) {
     if (init?.method === 'POST') {
       const body = init.body ? JSON.parse(String(init.body)) : null
       holder.posts.push({ url, body })
-      if (url.endsWith('/debug/detach')) {
-        holder.state = { ...holder.state!, state: 'detaching', origin: 'operator' }
-      } else if (url.endsWith('/debug/attach')) {
-        holder.state = { ...holder.state!, state: 'attaching' }
-      }
       return new Response(JSON.stringify(holder.state), { status: 202 })
     }
     if (url.endsWith('/debug/detach')) {
@@ -90,9 +88,19 @@ function buttonByText(target: HTMLElement, text: string): HTMLButtonElement | un
   )
 }
 
+const WAITING_TEXT = 'Sent; waiting for the worker…'
+
+// Opens the form and sends a detach with the default duration.
+async function sendDetach(target: HTMLElement) {
+  openForm(target)
+  buttonByText(target, 'Detach from the group')!.click()
+  await settled()
+}
+
 describe('DetachControl', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    vi.setSystemTime(Date.UTC(2026, 10, 16, 12, 0, 0))
   })
 
   afterEach(() => {
@@ -117,15 +125,19 @@ describe('DetachControl', () => {
     cleanup()
   })
 
-  it('renders nothing and no error when the route answers 404', async () => {
+  it('renders nothing on a 404, checks again once a minute, and shows the control once the route answers', async () => {
     const { stub, holder } = stubFetch(null)
     vi.stubGlobal('fetch', stub)
     const { target, cleanup } = renderMounted()
     await settled()
     expect(target.textContent?.trim()).toBe('')
-    // An older worker is not polled again.
     await settled(20_000)
     expect(holder.gets).toBe(1)
+
+    holder.state = detachState()
+    await settled(40_000)
+    expect(holder.gets).toBe(2)
+    expect(target.querySelector('.detach-toggle')).not.toBeNull()
     cleanup()
   })
 
@@ -144,7 +156,7 @@ describe('DetachControl', () => {
     cleanup()
   })
 
-  it('sends the detach, disables the button, then offers Attach and a clean form', async () => {
+  it('sends the detach, waits for the worker, then shows the transition and a clean form', async () => {
     const { stub, holder } = stubFetch(detachState())
     vi.stubGlobal('fetch', stub)
     const { target, cleanup } = renderMounted()
@@ -165,8 +177,14 @@ describe('DetachControl', () => {
         body: { duration_seconds: 3600, reason: 'rolling restart of the database' },
       },
     ])
-    const busy = buttonByText(target, 'Detaching')!
-    expect(busy.disabled).toBe(true)
+    // The 202 answer still says attached: the control waits, its button is off.
+    expect(target.querySelector('.detach-waiting')?.textContent?.trim()).toBe(WAITING_TEXT)
+    expect(target.querySelector<HTMLButtonElement>('.detach-toggle')!.disabled).toBe(true)
+
+    holder.state = detachState({ state: 'detaching', origin: 'operator' })
+    await settled(1_000)
+    expect(target.querySelector('.detach-waiting')).toBeNull()
+    expect(buttonByText(target, 'Detaching')!.disabled).toBe(true)
 
     holder.state = detachState({
       state: 'detached',
@@ -181,14 +199,105 @@ describe('DetachControl', () => {
       },
     })
     await settled(1_000)
-    expect(buttonByText(target, 'Attach now')).toBeDefined()
+    expect(buttonByText(target, 'Attach now')!.disabled).toBe(false)
 
-    // Back to attached: the form opens closed-then-empty, not with the old reason.
+    // Back to attached: the form opens empty, not with the old reason.
     holder.state = detachState()
     await settled(5_000)
     expect(target.querySelector('.detach-pop')).toBeNull()
     openForm(target)
     expect(target.querySelector<HTMLInputElement>('input.detach-reason')!.value).toBe('')
+    cleanup()
+  })
+
+  it('allows no second request while it waits for the worker', async () => {
+    const { stub, holder } = stubFetch(detachState())
+    vi.stubGlobal('fetch', stub)
+    const { target, cleanup } = renderMounted()
+    await settled()
+    await sendDetach(target)
+    await settled(2_000)
+    // Still attached on the worker; the toggle stays off and opens nothing.
+    const toggle = target.querySelector<HTMLButtonElement>('.detach-toggle')!
+    expect(toggle.disabled).toBe(true)
+    toggle.click()
+    flushSync()
+    expect(target.querySelector('.detach-pop')).toBeNull()
+    expect(holder.posts).toHaveLength(1)
+    cleanup()
+  })
+
+  it('ends the wait when a newer last_request shows, and shows its refusal', async () => {
+    const { stub, holder } = stubFetch(detachState())
+    vi.stubGlobal('fetch', stub)
+    const { target, cleanup } = renderMounted()
+    await settled()
+    await sendDetach(target)
+    holder.state = detachState({
+      last_request: {
+        origin: 'operator',
+        action: 'detach',
+        outcome: 'budget_full',
+        at_ms: Date.now(),
+      },
+    })
+    await settled(1_000)
+    expect(target.querySelector('.detach-waiting')).toBeNull()
+    expect(target.querySelector('.detach-outcome')?.textContent).toContain(
+      'The limit of detached workers in this group is reached.',
+    )
+    expect(target.querySelector<HTMLButtonElement>('.detach-toggle')!.disabled).toBe(false)
+    cleanup()
+  })
+
+  it('ends the wait at its bound and says the worker has not shown the request', async () => {
+    const { stub, holder } = stubFetch(detachState())
+    vi.stubGlobal('fetch', stub)
+    const { target, cleanup } = renderMounted()
+    await settled()
+    await sendDetach(target)
+    await settled(DETACH_WAIT_LIMIT_MS - 1_000)
+    expect(target.querySelector('.detach-waiting')).not.toBeNull()
+    await settled(1_000)
+    expect(target.querySelector('.detach-waiting')).toBeNull()
+    expect(target.querySelector('.detach-unshown')?.textContent?.trim()).toBe(
+      'The worker has not shown the request yet. Check the state before you ask again.',
+    )
+    expect(target.querySelector<HTMLButtonElement>('.detach-toggle')!.disabled).toBe(false)
+    expect(holder.posts).toHaveLength(1)
+    cleanup()
+  })
+
+  it('hides an older refusal from the moment a new request is sent until last_request changes', async () => {
+    const old = {
+      origin: 'operator' as const,
+      action: 'detach' as const,
+      outcome: 'budget_full',
+      at_ms: Date.now() - 600_000,
+    }
+    const { stub, holder } = stubFetch(detachState({ last_request: old }))
+    vi.stubGlobal('fetch', stub)
+    const { target, cleanup } = renderMounted()
+    await settled()
+    expect(target.querySelector('.detach-outcome')).not.toBeNull()
+
+    await sendDetach(target)
+    expect(target.querySelector('.detach-outcome')).toBeNull()
+
+    // The leave runs: still the old last_request, and no old sentence shows.
+    holder.state = detachState({ state: 'detaching', origin: 'operator', last_request: old })
+    await settled(1_000)
+    expect(buttonByText(target, 'Detaching')).toBeDefined()
+    expect(target.querySelector('.detach-outcome')).toBeNull()
+
+    // The leave failed: a new refusal is news again.
+    holder.state = detachState({
+      last_request: { ...old, outcome: 'leave_failed', at_ms: Date.now() },
+    })
+    await settled(1_000)
+    expect(target.querySelector('.detach-outcome')?.textContent).toContain(
+      'The worker could not leave its group in time.',
+    )
     cleanup()
   })
 
@@ -234,7 +343,7 @@ describe('DetachControl', () => {
     await settled()
     const outcome = target.querySelector('.detach-outcome')?.textContent ?? ''
     expect(outcome).toContain('The limit of detached workers in this group is reached.')
-    expect(outcome).toMatch(/at \d{2}:\d{2}:\d{2} UTC/)
+    expect(outcome).toContain('at 12:00:00 UTC')
     cleanup()
   })
 
@@ -258,7 +367,17 @@ describe('DetachControl', () => {
     cleanup()
   })
 
-  it('shows Attach only while detached, and sends the attach', async () => {
+  it('shows an unknown state as it is', async () => {
+    vi.stubGlobal('fetch', stubFetch(detachState({ state: 'parked' as never })).stub)
+    const { target, cleanup } = renderMounted()
+    await settled()
+    const button = buttonByText(target, 'State: parked')!
+    expect(button.disabled).toBe(true)
+    expect(buttonByText(target, 'Attaching')).toBeUndefined()
+    cleanup()
+  })
+
+  it('shows Attach only while detached, sends the attach and waits for the worker', async () => {
     const { stub, holder } = stubFetch(
       detachState({ state: 'detached', origin: 'handler', until_ms: Date.now() + 60_000 }),
     )
@@ -269,6 +388,14 @@ describe('DetachControl', () => {
     buttonByText(target, 'Attach now')!.click()
     await settled()
     expect(holder.posts.map((p) => p.url)).toEqual(['/api/v1/debug/attach'])
+    // The 202 answer still says detached: the button stays, but off.
+    expect(buttonByText(target, 'Attach now')!.disabled).toBe(true)
+    buttonByText(target, 'Attach now')!.click()
+    await settled()
+    expect(holder.posts).toHaveLength(1)
+
+    holder.state = detachState({ state: 'attaching', origin: 'handler' })
+    await settled(1_000)
     expect(buttonByText(target, 'Attach now')).toBeUndefined()
     expect(buttonByText(target, 'Attaching')?.disabled).toBe(true)
     cleanup()
@@ -304,9 +431,11 @@ describe('DetachControl', () => {
   })
 
   // A POST that fails with `answer`, against an attached worker; returns the
-  // error line the control shows.
-  async function failedDetach(answer: () => Promise<Response>): Promise<string | null> {
-    const { stub } = stubFetch(detachState())
+  // error line the control shows and the number of reads.
+  async function failedDetach(
+    answer: () => Promise<Response>,
+  ): Promise<{ text: string | null; readsAfterPost: number }> {
+    const { stub, holder } = stubFetch(detachState())
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
@@ -315,16 +444,17 @@ describe('DetachControl', () => {
     )
     const { target, cleanup } = renderMounted()
     await settled()
-    openForm(target)
-    buttonByText(target, 'Detach from the group')!.click()
-    await settled()
+    const readsBefore = holder.gets
+    await sendDetach(target)
     const text = target.querySelector('.error')?.textContent ?? null
+    const readsAfterPost = holder.gets - readsBefore
+    expect(target.querySelector('.detach-waiting')).toBeNull()
     cleanup()
-    return text
+    return { text, readsAfterPost }
   }
 
   it('shows the detail of a 403 as it is', async () => {
-    const text = await failedDetach(
+    const { text } = await failedDetach(
       async () =>
         new Response('{"detail":"Detach from the UI is off; set ui.detach_enabled to true."}', {
           status: 403,
@@ -339,12 +469,21 @@ describe('DetachControl', () => {
         { loc: ['body', 'duration_seconds'], msg: 'Input should be less than or equal to 3600' },
       ],
     })
-    const text = await failedDetach(async () => new Response(body, { status: 422 }))
+    const { text } = await failedDetach(async () => new Response(body, { status: 422 }))
     expect(text).toBe('Input should be less than or equal to 3600')
   })
 
+  it('after a 503 reads the state at once and says to check it before asking again', async () => {
+    const { text, readsAfterPost } = await failedDetach(
+      async () =>
+        new Response('{"detail":"The worker did not answer in time; try again"}', { status: 503 }),
+    )
+    expect(text).toBe('The worker did not answer in time. Check the state before you ask again.')
+    expect(readsAfterPost).toBe(1)
+  })
+
   it('shows one sentence when the worker does not answer', async () => {
-    const text = await failedDetach(async () => {
+    const { text } = await failedDetach(async () => {
       throw new TypeError('Failed to fetch')
     })
     expect(text).toBe('The worker did not answer. Check the connection and try again.')

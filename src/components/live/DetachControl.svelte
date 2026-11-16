@@ -10,23 +10,36 @@
   // page-wide banner shows the deadline). The last request that was refused
   // shows as one plain sentence.
   //
+  // A POST answers 202 with the state from BEFORE the request: the worker
+  // only starts the transition. So after a 202 the control waits until a read
+  // shows the change (another state, or a newer last_request), with its
+  // buttons off, for at most DETACH_WAIT_LIMIT_MS. An older refusal stays
+  // hidden from the moment a request is sent until last_request changes.
+  //
   // The state comes from the shared store of lib/detach.ts, which the app
   // shell also reads for the banner, so there is one poll loop for both.
   import { onMount } from 'svelte'
   import {
     DETACH_REASON_MAX_CHARS,
+    DETACH_WAIT_LIMIT_MS,
     controlVisible,
     detachStaleSince,
     detachChoices,
     detachState,
+    detachStateText,
     fmtDetachDuration,
     fmtUtcTimeMs,
     isRefusal,
+    isTransitional,
     outcomeText,
+    refreshDetachNow,
     requestAttach,
     requestDetach,
     requestErrorText,
+    requestShown,
+    sentRequestFrom,
     useDetachState,
+    type SentRequest,
   } from '../../lib/detach'
 
   let busy = $state(false)
@@ -35,6 +48,13 @@
   let chosen = $state<number | null>(null)
   let reason = $state('')
   let popEl = $state<HTMLDivElement>()
+  // The view when the last accepted request was sent, while no read shows it.
+  let waiting = $state<SentRequest | null>(null)
+  // The same view after the wait ran out, until a read shows the request.
+  let unshown = $state<SentRequest | null>(null)
+  // The at_ms of last_request when the last request was sent: that refusal is
+  // old news from then on.
+  let supersededAtMs = $state<number | null>(null)
 
   const snapshot = $derived($detachState)
   const staleSince = $derived($detachStaleSince)
@@ -47,24 +67,54 @@
         ? snapshot.default_duration_seconds
         : (choices[0] ?? null),
   )
-  const refused = $derived(
-    snapshot?.last_request && isRefusal(snapshot.last_request.outcome) ? snapshot.last_request : null,
-  )
+  const locked = $derived(busy || waiting !== null)
+  const refused = $derived.by(() => {
+    const last = snapshot?.last_request
+    if (!last || !isRefusal(last.outcome)) return null
+    if (waiting !== null || isTransitional(snapshot)) return null
+    if (supersededAtMs !== null && last.at_ms === supersededAtMs) return null
+    return last
+  })
+  const showUnshown = $derived(unshown !== null && !requestShown(unshown, snapshot))
 
-  // Runs one request; true when the worker accepted it.
+  // Runs one request; true when the worker accepted it (202). A failed
+  // request reads the state at once: after a 503 it may have started anyway.
   async function run(action: () => Promise<void>): Promise<boolean> {
+    const before = sentRequestFrom(snapshot)
     busy = true
     error = null
+    unshown = null
     try {
       await action()
+      waiting = before
+      supersededAtMs = before.lastRequestAtMs
       return true
     } catch (e) {
       error = requestErrorText(e)
+      refreshDetachNow()
       return false
     } finally {
       busy = false
     }
   }
+
+  // The wait ends when a read shows the request.
+  $effect(() => {
+    if (waiting !== null && requestShown(waiting, snapshot)) waiting = null
+  })
+
+  // ... or at its bound: the buttons come back with one plain line.
+  $effect(() => {
+    const sent = waiting
+    if (sent === null) return
+    const timer = setTimeout(() => {
+      if (waiting === sent) {
+        unshown = sent
+        waiting = null
+      }
+    }, DETACH_WAIT_LIMIT_MS)
+    return () => clearTimeout(timer)
+  })
 
   // On success the form closes and forgets its reason, so the next detach
   // starts clean. On a failure the form stays as it was, next to the error.
@@ -109,7 +159,7 @@
         class:on={formOpen}
         onclick={() => (formOpen = !formOpen)}
         aria-expanded={formOpen}
-        disabled={busy}
+        disabled={locked}
         title="Leave the Kafka consumer group for a bounded time. The worker joins it again at the deadline."
       >Detach&hellip; &#9662;</button>
       {#if formOpen}
@@ -138,19 +188,24 @@
           <p class="note">
             This worker leaves its consumer group. Kafka gives its partitions to the other workers.
           </p>
-          <button class="detach-go" onclick={detach} disabled={busy || duration == null}
+          <button class="detach-go" onclick={detach} disabled={locked || duration == null}
             >Detach from the group</button
           >
         </div>
       {/if}
     {:else if snapshot.state === 'detached'}
-      <button class="attach-go" onclick={attach} disabled={busy}>Attach now</button>
+      <button class="attach-go" onclick={attach} disabled={locked}>Attach now</button>
     {:else}
-      <button class="detach-toggle" disabled
-        >{snapshot.state === 'detaching' ? 'Detaching…' : 'Attaching…'}</button
-      >
+      <button class="detach-toggle" disabled>{detachStateText(snapshot.state)}</button>
     {/if}
   </div>
+  {#if waiting !== null}
+    <p class="detach-waiting" role="status">Sent; waiting for the worker…</p>
+  {:else if showUnshown}
+    <p class="detach-unshown" role="status">
+      The worker has not shown the request yet. Check the state before you ask again.
+    </p>
+  {/if}
   {#if staleSince != null}
     <!-- The buttons stay usable: a POST may get through when a read did not. -->
     <p class="detach-stale" role="status">
@@ -248,6 +303,8 @@
      control sits in. */
   .detach-outcome,
   .detach-stale,
+  .detach-waiting,
+  .detach-unshown,
   .error {
     flex-basis: 100%;
     margin: 0;
@@ -256,7 +313,9 @@
   .detach-outcome {
     color: var(--warn);
   }
-  .detach-stale {
+  .detach-stale,
+  .detach-waiting,
+  .detach-unshown {
     color: var(--muted);
   }
 </style>

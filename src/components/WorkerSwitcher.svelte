@@ -129,7 +129,7 @@
               <div class="item current">
                 <span class="mono">{w.worker_name || '?'}</span>
                 {#if isDetached(w)}
-                  <span class="tag detached" title="Detached from its consumer group">detached</span>
+                  <span class="tag detached" title="Outside its consumer group: leaving it, away, or returning to it">detached</span>
                 {/if}
                 <span class="tag">current</span>
               </div>
@@ -154,7 +154,7 @@
                   <span class="addr">{w.ip_address}:{w.debug_port}</span>
                 {/if}
                 {#if isDetached(w)}
-                  <span class="tag detached" title="Detached from its consumer group">detached</span>
+                  <span class="tag detached" title="Outside its consumer group: leaving it, away, or returning to it">detached</span>
                 {/if}
                 {#if isOffline(w)}
                   <span class="tag">offline</span>

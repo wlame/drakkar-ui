@@ -10,6 +10,7 @@
     bannerVisible,
     detachStaleSince,
     detachState,
+    detachStateLine,
     fmtTimeLeft,
     fmtUtcTimeMs,
     useDetachState,
@@ -59,9 +60,7 @@
     </div>
   {:else}
     <p class="detach-transition" role="status">
-      {snapshot.state === 'detaching'
-        ? 'Detaching from the consumer group…'
-        : 'Attaching to the consumer group…'}
+      {detachStateLine(snapshot.state)}
       {#if staleSince != null}
         <span class="detach-stale"
           >state unknown since {fmtUtcTimeMs(staleSince)}: the worker does not answer</span

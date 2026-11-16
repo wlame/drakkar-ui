@@ -897,7 +897,8 @@ export type DetachRefusal =
 // its bound, or an attach is in progress; the worker retries every 5 s.
 export type AttachRefusal = 'not_running' | 'stopping' | 'held_by_operator' | 'join_failed'
 
-// What ended a detach: the `cause` of a worker_attached event.
+// What ended a detach: the `cause` metadata of a worker_attached event. No
+// view reads that metadata by name yet; the type names the contract's closed set.
 export type AttachCause = 'handler' | 'operator' | 'deadline' | 'lease_lost' | 'too_few_workers'
 
 // The last detach or attach that the handler or an operator asked for.

@@ -59,6 +59,7 @@ function renderMounted() {
 describe('DetachBanner', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    vi.setSystemTime(Date.UTC(2026, 10, 16, 12, 0, 0))
   })
 
   afterEach(() => {
@@ -166,6 +167,34 @@ describe('DetachBanner', () => {
     flushSync()
     expect(target.querySelector('.detach-stale')).toBeNull()
     expect(target.querySelector('.detach-banner')).not.toBeNull()
+    cleanup()
+  })
+
+  it('adds the date to a deadline on another UTC day', async () => {
+    vi.setSystemTime(Date.UTC(2026, 10, 16, 23, 0, 0))
+    stubState(
+      detachState({
+        state: 'detached',
+        origin: 'handler',
+        since_ms: Date.now(),
+        until_ms: Date.UTC(2026, 10, 18, 6, 0, 0),
+      }),
+    )
+    const { target, cleanup } = renderMounted()
+    await settled()
+    expect(target.querySelector('.detach-banner')?.textContent).toContain(
+      'attaches at 2026-11-18 06:00:00 UTC (in 31:00:00)',
+    )
+    cleanup()
+  })
+
+  it('shows an unknown state as it is', async () => {
+    stubState(detachState({ state: 'parked' as never }))
+    const { target, cleanup } = renderMounted()
+    await settled()
+    expect(target.querySelector('.detach-transition')?.textContent?.trim()).toBe(
+      'Detach state: parked',
+    )
     cleanup()
   })
 })
