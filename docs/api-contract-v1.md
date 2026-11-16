@@ -3001,7 +3001,8 @@ readers; nothing new is measured.
 "autodiscover": {"enabled": bool, "provider": str|null,
                  "peers_online": int|null, "peers_offline": int|null,
                  "cluster_tasks_match": bool|null}
-"detach": {"state": str, "origin": str|null, "reason": str,   // v1.33
+"detach": {"state": "attached"|"detaching"|"detached"|"attaching",   // v1.33
+           "origin": "handler"|"operator"|null, "reason": str,
            "since": number|null, "until": number|null}
 "recent_failures": null | {"failures": [ {"task_id": str, "ts": number,
                                    "partition": int|null,
@@ -3349,8 +3350,14 @@ applies answers):
 | `store_unavailable` | No slot was won, and at least one store call failed or made no attempt. |
 | `leave_failed` | The revoke did not end within its bound. |
 
-The refusal reasons of an attach: `not_running`, `stopping` and
-`held_by_operator` (a handler attach does not end an operator detach).
+The answers of an attach that did not succeed:
+
+| Answer | When |
+|---|---|
+| `not_running` | The Kafka source has not finished its first poll. |
+| `stopping` | A stop was requested, or the worker's poll loop has ended. |
+| `held_by_operator` | A handler attach while an operator detach is active; a handler attach does not end an operator detach. |
+| `join_failed` | The join did not succeed within its bound, or an attach is already in progress and has not succeeded yet. The worker is still outside the group, and the worker tries the join again every 5 s. |
 
 The causes that end a detach (the `cause` of `worker_attached`):
 
@@ -3390,7 +3397,7 @@ DetachState = {
   is none.
 - `since_ms` is the epoch milliseconds when the detach began, `null` while
   attached. `until_ms` is the deadline in epoch milliseconds while
-  `detached`, else `null`.
+  `detached`, `null` in every other state.
 - `max_duration_seconds` and `default_duration_seconds` are the configured
   `sources.kafka.detach.max_duration` and `default_duration`, in seconds.
   The UI offers only presets within `max_duration_seconds`.
@@ -3398,9 +3405,10 @@ DetachState = {
   operator asked for, `null` before the first. `at_ms` is the epoch
   milliseconds when it was asked. `outcome` is `detached` (for `action:
   "detach"`) or `attached` (for `action: "attach"`) on success, else one
-  refusal reason of the tables above. A client MUST show an unknown
-  `outcome` as it is. An attach that the deadline or a safety rule starts
-  does not change `last_request`.
+  refusal reason or attach answer of the tables above (`join_failed` only
+  for `action: "attach"`). A client MUST show an unknown `outcome` as it
+  is. An attach that the deadline or a safety rule starts does not change
+  `last_request`.
 
 ### `POST /api/v1/debug/detach`
 
@@ -3458,7 +3466,8 @@ in `events` and sent on `/ws`.
   the values of the `parts` parameter):
 
   ```
-  "detach": {"state": str, "origin": str|null, "reason": str,
+  "detach": {"state": "attached"|"detaching"|"detached"|"attaching",
+             "origin": "handler"|"operator"|null, "reason": str,
              "since": number|null, "until": number|null}
   ```
 

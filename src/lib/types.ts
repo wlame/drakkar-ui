@@ -891,8 +891,9 @@ export type DetachRefusal =
   | 'store_unavailable'
   | 'leave_failed'
 
-// Why an attach was refused.
-export type AttachRefusal = 'not_running' | 'stopping' | 'held_by_operator'
+// Why an attach did not succeed. join_failed: the join did not succeed within
+// its bound, or an attach is in progress; the worker retries every 5 s.
+export type AttachRefusal = 'not_running' | 'stopping' | 'held_by_operator' | 'join_failed'
 
 // What ended a detach: the `cause` of a worker_attached event.
 export type AttachCause = 'handler' | 'operator' | 'deadline' | 'lease_lost' | 'too_few_workers'
@@ -923,7 +924,7 @@ export interface DetachState {
   reason: string
   // Epoch milliseconds when the detach began; null while attached.
   since_ms: number | null
-  // The deadline in epoch milliseconds while detached; else null.
+  // The deadline in epoch milliseconds while detached; null in every other state.
   until_ms: number | null
   max_duration_seconds: number
   default_duration_seconds: number

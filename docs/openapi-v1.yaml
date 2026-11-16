@@ -3665,7 +3665,7 @@ components:
           description: When the detach began; null while attached.
         until_ms:
           type: [integer, 'null']
-          description: The deadline while detached; else null.
+          description: The deadline while detached; null in every other state.
         max_duration_seconds: {type: number}
         default_duration_seconds: {type: number}
         last_request:
@@ -3684,7 +3684,7 @@ components:
                 not_running, stopping, disabled, inside_pipeline_hook,
                 already_detached, cooldown, too_few_workers, budget_full,
                 store_unavailable, leave_failed (detach); not_running,
-                stopping, held_by_operator (attach). A client shows an
+                stopping, held_by_operator, join_failed (attach). A client shows an
                 unknown value as it is.
             at_ms: {type: integer}
           required: [origin, action, outcome, at_ms]
