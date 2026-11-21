@@ -265,11 +265,6 @@
 
   const colorRules = $derived(timeline?.color_rules ?? [])
   const ruleLegend = $derived(legendEntries(colorRules))
-  // The two split looks are explained only where they can appear: this worker
-  // splits, or a bar in view is a split task.
-  const showSplitLegend = $derived(
-    $isSplitOn || bars.some((b) => splitTaskKind(b.task.labels) !== null),
-  )
   // The backend's role bindings; the viewer's local overrides win over them.
   const backendRoles = $derived(timeline?.labels ?? {})
   // Writable derived: it re-reads storage whenever the worker identity lands
@@ -593,6 +588,11 @@
   // or the zoom actually change — never on a scroll or a `now` tick.
   const markerKey = $derived(roles.marker ?? '')
   const markers = $derived(deriveMarkers(tasks, markerKey, originTs, pxPerSec))
+  // The two split looks are explained only where they can appear: this worker
+  // splits, or a bar in view is a split task.
+  const showSplitLegend = $derived(
+    $isSplitOn || bars.some((b) => splitTaskKind(b.task.labels) !== null),
+  )
 
   // Culled the same way bars are: a deep window with a high-cardinality
   // marker label can produce thousands of pins, and only the visible band
