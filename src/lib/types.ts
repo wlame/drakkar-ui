@@ -179,10 +179,6 @@ export interface DocsConfig {
   anchors: DocsAnchorWire[]
 }
 
-// Worker self-identity from GET /api/v1/identity (v1.1, extended v1.2).
-// config_summary is the one-line worker config string the reference debug
-// page shows in its banner. The v1.2 fields are optional: older backends
-// omit them and the UI degrades gracefully.
 /** v1.34: split mode of the worker. The three keys are null when disabled. */
 export interface SplitCapability {
   enabled: boolean
@@ -192,6 +188,10 @@ export interface SplitCapability {
   parts_partition_base: number | null
 }
 
+// Worker self-identity from GET /api/v1/identity (v1.1, extended v1.2).
+// config_summary is the one-line worker config string the reference debug
+// page shows in its banner. The v1.2 fields are optional: older backends
+// omit them and the UI degrades gracefully.
 /** v1.28: what the worker runs. Absent on older backends: treat all as on. */
 export interface Capabilities {
   recorder?: {
