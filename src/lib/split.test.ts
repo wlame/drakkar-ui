@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { get } from 'svelte/store'
 import { api } from './api'
+import { identity } from './config'
 import {
   MALFORMED_ANSWER_REASON,
   SPLIT_ABSENT_POLL_MS,
@@ -586,6 +587,56 @@ describe('the shared poll loop with peers', () => {
     expect(reads.mock.calls.length).toBe(after)
   })
 
+  it('polls within one fast tick when a tab hidden at load shows', async () => {
+    vi.useFakeTimers()
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true })
+    const reads = serve(
+      async () => json(splitState({ jobs: [job()] })),
+      async () => json(splitState()),
+    )
+    const leave = useSplitState()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(reads).not.toHaveBeenCalled()
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+    document.dispatchEvent(new Event('visibilitychange'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(reads).toHaveBeenCalled()
+    expect(get(splitView)).not.toBeNull()
+    leave()
+  })
+
+  it('retries a round skipped by a hidden tab at the fast pace', async () => {
+    vi.useFakeTimers()
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true })
+    const reads = serve(
+      async () => json(splitState({ jobs: [job()] })),
+      async () => json(splitState()),
+    )
+    const leave = useSplitState()
+    await vi.advanceTimersByTimeAsync(0)
+    // The tab shows without an event; the next fast tick asks.
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+    await vi.advanceTimersByTimeAsync(SPLIT_POLL_MS)
+    expect(reads).toHaveBeenCalled()
+    expect(get(splitView)).not.toBeNull()
+    leave()
+  })
+
+  it('stops listening for the tab after the last user leaves', async () => {
+    vi.useFakeTimers()
+    const reads = serve(
+      async () => json(splitState()),
+      async () => json(splitState()),
+    )
+    const leave = useSplitState()
+    await vi.advanceTimersByTimeAsync(0)
+    leave()
+    const after = reads.mock.calls.length
+    document.dispatchEvent(new Event('visibilitychange'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(reads.mock.calls.length).toBe(after)
+  })
+
   it('sends no request while the tab is hidden', async () => {
     vi.useFakeTimers()
     Object.defineProperty(document, 'hidden', { configurable: true, value: true })
@@ -693,6 +744,42 @@ describe('failed rounds with workers without the route', () => {
     expect(workersCall).toHaveBeenCalledTimes(3)
     expect(get(splitStaleSince)).not.toBeNull()
     expect(get(splitView)?.results).toHaveLength(1)
+    leave()
+  })
+})
+
+describe('the poll loop and the page worker split switch', () => {
+  afterEach(() => {
+    resetSplitForTests()
+    identity.set(null)
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('polls at once when split turns on while the slow timer waits', async () => {
+    vi.useFakeTimers()
+    const off = splitState({ enabled: false })
+    const reads = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/workers')) return new Response('[]', { status: 200 })
+      return new Response(JSON.stringify(off), { status: 200 })
+    })
+    vi.stubGlobal('fetch', reads)
+    const leave = useSplitState()
+    await vi.advanceTimersByTimeAsync(0)
+    const after = reads.mock.calls.length
+    identity.set({
+      capabilities: {
+        split: {
+          enabled: true,
+          parts_topic: 'p',
+          results_topic: 'r',
+          parts_partition_base: 1000000,
+        },
+      },
+    } as never)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(reads.mock.calls.length).toBeGreaterThan(after)
     leave()
   })
 })

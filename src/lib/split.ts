@@ -304,6 +304,12 @@ let lastGoodRoundMs: number | null = null
 let failedRounds = 0
 let anySplit = false
 let timer: ReturnType<typeof setTimeout> | undefined
+// True while the pending timer waits the slow pace, so a worker that starts
+// splitting is asked at once instead of after up to a minute.
+let timerIsSlow = false
+// True while a round runs; an extra poll then waits for its schedule.
+let roundInFlight = false
+let stopWatching: (() => void) | undefined
 // Bumped by every start and stop, so a round that lands after a stop or a
 // restart does not schedule a second loop.
 let generation = 0
@@ -364,25 +370,58 @@ async function round(gen: number): Promise<void> {
   splitView.set({ results, unanswered, anySplit })
 }
 
-function schedule(gen: number) {
+// A skipped round (a hidden tab) is tried again at the fast pace, so the
+// panel fills soon after the tab shows, whatever the cluster does.
+function schedule(gen: number, skipped: boolean) {
   if (gen !== generation) return
   clearTimeout(timer)
-  const delay = nextSplitPollDelayMs(anySplit || get(isSplitOn))
+  const delay = skipped ? SPLIT_POLL_MS : nextSplitPollDelayMs(anySplit || get(isSplitOn))
+  timerIsSlow = delay > SPLIT_POLL_MS
   timer = setTimeout(() => void poll(gen), delay)
 }
 
 // A hidden tab skips the round and keeps the loop alive.
 async function poll(gen: number) {
   if (gen !== generation) return
+  const skipped = isHidden()
+  roundInFlight = true
   try {
-    if (!isHidden()) await round(gen)
+    if (!skipped) await round(gen)
   } catch (error) {
     // An unexpected error must not end the loop: the round counts as failed,
     // and the next one is scheduled as usual.
     console.warn('split jobs round failed', error)
     if (gen === generation) roundFailed(get(splitView)?.unanswered ?? [])
   } finally {
-    schedule(gen)
+    if (gen === generation) roundInFlight = false
+    schedule(gen, skipped)
+  }
+}
+
+// Poll at once in place of the pending timer, unless a round already runs.
+function pollNow() {
+  if (roundInFlight) return
+  clearTimeout(timer)
+  void poll(generation)
+}
+
+function onVisibilityChange() {
+  if (!isHidden()) pollNow()
+}
+
+// Watch the tab and the page's own split switch while the loop runs.
+function watchTriggers(): () => void {
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', onVisibilityChange)
+  }
+  const unsubscribe = isSplitOn.subscribe((on) => {
+    if (on && timerIsSlow) pollNow()
+  })
+  return () => {
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+    unsubscribe()
   }
 }
 
@@ -390,6 +429,10 @@ function forget() {
   generation += 1
   clearTimeout(timer)
   timer = undefined
+  timerIsSlow = false
+  roundInFlight = false
+  stopWatching?.()
+  stopWatching = undefined
   lastGoodRoundMs = null
   failedRounds = 0
   anySplit = false
@@ -405,6 +448,7 @@ export function useSplitState(): () => void {
   users += 1
   if (users === 1) {
     generation += 1
+    stopWatching = watchTriggers()
     void poll(generation)
   }
   let left = false
