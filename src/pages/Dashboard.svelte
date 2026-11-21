@@ -19,7 +19,7 @@
   import PartitionsTable from '../components/dashboard/PartitionsTable.svelte'
   import SinksTable from '../components/dashboard/SinksTable.svelte'
   import SplitJobsPanel from '../components/dashboard/SplitJobsPanel.svelte'
-  import { splitStaleSince, splitView, useSplitState } from '../lib/split'
+  import { splitStaleSinceMs, splitView, useSplitState } from '../lib/split'
 
   let { params: _params = {} }: { params?: Record<string, string> } = $props()
 
@@ -190,7 +190,7 @@
 
 <!-- First under the heading: an operator must see at once whether split jobs
      run and whether one is stuck. Outside the summary guard, like the tables. -->
-<SplitJobsPanel view={$splitView} staleSince={$splitStaleSince} splitOn={$isSplitOn} />
+<SplitJobsPanel view={$splitView} staleSince={$splitStaleSinceMs} splitOn={$isSplitOn} />
 
 {#if errors.dashboard}
   <p class="error">Could not load the worker summary: <code>{errors.dashboard}</code></p>
