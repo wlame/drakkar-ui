@@ -359,3 +359,30 @@ describe('TraceTab search order', () => {
     cleanup()
   })
 })
+
+describe('TraceTab label deep-link', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    identity.set(null)
+  })
+
+  it('runs the label search for a label prefill', async () => {
+    const { fetchMock, urls } = stubFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+    const app = mount(TraceTab, {
+      target,
+      props: { prefill: null, labelPrefill: { key: 'split_job', value: '7:500' } },
+    })
+    await settled()
+
+    const labelCalls = urls.filter((u) => u.includes('/debug/trace-by-label'))
+    expect(labelCalls).toHaveLength(1)
+    expect(labelCalls[0]).toContain('key=split_job')
+    expect(decodeURIComponent(labelCalls[0])).toContain('value=7:500')
+    expect(window.location.hash).toBe('#trace-label/split_job=7%3A500')
+    unmount(app)
+    target.remove()
+  })
+})

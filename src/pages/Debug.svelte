@@ -12,6 +12,7 @@
   import { hash, setHash } from '../lib/router'
   import MetricsTab from '../components/debug/MetricsTab.svelte'
   import PeriodicTab from '../components/debug/PeriodicTab.svelte'
+  import { parseTraceLabelHash } from '../lib/splitLabels'
   import TraceTab from '../components/debug/TraceTab.svelte'
   import ProbeTab from '../components/debug/ProbeTab.svelte'
   import DlqTab from '../components/debug/DlqTab.svelte'
@@ -59,6 +60,9 @@
     return m ? { partition: Number(m[1]), offset: Number(m[2]) } : null
   })
 
+  // #trace-label/<key>=<value> deep-link → Trace tab in label mode, prefilled.
+  const traceLabelMatch = $derived(parseTraceLabelHash($hash))
+
   // #probe/<alias>/<p>/<o> deep-link → Probe tab prefilled from the real
   // Kafka record at those coordinates (the target of the Kafka icons'
   // "Probe this message" action and the DLQ tab's probe button).
@@ -70,7 +74,7 @@
   })
 
   const activeTab = $derived.by<Tab>(() => {
-    if (traceMatch) return 'trace'
+    if (traceMatch || traceLabelMatch) return 'trace'
     if (probeMatch) return 'probe'
     const name = $hash.replace(/^#/, '') as Tab
     return availableTabs.includes(name) ? name : 'metrics'
@@ -113,7 +117,7 @@
 {:else if activeTab === 'periodic'}
   <PeriodicTab />
 {:else if activeTab === 'trace'}
-  <TraceTab prefill={traceMatch} />
+  <TraceTab prefill={traceMatch} labelPrefill={traceLabelMatch} />
 {:else if activeTab === 'probe'}
   <ProbeTab prefill={probeMatch} />
 {:else if activeTab === 'dlq'}

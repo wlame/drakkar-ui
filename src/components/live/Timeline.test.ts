@@ -1454,3 +1454,49 @@ describe('event-type docs anchors', () => {
     expect(target.querySelector('.tl-hover .docs-icon')).toBeNull()
   })
 })
+
+describe('Timeline split task looks', () => {
+  it('marks part tasks and local tasks and leaves others plain', () => {
+    const { target } = renderTracked({
+      tasks: [
+        task('part-task', 60, { labels: { split_part: '3', split_job: '7:500' } }),
+        task('local-task', 30, { labels: { split_part: 'local' } }),
+        task('plain-task', 10),
+      ],
+    })
+    expect(barFor(target, 'part-task').classList.contains('split-part')).toBe(true)
+    expect(barFor(target, 'part-task').classList.contains('split-local')).toBe(false)
+    expect(barFor(target, 'local-task').classList.contains('split-local')).toBe(true)
+    const plain = barFor(target, 'plain-task')
+    expect(plain.classList.contains('split-part') || plain.classList.contains('split-local')).toBe(
+      false,
+    )
+    // The status color underneath is unchanged.
+    expect(barFor(target, 'part-task').getAttribute('style')).toContain('#34d399')
+  })
+
+  it('lists both looks in the legend', () => {
+    const { target } = renderTracked()
+    const titles = [...target.querySelectorAll('.legend i')].map((i) => i.getAttribute('title'))
+    expect(titles).toContain('part of a split job')
+    expect(titles).toContain('run in place (split job)')
+  })
+
+  it('names a parts partition without a stray prefix in the hover ident', async () => {
+    const { target } = renderTracked({
+      tasks: [task('part-task', 60, { partition: 1000003, source_offsets: [5] })],
+    })
+    identity.set({
+      worker_id: 'w',
+      cluster: null,
+      config_summary: '',
+      capabilities: { split: { enabled: true, parts_partition_base: 1000000 } },
+    } as never)
+    flushSync()
+    barFor(target, 'part-task').dispatchEvent(new Event('mouseenter'))
+    flushSync()
+    const text = target.querySelector('.tl-hover')?.textContent ?? ''
+    expect(text).toContain('parts 3:o5')
+    expect(text).not.toContain('pparts')
+  })
+})
