@@ -3,6 +3,7 @@
 // shared poll loop with its stale sign.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { get } from 'svelte/store'
+import { api } from './api'
 import {
   MALFORMED_ANSWER_REASON,
   SPLIT_ABSENT_POLL_MS,
@@ -570,6 +571,103 @@ describe('the shared poll loop with peers', () => {
     const leave = useSplitState()
     await vi.advanceTimersByTimeAsync(SPLIT_ABSENT_POLL_MS * 2)
     expect(reads).not.toHaveBeenCalled()
+    leave()
+  })
+})
+
+describe('failed rounds with workers without the route', () => {
+  afterEach(() => {
+    resetSplitForTests()
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  const workers: WorkerPeer[] = [
+    {
+      worker_name: 'worker-1',
+      cluster: 'main',
+      url: '',
+      is_current: true,
+      ip_address: null,
+      debug_port: null,
+      debug_url: null,
+      split: true,
+    },
+    {
+      worker_name: 'worker-2',
+      cluster: 'main',
+      url: 'http://w2:8080',
+      is_current: false,
+      ip_address: null,
+      debug_port: null,
+      debug_url: null,
+    },
+  ]
+
+  const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 })
+
+  // A read that never answers and rejects when the fan-out gives up on it.
+  const hang = (init?: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () =>
+        reject(new DOMException('aborted', 'AbortError')),
+      )
+    })
+
+  it('fails when one worker times out and the other answers 404, and goes stale', async () => {
+    vi.useFakeTimers()
+    let ownReads = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.includes('/workers')) return json(workers)
+        if (url.startsWith('http://w2:8080')) return new Response('Not Found', { status: 404 })
+        ownReads += 1
+        return ownReads === 1 ? json(splitState({ jobs: [job()] })) : hang(init)
+      }),
+    )
+    const leave = useSplitState()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(get(splitView)?.results).toHaveLength(1)
+
+    // Round 2 starts at 5 s and times out at 10 s: the first failed round.
+    await vi.advanceTimersByTimeAsync(10_500)
+    expect(get(splitStaleSince)).toBeNull()
+    expect(get(splitView)?.unanswered).toContainEqual({ worker: 'worker-1', reason: 'timed out' })
+    expect(get(splitView)?.results).toHaveLength(1)
+
+    // Round 3 starts at 15 s and times out at 20 s: the second one.
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(get(splitStaleSince)).not.toBeNull()
+    leave()
+  })
+
+  it('counts a round that throws as failed and schedules the next one', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => json(splitState({ jobs: [job()] }))),
+    )
+    const workersCall = vi
+      .spyOn(api, 'workers')
+      .mockResolvedValueOnce(workers.slice(0, 1))
+      // Not a list: the round throws when it looks for the current worker.
+      .mockResolvedValue(null as unknown as WorkerPeer[])
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const leave = useSplitState()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(get(splitView)?.results).toHaveLength(1)
+
+    await vi.advanceTimersByTimeAsync(SPLIT_POLL_MS)
+    expect(workersCall).toHaveBeenCalledTimes(2)
+    expect(get(splitStaleSince)).toBeNull()
+
+    await vi.advanceTimersByTimeAsync(SPLIT_POLL_MS)
+    expect(workersCall).toHaveBeenCalledTimes(3)
+    expect(get(splitStaleSince)).not.toBeNull()
+    expect(get(splitView)?.results).toHaveLength(1)
     leave()
   })
 })
