@@ -11,9 +11,11 @@
   // it goes straight there (no menu ceremony for a single action). With
   // neither, nothing renders — the original contract. Clicks are stopped
   // from bubbling so a surrounding row/sidebar handler never fires.
+  import { partsBase } from '../lib/capabilities'
   import { runtimeConfig } from '../lib/config'
   import { kafkaUiUrl, KAFKA_ICON_PATH } from '../lib/kafka'
   import { ensureKafkaReadProbe, kafkaReadAvailable, probeHash } from '../lib/kafkaRead'
+  import { isPartsPartition } from '../lib/partitions'
   import { navigate } from '../lib/router'
 
   let {
@@ -34,10 +36,13 @@
 
   ensureKafkaReadProbe()
 
-  const url = $derived(kafkaUiUrl($runtimeConfig, partition, offset, topic))
+  // A partition of the internal parts topic (split) is not a partition of the
+  // source topic, so neither link would reach the message: no icon at all.
+  const onPartsTopic = $derived(topic == null && isPartsPartition(partition, $partsBase))
+  const url = $derived(onPartsTopic ? null : kafkaUiUrl($runtimeConfig, partition, offset, topic))
   // Optimistic while the capability probe is in flight (null): the icon
   // renders immediately and only disappears if the probe settles on false.
-  const probeEnabled = $derived(probeAlias != null && $kafkaReadAvailable !== false)
+  const probeEnabled = $derived(!onPartsTopic && probeAlias != null && $kafkaReadAvailable !== false)
   const probeTarget = $derived(probeAlias != null ? `/debug${probeHash(probeAlias, partition, offset)}` : '')
 
   let open = $state(false)
