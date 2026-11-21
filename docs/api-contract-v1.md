@@ -3680,7 +3680,9 @@ offline, and shows the workers that did not answer.
   main loop, so it is `null` when the main loop does not answer in time.
 - The diagnose rules grow from 14 to 16, both with severity `warning`:
   `split-job-near-timeout` (the time left of the nearest job is less than
-  10 % of its timeout or less than 300 seconds) and
+  `min(max(0.1 × T, 300 s), 0.25 × T)`, where `T` is
+  `nearest_timeout_seconds`: 10 % of the timeout, at least 300 seconds, and
+  never more than a quarter of the timeout) and
   `split-partition-restoring` (a partition has been restoring for more than
   120 seconds; exactly 120 does not fire).
 

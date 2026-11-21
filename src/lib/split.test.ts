@@ -13,6 +13,7 @@ import {
   jobHealth,
   jobLabel,
   mergeSplitJobs,
+  nearTimeoutThreshold,
   nextSplitPollDelayMs,
   ownerState,
   progressPercent,
@@ -228,13 +229,37 @@ describe('jobHealth', () => {
     ).toEqual([])
   })
 
-  it('marks a job with 299 s left, not one with 301 s', () => {
+  it('marks a job with 299 s left, not one with 301 s, by the 300 s floor', () => {
     expect(
-      jobHealth(row({ timeout_at: at(299), timeout_kind: 'job' }), settings(1000), now),
+      jobHealth(row({ timeout_at: at(299), timeout_kind: 'job' }), settings(1800), now),
     ).toEqual(['near_timeout'])
     expect(
-      jobHealth(row({ timeout_at: at(301), timeout_kind: 'job' }), settings(1000), now),
+      jobHealth(row({ timeout_at: at(301), timeout_kind: 'job' }), settings(1800), now),
     ).toEqual([])
+  })
+
+  it('caps the threshold at a quarter of a short timeout', () => {
+    expect(
+      jobHealth(row({ timeout_at: at(249), timeout_kind: 'job' }), settings(1000), now),
+    ).toEqual(['near_timeout'])
+    expect(
+      jobHealth(row({ timeout_at: at(251), timeout_kind: 'job' }), settings(1000), now),
+    ).toEqual([])
+    expect(jobHealth(row({ timeout_at: at(70), timeout_kind: 'job' }), settings(300), now)).toEqual(
+      ['near_timeout'],
+    )
+    expect(
+      jobHealth(row({ timeout_at: at(100), timeout_kind: 'job' }), settings(300), now),
+    ).toEqual([])
+  })
+
+  it.each([
+    [300, 75],
+    [1000, 250],
+    [1800, 300],
+    [86400, 8640],
+  ])('takes min(max(10 %%, 300 s), 25 %%) of a %d s timeout', (timeout, threshold) => {
+    expect(nearTimeoutThreshold(timeout)).toBeCloseTo(threshold, 9)
   })
 
   it('takes the idle timeout for an idle deadline', () => {
