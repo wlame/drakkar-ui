@@ -135,11 +135,9 @@ describe('SplitJobsPanel', () => {
 
   it('lists a worker that did not answer with its reason', () => {
     const target = render({
-      view: view({ unanswered: [{ worker: 'worker-2', reason: 'not available on this worker' }] }),
+      view: view({ unanswered: [{ worker: 'worker-2', reason: 'timed out' }] }),
     })
-    expect(target.querySelector('.split-unanswered')?.textContent).toContain(
-      'worker-2: not available on this worker',
-    )
+    expect(target.querySelector('.split-unanswered')?.textContent).toContain('worker-2: timed out')
   })
 
   it('names both owners of a job two workers report', () => {
@@ -189,5 +187,24 @@ describe('SplitJobsPanel', () => {
     const target = render({ view: view(), staleSince: since })
     expect(target.querySelector('.split-stale')?.textContent).toContain('stale since')
     expect(target.querySelectorAll('tbody tr')).toHaveLength(1)
+  })
+})
+
+describe('SplitJobsPanel and workers without the split route', () => {
+  it('lists a 404 peer as not available and keeps the panel shown', () => {
+    const target = render({
+      view: view({ unanswered: [{ worker: 'worker-2', reason: 'not available on this worker' }] }),
+    })
+    expect(target.querySelector('.split-jobs')).not.toBeNull()
+    expect(target.querySelector('.split-summary')?.textContent).not.toContain('did not answer')
+    expect(target.querySelector('.split-not-available')?.textContent).toContain('worker-2')
+    expect(target.querySelector('.split-unanswered')).toBeNull()
+  })
+
+  it('renders no empty list of marks', () => {
+    const target = render({
+      view: view({ unanswered: [{ worker: 'worker-2', reason: 'timed out' }] }),
+    })
+    expect(target.querySelector('.split-marks')).toBeNull()
   })
 })

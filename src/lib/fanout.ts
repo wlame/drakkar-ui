@@ -55,11 +55,14 @@ export function fanOutTargets(workers: WorkerPeer[]): {
   return { targets, unreachable }
 }
 
+/** The reason of a worker that answered 404: it has no such route (an older release). */
+export const NOT_AVAILABLE_REASON = 'not available on this worker'
+
 /** A short reason for a worker that did not answer. */
 export function unreachableReason(error: unknown, timedOut: boolean): string {
   if (timedOut) return 'timed out'
   if (error instanceof HttpError) {
-    return error.status === 404 ? 'not available on this worker' : `HTTP ${error.status}`
+    return error.status === 404 ? NOT_AVAILABLE_REASON : `HTTP ${error.status}`
   }
   // fetch rejects with a TypeError for a refused connection, a DNS failure
   // and a cross-origin answer the browser blocks (no CORS headers): from

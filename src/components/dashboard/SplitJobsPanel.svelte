@@ -67,7 +67,7 @@
     {:else}
       <p class="split-summary">{summaryText(summary)}</p>
 
-      {#if summary.unanswered.length || slowRestores.length || summary.writeFailures.length}
+      {#if slowRestores.length || summary.writeFailures.length}
         <ul class="split-marks">
           {#each slowRestores as r (`${r.worker}/${r.partition}`)}
             <li class="warn">
@@ -78,13 +78,20 @@
             <li class="warn">{f.worker}: {f.count} result writes failed</li>
           {/each}
         </ul>
-        {#if summary.unanswered.length}
-          <ul class="split-unanswered">
-            {#each summary.unanswered as u (u.worker)}
-              <li>{u.worker || 'this worker'}: {u.reason}</li>
-            {/each}
-          </ul>
-        {/if}
+      {/if}
+      {#if summary.unanswered.length}
+        <ul class="split-unanswered">
+          {#each summary.unanswered as u (u.worker)}
+            <li>{u.worker || 'this worker'}: {u.reason}</li>
+          {/each}
+        </ul>
+      {/if}
+      {#if summary.notAvailable.length}
+        <p class="split-not-available">
+          Not available (no split jobs view on this release): {summary.notAvailable
+            .map((w) => w || 'this worker')
+            .join(', ')}
+        </p>
       {/if}
 
       {#if rows.length === 0}
@@ -162,8 +169,13 @@
     padding: 0;
     font-size: 0.875rem;
   }
-  .split-unanswered {
+  .split-unanswered,
+  .split-not-available {
     color: var(--muted);
+  }
+  .split-not-available {
+    margin: 0.25rem 0 0.75rem;
+    font-size: 0.875rem;
   }
   .warn {
     color: #b45309;

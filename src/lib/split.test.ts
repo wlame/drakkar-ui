@@ -4,12 +4,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { get } from 'svelte/store'
 import {
+  MALFORMED_ANSWER_REASON,
   SPLIT_ABSENT_POLL_MS,
+  anyWorkerSplits,
+  isSplitState,
   SPLIT_POLL_MS,
   jobHealth,
   jobLabel,
   mergeSplitJobs,
   nextSplitPollDelayMs,
+  ownerState,
   progressPercent,
   resetSplitForTests,
   restoringTooLong,
@@ -81,6 +85,12 @@ describe('mergeSplitJobs', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0].owners).toEqual(['worker-1', 'worker-2'])
     expect(rows[0].received).toBe(41)
+    expect(rows[0].reportedBy).toBe('worker-1')
+    const results = [
+      { worker: 'worker-2', base: 'http://w2', state: splitState({ jobs: [job()] }) },
+      { worker: 'worker-1', base: '', state: splitState({ jobs: [job({ received: 41 })] }) },
+    ]
+    expect(ownerState(rows[0], results)?.base).toBe('')
   })
 
   it('orders the rows by opened_at, oldest first', () => {
@@ -170,6 +180,7 @@ describe('splitSummary', () => {
       oldestAgeSeconds: 600,
       restoring: [{ worker: 'worker-1', partition: 4, seconds: 130 }],
       unanswered: [{ worker: 'worker-2', reason: 'timed out' }],
+      notAvailable: [],
       writeFailures: [],
     })
     expect(text).toBe(
@@ -177,7 +188,7 @@ describe('splitSummary', () => {
     )
   })
 
-  it('says one open job and no oldest age when there are none', () => {
+  it('says no oldest age when there are no open jobs', () => {
     expect(
       summaryText({
         openJobs: 0,
@@ -185,6 +196,7 @@ describe('splitSummary', () => {
         oldestAgeSeconds: null,
         restoring: [],
         unanswered: [],
+        notAvailable: [],
         writeFailures: [],
       }),
     ).toBe('0 open jobs · 0 parts left')
@@ -199,7 +211,11 @@ describe('jobHealth', () => {
     idle_timeout_seconds: 0,
     max_attempts: 3,
   })
-  const row = (overrides: Partial<SplitJob>) => ({ ...job(overrides), owners: ['worker-1'] })
+  const row = (overrides: Partial<SplitJob>) => ({
+    ...job(overrides),
+    owners: ['worker-1'],
+    reportedBy: 'worker-1',
+  })
 
   it('marks a job with 9 % of its timeout left, not one with 11 %', () => {
     const day = 86400
@@ -367,5 +383,193 @@ describe('the shared poll loop', () => {
     await vi.advanceTimersByTimeAsync(SPLIT_ABSENT_POLL_MS * 2)
     expect(reads.mock.calls.length).toBe(after)
     expect(get(splitView)).toBeNull()
+  })
+})
+
+describe('workers without the split route', () => {
+  it('are listed as not available, not as workers that did not answer', () => {
+    const summary = splitSummary(
+      [{ worker: 'worker-1', state: splitState({ jobs: [job()] }) }],
+      [{ worker: 'worker-2', reason: 'not available on this worker' }],
+    )
+    expect(summary.unanswered).toEqual([])
+    expect(summary.notAvailable).toEqual(['worker-2'])
+    expect(summaryText(summary)).not.toContain('did not answer')
+  })
+})
+
+describe('isSplitState', () => {
+  it('accepts a full answer and refuses an empty object', () => {
+    expect(isSplitState(splitState({ jobs: [job({ parts: null })] }))).toBe(true)
+    expect(isSplitState({})).toBe(false)
+    expect(isSplitState(splitState({ jobs: [{} as SplitJob] }))).toBe(false)
+  })
+})
+
+describe('anyWorkerSplits', () => {
+  const peer = (overrides: Partial<WorkerPeer>): WorkerPeer => ({
+    worker_name: 'worker-1',
+    cluster: 'main',
+    url: '',
+    is_current: false,
+    ip_address: null,
+    debug_port: null,
+    debug_url: null,
+    ...overrides,
+  })
+
+  it('is true for a same-cluster peer with split while this worker has it off', () => {
+    const workers = [
+      peer({ worker_name: 'worker-1', is_current: true, split: false }),
+      peer({ worker_name: 'worker-2', url: 'http://w2:8080', split: true }),
+    ]
+    expect(anyWorkerSplits(workers, [])).toBe(true)
+  })
+
+  it('is false for a peer with split in another cluster', () => {
+    const workers = [
+      peer({ worker_name: 'worker-1', is_current: true, split: false }),
+      peer({ worker_name: 'worker-2', cluster: 'other', url: 'http://w2:8080', split: true }),
+    ]
+    expect(anyWorkerSplits(workers, [])).toBe(false)
+  })
+})
+
+describe('the shared poll loop with peers', () => {
+  afterEach(() => {
+    resetSplitForTests()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    Object.defineProperty(document, 'hidden', { configurable: true, value: false })
+  })
+
+  const workers: WorkerPeer[] = [
+    {
+      worker_name: 'worker-1',
+      cluster: 'main',
+      url: '',
+      is_current: true,
+      ip_address: null,
+      debug_port: null,
+      debug_url: null,
+      split: true,
+    },
+    {
+      worker_name: 'worker-2',
+      cluster: 'main',
+      url: 'http://w2:8080',
+      is_current: false,
+      ip_address: null,
+      debug_port: null,
+      debug_url: null,
+    },
+  ]
+
+  const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 })
+
+  // `own` answers for the page's worker, `peer` for worker-2.
+  function serve(own: () => Promise<Response>, peer: () => Promise<Response>) {
+    const reads = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/workers')) return json(workers)
+      return url.startsWith('http://w2:8080') ? peer() : own()
+    })
+    vi.stubGlobal('fetch', reads)
+    return reads
+  }
+
+  it('lists a 404 peer as not available next to an answering worker', async () => {
+    vi.useFakeTimers()
+    serve(
+      async () => json(splitState({ jobs: [job()] })),
+      async () => new Response('Not Found', { status: 404 }),
+    )
+    const leave = useSplitState()
+    await vi.advanceTimersByTimeAsync(0)
+    const view = get(splitView)
+    expect(view?.results.map((r) => r.worker)).toEqual(['worker-1'])
+    const summary = splitSummary(view?.results ?? [], view?.unanswered ?? [])
+    expect(summary.notAvailable).toEqual(['worker-2'])
+    expect(summaryText(summary)).not.toContain('did not answer')
+    leave()
+  })
+
+  it('is not stale when every worker answers 404', async () => {
+    vi.useFakeTimers()
+    const notFound = async () => new Response('Not Found', { status: 404 })
+    serve(notFound, notFound)
+    const leave = useSplitState()
+    await vi.advanceTimersByTimeAsync(SPLIT_POLL_MS * 3)
+    expect(get(splitStaleSince)).toBeNull()
+    expect(get(splitView)?.results).toEqual([])
+    leave()
+  })
+
+  it('lists a worker with a malformed answer and keeps polling', async () => {
+    vi.useFakeTimers()
+    const reads = serve(
+      async () => json({}),
+      async () => json(splitState({ worker: { name: 'worker-2', instance: 'b' } })),
+    )
+    const leave = useSplitState()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(get(splitView)?.unanswered).toEqual([
+      { worker: 'worker-1', reason: MALFORMED_ANSWER_REASON },
+    ])
+    expect(get(splitView)?.results.map((r) => r.worker)).toEqual(['worker-2'])
+    const after = reads.mock.calls.length
+    await vi.advanceTimersByTimeAsync(SPLIT_POLL_MS)
+    expect(reads.mock.calls.length).toBeGreaterThan(after)
+    leave()
+  })
+
+  it('keeps polling when every answer is malformed', async () => {
+    vi.useFakeTimers()
+    const reads = serve(
+      async () => json({}),
+      async () => json({}),
+    )
+    const leave = useSplitState()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(get(splitView)?.unanswered.map((u) => u.reason)).toEqual([
+      MALFORMED_ANSWER_REASON,
+      MALFORMED_ANSWER_REASON,
+    ])
+    // No worker gave a split state, so the slow pace applies.
+    const after = reads.mock.calls.length
+    await vi.advanceTimersByTimeAsync(SPLIT_ABSENT_POLL_MS)
+    expect(reads.mock.calls.length).toBeGreaterThan(after)
+    leave()
+  })
+
+  it('publishes and schedules nothing when the last user leaves during a round', async () => {
+    vi.useFakeTimers()
+    let release: (r: Response) => void = () => {}
+    const reads = serve(
+      () => new Promise<Response>((resolve) => (release = resolve)),
+      async () => json(splitState()),
+    )
+    const leave = useSplitState()
+    await vi.advanceTimersByTimeAsync(0)
+    leave()
+    release(json(splitState({ jobs: [job()] })))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(get(splitView)).toBeNull()
+    const after = reads.mock.calls.length
+    await vi.advanceTimersByTimeAsync(SPLIT_ABSENT_POLL_MS * 2)
+    expect(reads.mock.calls.length).toBe(after)
+  })
+
+  it('sends no request while the tab is hidden', async () => {
+    vi.useFakeTimers()
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true })
+    const reads = serve(
+      async () => json(splitState()),
+      async () => json(splitState()),
+    )
+    const leave = useSplitState()
+    await vi.advanceTimersByTimeAsync(SPLIT_ABSENT_POLL_MS * 2)
+    expect(reads).not.toHaveBeenCalled()
+    leave()
   })
 })
