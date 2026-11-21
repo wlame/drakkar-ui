@@ -3644,6 +3644,7 @@ framework. A value the handler set is kept.
 | a part | `<source partition>:<source offset>` of the original message | the part number, from 0 |
 | a local message (one that ran in place) | `<partition>:<offset>` of the message | `local` |
 
+A task built from several source messages takes the labels of the first one.
 Tasks of a worker without split get neither. The labels are stored and shown
 like any label, so the timeline, the task page and trace by label see them:
 `split_job=7:500` finds every task of that job on every worker.
