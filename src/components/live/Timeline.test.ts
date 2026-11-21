@@ -191,6 +191,7 @@ afterEach(async () => {
     await unmount(component)
     target.remove()
   }
+  identity.set(null)
   vi.useRealTimers()
 })
 
@@ -1475,11 +1476,33 @@ describe('Timeline split task looks', () => {
     expect(barFor(target, 'part-task').getAttribute('style')).toContain('#34d399')
   })
 
-  it('lists both looks in the legend', () => {
-    const { target } = renderTracked()
+  it('lists both looks in the legend when a split task is in view', () => {
+    const { target } = renderTracked({
+      tasks: [task('part-task', 60, { labels: { split_part: '3', split_job: '7:500' } })],
+    })
     const titles = [...target.querySelectorAll('.legend i')].map((i) => i.getAttribute('title'))
     expect(titles).toContain('part of a split job')
     expect(titles).toContain('run in place (split job)')
+  })
+
+  it('lists both looks in the legend when this worker splits', () => {
+    const { target } = renderTracked()
+    identity.set({
+      worker_id: 'w',
+      cluster: null,
+      config_summary: '',
+      capabilities: { split: { enabled: true, parts_partition_base: 1000000 } },
+    } as never)
+    flushSync()
+    const titles = [...target.querySelectorAll('.legend i')].map((i) => i.getAttribute('title'))
+    expect(titles).toContain('part of a split job')
+  })
+
+  it('leaves the split looks out of the legend without split', () => {
+    const { target } = renderTracked({ tasks: [task('plain-task', 10)] })
+    const titles = [...target.querySelectorAll('.legend i')].map((i) => i.getAttribute('title'))
+    expect(titles).not.toContain('part of a split job')
+    expect(titles).not.toContain('run in place (split job)')
   })
 
   it('names a parts partition without a stray prefix in the hover ident', async () => {

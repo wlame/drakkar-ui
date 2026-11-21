@@ -93,7 +93,7 @@
   import { getLinkBases } from '../../lib/enrich'
   import { anchorForEvent } from '../../lib/docsAnchors'
   import BookIcon from '../BookIcon.svelte'
-  import { partsBase } from '../../lib/capabilities'
+  import { isSplitOn, partsBase } from '../../lib/capabilities'
   import { partitionLabel, prefixedPartitionLabel } from '../../lib/partitions'
   import { splitTaskKind, traceLabelHash } from '../../lib/splitLabels'
 
@@ -265,6 +265,11 @@
 
   const colorRules = $derived(timeline?.color_rules ?? [])
   const ruleLegend = $derived(legendEntries(colorRules))
+  // The two split looks are explained only where they can appear: this worker
+  // splits, or a bar in view is a split task.
+  const showSplitLegend = $derived(
+    $isSplitOn || bars.some((b) => splitTaskKind(b.task.labels) !== null),
+  )
   // The backend's role bindings; the viewer's local overrides win over them.
   const backendRoles = $derived(timeline?.labels ?? {})
   // Writable derived: it re-reads storage whenever the worker identity lands
@@ -1258,8 +1263,10 @@
     {#each ruleLegend as entry}
       <i style:background={entry.color} title={entry.label} aria-label={entry.label}></i>
     {/each}
-    <i class="split-part" title="part of a split job" aria-label="part of a split job"></i>
-    <i class="split-local" title="run in place (split job)" aria-label="run in place (split job)"></i>
+    {#if showSplitLegend}
+      <i class="split-part" title="part of a split job" aria-label="part of a split job"></i>
+      <i class="split-local" title="run in place (split job)" aria-label="run in place (split job)"></i>
+    {/if}
   </div>
   <div class="roles" bind:this={gearEl}>
     <button
