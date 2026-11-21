@@ -1499,4 +1499,30 @@ describe('Timeline split task looks', () => {
     expect(text).toContain('parts 3:o5')
     expect(text).not.toContain('pparts')
   })
+
+  it('keeps a bar detail and its trace link while the pointer moves onto the strip', async () => {
+    const { target } = renderTracked({
+      tasks: [task('part-task', 60, { labels: { split_part: '3', split_job: '7:500' } })],
+    })
+    const bar = barFor(target, 'part-task')
+    bar.dispatchEvent(new Event('mouseenter'))
+    flushSync()
+    const strip = target.querySelector('.tl-hover') as HTMLElement
+    bar.dispatchEvent(new Event('mouseleave'))
+    strip.dispatchEvent(new Event('mouseenter'))
+    flushSync()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    flushSync()
+
+    const anchor = strip.querySelector('a.split-trace') as HTMLAnchorElement
+    expect(anchor).not.toBeNull()
+    expect(anchor.getAttribute('href')).toBe('/debug#trace-label/split_job=7%3A500')
+    // The router link action takes a fragment href as a client-side route.
+    anchor.click()
+    expect(window.location.hash).toBe('#trace-label/split_job=7%3A500')
+
+    strip.dispatchEvent(new Event('mouseleave'))
+    flushSync()
+    expect(strip.querySelector('a.split-trace')).toBeNull()
+  })
 })
