@@ -32,6 +32,7 @@ import type {
   ConsumePauseState,
   DetachRequest,
   DetachState,
+  SplitState,
   KafkaReadMessage,
   KafkaReadTopic,
   TaskDetailResponse,
@@ -388,6 +389,12 @@ export const api = {
     return post<DetachState>('/debug/detach', body)
   },
   postAttach: () => post<DetachState>('/debug/attach', {}),
+
+  // Debug: split jobs (contract v1.34), read from one worker of the cluster
+  // (the fan-out). A 404 throws, so the fan-out lists the worker as "not
+  // available on this worker" (an older worker, or another backend).
+  getSplitStateAt: (base: string, signal?: AbortSignal, limit?: number) =>
+    getFrom<SplitState>(base, `/debug/split${qs({ limit })}`, signal),
 
   // Debug: kafka read (contract v1.13). Ad-hoc reads of the configured
   // topics by alias (source / dlq / sink instance name) — no consumer-group
