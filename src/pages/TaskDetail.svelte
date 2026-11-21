@@ -9,6 +9,8 @@
   // header.
   import { api, type EventRow } from '../lib/api'
   import { link } from '../lib/router'
+  import { partsBase } from '../lib/capabilities'
+  import { partitionLabel } from '../lib/partitions'
   import { fmtTime, fmtTimeMs, fmtTimeFull, dur3, fmtBytes, safeJsonParse } from '../lib/format'
   import { eventColor, parseAnnotation, statusColor, type TaskStatus } from '../lib/events'
   import { anchorForLabel } from '../lib/docsAnchors'
@@ -234,7 +236,7 @@
       <div class="field">
         <span class="k">Partition</span>
         <span class="v">
-          {vm.partition ?? '-'}
+          {vm.partition != null ? partitionLabel(vm.partition, $partsBase) : '-'}
         </span>
       </div>
     {/if}
@@ -284,7 +286,7 @@
     <div class="chips">
       {#each vm.sourceOffsets as off}
         <span class="chip">
-          <a href={`/debug#trace/${vm.partition}/${off}`} use:link>{vm.partition}:{off}</a>
+          <a href={`/debug#trace/${vm.partition}/${off}`} use:link>{partitionLabel(vm.partition, $partsBase)}:{off}</a>
           <KafkaIcon partition={vm.partition} offset={off} />
         </span>
       {/each}

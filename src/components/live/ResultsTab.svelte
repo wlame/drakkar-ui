@@ -9,6 +9,8 @@
   import { link } from '../../lib/router'
   import { fmtTime, fmtTimeMs, durSec, fmtLatency } from '../../lib/format'
   import { baseTaskId, groupRowKey, messageKey, type GroupResultView } from '../../lib/live'
+  import { partsBase } from '../../lib/capabilities'
+  import { partitionLabel } from '../../lib/partitions'
   import KafkaIcon from '../KafkaIcon.svelte'
   import SidePanel from '../SidePanel.svelte'
 
@@ -99,7 +101,7 @@
               {#if r.task_id}<a href={`/task/${encodeURIComponent(baseTaskId(r.task_id))}`} use:link onclick={(e) => e.stopPropagation()} style:color="#9333ea">{r.task_id}</a>{/if}
             </td>
             <td class="mono">
-              {#if r.partition != null}P{r.partition}{#if r.source_offsets?.length}:{r.source_offsets[0]}{#if r.source_offsets.length > 1}+{r.source_offsets.length - 1}{/if}<KafkaIcon partition={r.partition} offset={r.source_offsets[0]} />{/if}{/if}
+              {#if r.partition != null}P{partitionLabel(r.partition, $partsBase)}{#if r.source_offsets?.length}:{r.source_offsets[0]}{#if r.source_offsets.length > 1}+{r.source_offsets.length - 1}{/if}<KafkaIcon partition={r.partition} offset={r.source_offsets[0]} />{/if}{/if}
             </td>
             <td class="num mono">{durSec(r.exec_duration)}</td>
             <td class="num mono">{durSec(r.hook_duration)}</td>
@@ -112,7 +114,7 @@
           <tr class="clickable" class:sel={openKey === `${r.ts}:${r.offset}`} onclick={() => openSink(`${r.ts}:${r.offset}`, r.partition, r.offset != null ? [r.offset] : [])}>
             <td class="muted nowrap" title={fmtTimeMs(r.ts)}>{fmtTime(r.ts)}</td>
             <td class="mono">
-              {#if r.partition != null && r.offset != null}P{r.partition}:{r.offset}<KafkaIcon partition={r.partition} offset={r.offset} />{/if}
+              {#if r.partition != null && r.offset != null}P{partitionLabel(r.partition, $partsBase)}:{r.offset}<KafkaIcon partition={r.partition} offset={r.offset} />{/if}
             </td>
             <td class="num mono">{durSec(r.duration)}</td>
             <td class="num mono">{fmtLatency(r.end_to_end_duration)}</td>
@@ -126,7 +128,7 @@
           <tr>
             <td class="muted nowrap" title={fmtTimeMs(r.ts)}>{fmtTime(r.ts)}</td>
             <td class="mono">
-              {#if r.partition != null && r.offset != null}P{r.partition}:{r.offset}<KafkaIcon partition={r.partition} offset={r.offset} />{/if}
+              {#if r.partition != null && r.offset != null}P{partitionLabel(r.partition, $partsBase)}:{r.offset}<KafkaIcon partition={r.partition} offset={r.offset} />{/if}
             </td>
             <td class="num mono">{r.group_index ?? '-'}</td>
             <td class="num mono">{durSec(r.duration)}</td>
@@ -139,7 +141,7 @@
         {#each windowRows as r, i (`${r.ts}:${r.partition}:${r.window_id}:${i}`)}
           <tr>
             <td class="muted nowrap" title={fmtTimeMs(r.ts)}>{fmtTime(r.ts)}</td>
-            <td class="num mono">{r.partition ?? '-'}</td>
+            <td class="num mono">{r.partition != null ? partitionLabel(r.partition, $partsBase) : '-'}</td>
             <td class="num mono">{r.window_id ?? '-'}</td>
             <td class="num mono">{durSec(r.duration)}</td>
             <td class="num mono">{r.task_count}</td>

@@ -111,6 +111,24 @@ describe('WorkerSwitcher detached mark', () => {
   })
 })
 
+describe('WorkerSwitcher split mark', () => {
+  it('marks a split worker only for true', async () => {
+    workersPayload = [
+      worker({ worker_name: 'worker-a', is_current: true, split: true }),
+      worker({ worker_name: 'worker-b', url: 'http://worker-b:8080/', split: true }),
+      worker({ worker_name: 'worker-c', url: 'http://worker-c:8080/', split: false }),
+      worker({ worker_name: 'worker-d', url: 'http://worker-d:8080/', split: null }),
+    ]
+    const { target, cleanup } = await openMenu()
+
+    expect(item(target, 'worker-a').querySelector('.split')?.textContent).toBe('split')
+    expect(item(target, 'worker-b').querySelector('.split')?.textContent).toBe('split')
+    expect(item(target, 'worker-c').querySelector('.split')).toBeNull()
+    expect(item(target, 'worker-d').querySelector('.split')).toBeNull()
+    cleanup()
+  })
+})
+
 describe('WorkerSwitcher liveness', () => {
   it('renders peers without the v1.18 fields exactly as before (no offline chrome)', async () => {
     workersPayload = [

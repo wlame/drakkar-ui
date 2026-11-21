@@ -6,6 +6,8 @@
   import { link } from '../../lib/router'
   import { fmtTimeMs, dur3 } from '../../lib/format'
   import { durationColor } from '../../lib/events'
+  import { partsBase } from '../../lib/capabilities'
+  import { partitionLabel } from '../../lib/partitions'
   import {
     baseTaskId,
     annotationsForArrange,
@@ -149,7 +151,7 @@
       {#each shown as a, i (`${a.ts}:${a.partition}:${a.window_id}`)}
         {@const c = counts(a)}
         <tr class="clickable" class:sel={openIdx === i} onclick={() => (openIdx = i)}>
-          <td class="num mono">{a.partition}</td>
+          <td class="num mono">{partitionLabel(a.partition, $partsBase)}</td>
           <td class="num mono">{a.message_count}</td>
           <td class="mono">
             {#if c.done}<span style:color="#059669">{c.done}</span>{/if}
@@ -169,7 +171,7 @@
 
 {#if selected}
   <SidePanel
-    title={`Partition ${selected.partition} · ${fmtTimeMs(selected.ts)}`}
+    title={`Partition ${partitionLabel(selected.partition, $partsBase)} · ${fmtTimeMs(selected.ts)}`}
     storageKey="drakkar-panel-live-arrange"
     defaultWidth={24}
     onclose={() => (openIdx = null)}

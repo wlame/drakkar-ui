@@ -93,6 +93,8 @@
   import { getLinkBases } from '../../lib/enrich'
   import { anchorForEvent } from '../../lib/docsAnchors'
   import BookIcon from '../BookIcon.svelte'
+  import { partsBase } from '../../lib/capabilities'
+  import { partitionLabel } from '../../lib/partitions'
 
   let {
     tasks = [],
@@ -1164,7 +1166,7 @@
       return `${t.client_name ?? '-'}:${rid}`
     }
     const off = t.source_offsets?.length ? t.source_offsets[0] : '-'
-    return `p${t.partition ?? '-'}:o${off}`
+    return `p${t.partition != null ? partitionLabel(t.partition, $partsBase) : '-'}:o${off}`
   }
   function statusColor(s: string): string {
     return s === 'completed' ? '#059669' : s === 'failed' ? '#dc2626' : '#d97706'
@@ -1534,7 +1536,7 @@
       {#if hovered.origin === 'http'}
         <span class="hl">Origin:</span><span class="hv" style:color="#9C27B0">http</span>
       {:else}
-        <span class="hl">P:</span><span class="hv">{hovered.partition ?? '-'}</span>
+        <span class="hl">P:</span><span class="hv">{hovered.partition != null ? partitionLabel(hovered.partition, $partsBase) : '-'}</span>
       {/if}
       <span class="hl">Status:</span><span class="hv" style:color={statusColor(hovered.status)}
         >{hovered.status}</span
