@@ -183,6 +183,15 @@ export interface DocsConfig {
 // config_summary is the one-line worker config string the reference debug
 // page shows in its banner. The v1.2 fields are optional: older backends
 // omit them and the UI degrades gracefully.
+/** v1.34: split mode of the worker. The three keys are null when disabled. */
+export interface SplitCapability {
+  enabled: boolean
+  parts_topic: string | null
+  results_topic: string | null
+  // Added to a parts partition in metric labels, logs and recorder rows.
+  parts_partition_base: number | null
+}
+
 /** v1.28: what the worker runs. Absent on older backends: treat all as on. */
 export interface Capabilities {
   recorder?: {
@@ -193,6 +202,8 @@ export interface Capabilities {
   memory?: { enabled?: boolean; window_seconds?: number; max_rows?: number }
   autodiscover?: { enabled?: boolean; provider?: string | null }
   cache_exchange?: boolean
+  // v1.34: a missing key means OFF (the one capability where absence is not on).
+  split?: SplitCapability
 }
 
 export interface Identity {
@@ -257,6 +268,8 @@ export interface WorkerPeer {
   // v1.33, from the card's features.kafka.detached: true while the worker is
   // detached from its consumer group. Absent or null means unknown.
   detached?: boolean | null
+  // v1.34, from the card's features.split. Absent or null means unknown.
+  split?: boolean | null
 }
 
 // --- Events (recorder rows) ---
@@ -1486,4 +1499,64 @@ export interface AgentDiagnose {
   findings: AgentFinding[]
   checked: string[]
   failed: { rule: string; error: string }[]
+}
+
+// --- Debug: split jobs (contract v1.34) ---
+
+// Where an open split job is, decided in this order by the owner.
+export type SplitPhase = 'splitting' | 'waiting' | 'waiting_message' | 'ending'
+
+// One source partition followed by the worker's job tracker.
+export interface SplitPartition {
+  partition: number
+  state: 'restoring' | 'live'
+  state_seconds: number
+  // Next results-log offset to read.
+  read_position: number | null
+  // null while restoring: the table is still being rebuilt.
+  open_jobs: number | null
+  closed_jobs: number | null
+}
+
+// One open job of a live partition.
+export interface SplitJob {
+  partition: number
+  offset: number
+  request_id: string | null
+  attempt: number
+  phase: SplitPhase
+  // null until the split of the current attempt is done.
+  parts: number | null
+  received: number
+  failed: number
+  dlq_parts: number
+  tasks_succeeded: number
+  tasks_failed: number
+  opened_at: string
+  age_seconds: number
+  last_progress_at: string | null
+  // The earlier of the two timeouts that apply; null when none applies.
+  timeout_at: string | null
+  timeout_kind: 'job' | 'idle' | null
+}
+
+// GET /api/v1/debug/split. A backend without the feature answers 404; the UI
+// hides the split views then, and when `enabled` is false.
+export interface SplitState {
+  enabled: boolean
+  worker: { name: string; instance: string }
+  source_topic: string | null
+  consumer_group: string | null
+  parts_topic: string | null
+  results_topic: string | null
+  parts_partition_base: number | null
+  settings: {
+    job_timeout_seconds: number
+    idle_timeout_seconds: number
+    max_attempts: number
+  } | null
+  partitions: SplitPartition[]
+  jobs: SplitJob[]
+  jobs_total: number
+  result_write_failures_total: number
 }
