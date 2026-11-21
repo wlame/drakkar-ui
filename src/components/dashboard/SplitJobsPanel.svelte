@@ -94,7 +94,9 @@
         </p>
       {/if}
 
-      {#if rows.length === 0}
+      {#if !view.answered}
+        <p class="muted">No answer yet</p>
+      {:else if rows.length === 0}
         <p class="muted">No open split jobs.</p>
       {:else}
         <div class="scroll">

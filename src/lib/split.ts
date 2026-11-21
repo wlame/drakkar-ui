@@ -52,7 +52,10 @@ export type SplitRow = SplitJob & { owners: string[]; reportedBy: string }
 export type SplitHealth = 'failed_parts' | 'near_timeout'
 
 export interface SplitSummary {
+  // Open jobs of the cluster, counted from each worker's `jobs_total`.
   openJobs: number
+  // Job rows shown; less than `openJobs` when a worker cut its list.
+  shownJobs: number
   partsLeft: number
   oldestAgeSeconds: number | null
   restoring: { worker: string; partition: number; seconds: number }[]
@@ -69,6 +72,8 @@ export interface SplitView {
   unanswered: Unreachable[]
   // A worker of the cluster splits (its card or its answer says so).
   anySplit: boolean
+  // At least one round of this loop succeeded; until then there is no answer.
+  answered: boolean
 }
 
 /** The delay before the next round. */
@@ -147,8 +152,14 @@ export function splitSummary(
   const writeFailures = results
     .filter(({ state }) => state.result_write_failures_total > 0)
     .map(({ worker, state }) => ({ worker, count: state.result_write_failures_total }))
+  // A worker answers at most `limit` jobs; the rest are counted, not shown.
+  const cut = results.reduce(
+    (sum, { state }) => sum + Math.max(0, state.jobs_total - state.jobs.length),
+    0,
+  )
   return {
-    openJobs: rows.length,
+    openJobs: rows.length + cut,
+    shownJobs: rows.length,
     partsLeft,
     oldestAgeSeconds: rows.length ? Math.max(...rows.map((r) => r.age_seconds)) : null,
     restoring,
@@ -166,6 +177,9 @@ function plural(count: number, one: string, many: string): string {
 export function summaryText(summary: SplitSummary): string {
   const pieces = [
     plural(summary.openJobs, 'open job', 'open jobs'),
+    ...(summary.shownJobs < summary.openJobs
+      ? [`showing ${summary.shownJobs} of ${summary.openJobs}`]
+      : []),
     `${summary.partsLeft} parts left`,
   ]
   if (summary.oldestAgeSeconds !== null)
@@ -328,7 +342,12 @@ async function readWorkers(): Promise<WorkerPeer[]> {
 function roundFailed(unanswered: Unreachable[]) {
   failedRounds += 1
   const last = get(splitView)
-  splitView.set({ results: last?.results ?? [], unanswered, anySplit: last?.anySplit ?? false })
+  splitView.set({
+    results: last?.results ?? [],
+    unanswered,
+    anySplit: last?.anySplit ?? false,
+    answered: last?.answered ?? false,
+  })
   if (failedRounds >= SPLIT_STALE_AFTER_FAILED_ROUNDS && lastGoodRoundMs !== null) {
     splitStaleSince.set(lastGoodRoundMs)
   }
@@ -367,7 +386,7 @@ async function round(gen: number): Promise<void> {
   lastGoodRoundMs = Date.now()
   failedRounds = 0
   splitStaleSince.set(null)
-  splitView.set({ results, unanswered, anySplit })
+  splitView.set({ results, unanswered, anySplit, answered: true })
 }
 
 // A skipped round (a hidden tab) is tried again at the fast pace, so the

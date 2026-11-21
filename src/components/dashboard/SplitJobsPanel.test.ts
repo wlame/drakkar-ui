@@ -53,6 +53,7 @@ function view(overrides: Partial<SplitView> = {}): SplitView {
     results: [{ worker: 'worker-1', base: '', state: splitState() }],
     unanswered: [],
     anySplit: true,
+    answered: true,
     ...overrides,
   }
 }
@@ -89,6 +90,39 @@ describe('SplitJobsPanel', () => {
   it('shows when this worker splits, before the first answer', () => {
     const target = render({ view: null, splitOn: true })
     expect(target.querySelector('.split-jobs')).not.toBeNull()
+  })
+
+  it('says no answer yet when no round has succeeded', () => {
+    const target = render({
+      view: view({
+        results: [],
+        unanswered: [{ worker: 'worker-1', reason: 'timed out' }],
+        answered: false,
+      }),
+      splitOn: true,
+    })
+    expect(target.textContent).toContain('No answer yet')
+    expect(target.textContent).not.toContain('No open split jobs.')
+  })
+
+  it('says no open jobs after a good round with no jobs', () => {
+    const target = render({
+      view: view({
+        results: [{ worker: 'worker-1', base: '', state: splitState({ jobs: [], jobs_total: 0 }) }],
+      }),
+    })
+    expect(target.textContent).toContain('No open split jobs.')
+  })
+
+  it('shows how many jobs a cut list hides', () => {
+    const target = render({
+      view: view({
+        results: [{ worker: 'worker-1', base: '', state: splitState({ jobs_total: 5 }) }],
+      }),
+    })
+    expect(target.querySelector('.split-summary')?.textContent).toContain(
+      '5 open jobs · showing 1 of 5',
+    )
   })
 
   it('shows the summary line', () => {
