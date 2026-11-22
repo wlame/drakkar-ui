@@ -297,3 +297,18 @@ describe('debugDatabasesAt parts (v1.30)', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('getSplitStateAt (v1.34)', () => {
+  it('reads the split state of a worker, with the limit when given', async () => {
+    fetchMock.mockResolvedValue(okJson({ enabled: false }))
+    await api.getSplitStateAt('http://w-2:8080', undefined, 50)
+    expect(call().url).toBe('http://w-2:8080/api/v1/debug/split?limit=50')
+    await api.getSplitStateAt('')
+    expect(call(1).url).toBe('/api/v1/debug/split')
+  })
+
+  it('throws on a 404, so the fan-out lists the worker as not available', async () => {
+    fetchMock.mockResolvedValueOnce(httpError(404, 'Not Found'))
+    await expect(api.getSplitStateAt('http://w-2:8080')).rejects.toThrow('HTTP 404')
+  })
+})

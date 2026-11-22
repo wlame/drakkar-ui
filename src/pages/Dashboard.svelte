@@ -18,6 +18,8 @@
   import TimelineStats from '../components/live/TimelineStats.svelte'
   import PartitionsTable from '../components/dashboard/PartitionsTable.svelte'
   import SinksTable from '../components/dashboard/SinksTable.svelte'
+  import SplitJobsPanel from '../components/dashboard/SplitJobsPanel.svelte'
+  import { splitStaleSince, splitView, useSplitState } from '../lib/split'
 
   let { params: _params = {} }: { params?: Record<string, string> } = $props()
 
@@ -148,6 +150,10 @@
     return COLOR.emerald
   }
 
+  // The split jobs panel polls the whole cluster on its own shared loop
+  // (5 s, or 60 s while no worker splits), apart from this page's tick.
+  onMount(() => useSplitState())
+
   onMount(() => {
     // Fill the page at once, then let the scheduler take over the cadence.
     reloadAll()
@@ -181,6 +187,10 @@
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
   </a>
 {/snippet}
+
+<!-- First under the heading: an operator must see at once whether split jobs
+     run and whether one is stuck. Outside the summary guard, like the tables. -->
+<SplitJobsPanel view={$splitView} staleSince={$splitStaleSince} splitOn={$isSplitOn} />
 
 {#if errors.dashboard}
   <p class="error">Could not load the worker summary: <code>{errors.dashboard}</code></p>
