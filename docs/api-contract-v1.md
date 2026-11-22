@@ -3503,6 +3503,170 @@ and no `worker-detached` rule. The UI then shows no detach control, no
 banner and no mark. A UI older than v1.33 shows the two new rows as
 uncategorised events.
 
+## v1.34 changes (2026-11-21)
+
+A worker can run in **split mode**: the owner of a Kafka source partition
+turns one large message into parts, every worker of the consumer group runs
+parts, and the owner aggregates the results before the source offset commits.
+This version lets the UI show it. It adds one key on `capabilities`, one
+optional key on `Worker` rows, one key on the registry card, one read-only
+route, and two reserved task labels.
+
+The feature is currently Python only (third parity pause): the Go backend
+does not serve the route, sends no `capabilities.split`, publishes no
+`features.split` and stamps no split labels. A client MUST hide every split
+control when `GET /api/v1/debug/split` answers 404, and when `enabled` is
+false.
+
+"Split is enabled" means the same everywhere below (the capability, the card
+key, the labels, the route): `split.enabled` is true and the handler defines
+`split`.
+
+### `capabilities.split` in `GET /api/v1/identity`
+
+```json
+"split": {"enabled": true, "parts_topic": "orders_g1_split_parts", "results_topic": "orders_g1_split_results", "parts_partition_base": 1000000}
+```
+
+`enabled` is true when split is enabled (rule above). With it false, the
+three other keys are `null`. `parts_partition_base` is the number the worker
+adds to a parts partition in metric labels, log fields and recorder rows; a
+client uses it, not a constant, to show such a partition as `parts <n -
+base>`.
+
+**A missing `split` key means off**, not on. This is the one exception to the
+rule that a missing capability key means on (v1.28): a feature added in this
+version cannot be assumed on by a worker older than v1.34 or by the Go
+backend.
+
+### `split` on `Worker` rows and the card key `features.split`
+
+The registry card gets `features.split` only when split is enabled:
+`{"parts_topic": "...", "results_topic": "..."}`. It is absent otherwise.
+Cards without it read as "no split" on every reader.
+
+Rows of `GET /api/v1/workers` gain optional `split` (boolean or null), copied
+from the card like `detached` (v1.33): `true` with `features.split`, `false`
+for a card that has `features` and no `split`, `null` when unknown (a card
+with no `features`). A missing key or null means unknown. A client shows a
+"split" mark only for `true`.
+
+### `GET /api/v1/debug/split`
+
+A UI route: it needs `api.enabled` and `ui.enabled` and follows
+`ui.auth_token`, like every other `/api/v1/debug` route. It is read-only and
+reads no Kafka: everything comes from the worker's memory. It always answers
+`200 SplitState` when the main loop answers, also with the feature off
+(`enabled: false` and empty lists), as `GET /api/v1/debug/detach` does.
+
+Query parameter `limit`: an integer from 1 to 500, default 100, the most jobs
+in the answer. A bad value answers `400` in the validation envelope.
+
+`503 {"detail": "the main loop did not answer in time"}` when the main loop
+does not answer within 5 s.
+
+```
+SplitState = {
+  enabled: bool,
+  worker: {name: str, instance: str},
+  source_topic: str|null, consumer_group: str|null,
+  parts_topic: str|null, results_topic: str|null,
+  parts_partition_base: int|null,
+  settings: {job_timeout_seconds: number, idle_timeout_seconds: number,
+             max_attempts: int}|null,
+  partitions: [SplitPartition],
+  jobs: [SplitJob],
+  jobs_total: int,
+  result_write_failures_total: int
+}
+SplitPartition = {
+  partition: int, state: "restoring"|"live", state_seconds: number,
+  read_position: int|null, open_jobs: int|null, closed_jobs: int|null
+}
+SplitJob = {
+  partition: int, offset: int, request_id: str|null, attempt: int,
+  phase: "splitting"|"waiting"|"waiting_message"|"ending",
+  parts: int|null, received: int, failed: int, dlq_parts: int,
+  tasks_succeeded: int, tasks_failed: int,
+  opened_at: str, age_seconds: number,
+  last_progress_at: str|null,
+  timeout_at: str|null, timeout_kind: "job"|"idle"|null
+}
+```
+
+Rules:
+
+- `partitions` lists every source partition the worker's job tracker
+  follows, sorted by number. `state` is `restoring` or `live`;
+  `state_seconds` is the time in that state. `read_position` is the next
+  results-log offset to read, or `null`. `closed_jobs` counts closed jobs
+  that are not retired yet. A `restoring` partition has `open_jobs` and
+  `closed_jobs` `null`: its table is still being rebuilt and its counts are
+  partial.
+- `jobs` lists the open jobs of the `live` partitions, oldest `opened_at`
+  first, at most `limit`; `jobs_total` is the count before the cut. There is
+  no cursor: per worker the number of open jobs is small.
+- `parts` is `null` until `split-done` of the current attempt. `received`
+  counts parts that have a result; `failed` the failed parts; `dlq_parts`
+  the parts that went to the DLQ.
+- `phase`, decided in this order (the first that applies): `ending` (the
+  owner ends the job: the hook, the final deliveries, the `closed` write and
+  its read-back); `splitting` (the current attempt has no `split-done`);
+  `waiting_message` (a restored job whose source message has not arrived
+  yet); `waiting` (everything else: parts are out, results are coming).
+- `timeout_at` and `timeout_kind` give the earlier of the two timeouts that
+  apply (`job` or `idle`); both are `null` when no timeout applies (a
+  complete job, both timeouts off, or the idle timeout before `split-done`).
+- `result_write_failures_total` is this worker's count since its start.
+- `source_topic`, `consumer_group` and the other topic keys are `null` with
+  the feature off; `settings` is `null` then too.
+- Datetimes use the canonical format `YYYY-MM-DDTHH:MM:SS.ffffffZ`.
+- With the feature off: `enabled: false`, the topics and `settings` `null`,
+  the lists empty, `jobs_total` and `result_write_failures_total` 0.
+
+A client MUST show an unknown `phase`, `state` or `timeout_kind` as it is.
+
+### Closed sets
+
+| Set | Values |
+|---|---|
+| `SplitJob.phase` | `splitting`, `waiting`, `waiting_message`, `ending` |
+| `SplitPartition.state` | `restoring`, `live` |
+| `SplitJob.timeout_kind` | `job`, `idle` |
+
+### Reserved task labels
+
+Every task of a worker with split enabled gets two labels from the
+framework. A value the handler set is kept.
+
+| Task of | `split_job` | `split_part` |
+|---|---|---|
+| a part | `<source partition>:<source offset>` of the original message | the part number, from 0 |
+| a local message (one that ran in place) | `<partition>:<offset>` of the message | `local` |
+
+Tasks of a worker without split get neither. The labels are stored and shown
+like any label, so the timeline, the task page and trace by label see them:
+`split_job=7:500` finds every task of that job on every worker.
+
+### Cross-origin reads
+
+`GET /api/v1/debug/split` joins the cross-origin read paths of v1.23
+(`trace`, `trace-by-label`, `databases`): it answers `OPTIONS` and `GET` with
+the same origin rule as `/ws` (`ui.allowed_origins`), and the preflight needs
+no token. The UI fans it out to every same-cluster worker that is not
+offline, and shows the workers that did not answer.
+
+### Absence (normative)
+
+A backend older than v1.34, and the Go backend for now, answers 404 on
+`/api/v1/debug/split`, sends no `capabilities.split` (which means off), sends
+no `split` on `Worker` rows, publishes no `features.split` and stamps no
+`split_job` or `split_part` label. The UI then shows no split mark, no split
+panel and no split labels, and lists such a worker as "not available" in the
+panel when another worker of the cluster splits. A client MUST show a worker
+that did not answer, with the reason, and keep the other workers' rows. A
+client older than v1.34 shows the two labels as ordinary labels.
+
 ## Appendix: divergence resolutions from the 2026-06 audit
 
 Canonical choices where the two reference backends disagreed; each backend
