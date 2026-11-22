@@ -3656,6 +3656,34 @@ the same origin rule as `/ws` (`ui.allowed_origins`), and the preflight needs
 no token. The UI fans it out to every same-cluster worker that is not
 offline, and shows the workers that did not answer.
 
+### Agent surface
+
+- `GET /api/v1/agent/state` gains the part `split`, placed after `detach`
+  and before `recent_failures` in the list of parts (and in the values of the
+  `parts` parameter):
+
+  ```
+  "split": {"enabled": bool, "open_jobs": int,
+            "oldest_job_age_seconds": number,
+            "nearest_timeout_seconds_left": number|null,
+            "nearest_timeout_seconds": number|null,
+            "restoring_partitions": [{"partition": int, "seconds": number}],
+            "result_write_failures_total": int}
+  ```
+
+  With split off it is `enabled: false` with zeros, `null` timeouts and an
+  empty list. `nearest_timeout_seconds_left` is the time left (it can be
+  negative) of the open job closest to its near-timeout threshold, and
+  `nearest_timeout_seconds` is the full timeout that applies to that job
+  (`split.job_timeout`, or `split.idle_timeout` after the split finished);
+  both are `null` when no open job has a timeout. The part is read on the
+  main loop, so it is `null` when the main loop does not answer in time.
+- The diagnose rules grow from 14 to 16, both with severity `warning`:
+  `split-job-near-timeout` (the time left of the nearest job is less than
+  10 % of its timeout or less than 300 seconds) and
+  `split-partition-restoring` (a partition has been restoring for more than
+  120 seconds; exactly 120 does not fire).
+
 ### Absence (normative)
 
 A backend older than v1.34, and the Go backend for now, answers 404 on
