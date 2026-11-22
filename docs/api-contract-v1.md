@@ -3560,7 +3560,7 @@ reads no Kafka: everything comes from the worker's memory. It always answers
 (`enabled: false` and empty lists), as `GET /api/v1/debug/detach` does.
 
 Query parameter `limit`: an integer from 1 to 500, default 100, the most jobs
-in the answer. A bad value answers `400` in the validation envelope.
+in the answer. A bad value answers `422` in the validation envelope.
 
 `503 {"detail": "the main loop did not answer in time"}` when the main loop
 does not answer within 5 s.
