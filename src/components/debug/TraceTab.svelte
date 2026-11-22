@@ -10,6 +10,7 @@
   import { onMount } from 'svelte'
   import { api, type TraceEvent } from '../../lib/api'
   import { link, setHash } from '../../lib/router'
+  import { traceLabelHash } from '../../lib/splitLabels'
   import { fmtTimeMs, dur3, safeJsonParse } from '../../lib/format'
   import { eventColor, durationColor, parseAnnotation } from '../../lib/events'
   import { baseTaskId } from '../../lib/live'
@@ -20,7 +21,13 @@
   import { historySearchOn } from '../../lib/capabilities'
   import { fanOut, fanOutTargets, type FanOutTarget, type Unreachable } from '../../lib/fanout'
 
-  let { prefill = null }: { prefill?: { partition: number; offset: number } | null } = $props()
+  let {
+    prefill = null,
+    labelPrefill = null,
+  }: {
+    prefill?: { partition: number; offset: number } | null
+    labelPrefill?: { key: string; value: string } | null
+  } = $props()
 
   let inputVal = $state('')
   let statusMsg = $state('')
@@ -168,7 +175,10 @@
 
   async function runLabelTrace(key: string, value: string) {
     if (!value) return
+    labelVals[key] = value
+    lastRun = `label:${key}=${value}`
     statusMsg = `tracing ${key}=${value}…`
+    setHash(traceLabelHash(key, value), { replace: true })
     const seq = ++searchSeq
     try {
       const ev = await fanOutRows((t, signal) => api.debugTraceByLabelAt(t.base, key, value, signal), seq)
@@ -218,6 +228,15 @@
     if (key === lastRun) return
     lastRun = key
     runTrace(prefill.partition, prefill.offset)
+  })
+
+  // Honour an incoming label deep-link once per (key, value).
+  $effect(() => {
+    if (!labelPrefill) return
+    const key = `label:${labelPrefill.key}=${labelPrefill.value}`
+    if (key === lastRun) return
+    lastRun = key
+    runLabelTrace(labelPrefill.key, labelPrefill.value)
   })
 
   onMount(async () => {

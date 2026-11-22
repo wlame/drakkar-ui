@@ -94,7 +94,8 @@
   import { anchorForEvent } from '../../lib/docsAnchors'
   import BookIcon from '../BookIcon.svelte'
   import { partsBase } from '../../lib/capabilities'
-  import { partitionLabel } from '../../lib/partitions'
+  import { partitionLabel, prefixedPartitionLabel } from '../../lib/partitions'
+  import { splitTaskKind, traceLabelHash } from '../../lib/splitLabels'
 
   let {
     tasks = [],
@@ -1166,7 +1167,8 @@
       return `${t.client_name ?? '-'}:${rid}`
     }
     const off = t.source_offsets?.length ? t.source_offsets[0] : '-'
-    return `p${t.partition != null ? partitionLabel(t.partition, $partsBase) : '-'}:o${off}`
+    const part = t.partition != null ? prefixedPartitionLabel(t.partition, $partsBase, 'p') : 'p-'
+    return `${part}:o${off}`
   }
   function statusColor(s: string): string {
     return s === 'completed' ? '#059669' : s === 'failed' ? '#dc2626' : '#d97706'
@@ -1240,6 +1242,8 @@
     {#each ruleLegend as entry}
       <i style:background={entry.color} title={entry.label} aria-label={entry.label}></i>
     {/each}
+    <i class="split-part" title="part of a split job" aria-label="part of a split job"></i>
+    <i class="split-local" title="run in place (split job)" aria-label="run in place (split job)"></i>
   </div>
   <div class="roles" bind:this={gearEl}>
     <button
@@ -1492,6 +1496,8 @@
             class="bar"
             class:emph={b.emph}
             class:dim={b.dim}
+            class:split-part={splitTaskKind(b.task.labels) === 'part'}
+            class:split-local={splitTaskKind(b.task.labels) === 'local'}
             href={`${taskUrlBase}/task/${encodeURIComponent(baseTaskId(b.task.task_id))}`}
             use:link
             style:left={`${b.left}px`}
@@ -1567,6 +1573,13 @@
       {/if}
       {#if hovered.stdout_size}
         <span class="hl">Stdout:</span><span class="hv stdout-ok">{fmtStdout(hovered)}</span>
+      {/if}
+      {#if hovered.labels?.split_job}
+        <br />
+        <span class="hl">Split job:</span><span class="hv">{hovered.labels.split_job}</span>
+        <a class="split-trace" href={`/debug${traceLabelHash('split_job', hovered.labels.split_job)}`} use:link
+          >trace</a
+        >
       {/if}
       {#if hovered.labels && Object.keys(hovered.labels).length}
         <br />
@@ -1856,6 +1869,42 @@
     z-index: 2;
     overflow: hidden;
   }
+  /* Split jobs. A part task is striped, a task run in place has a double
+     inset ring; both are drawn over the bar's own color (a pseudo-element, so
+     the status or rule color underneath is unchanged) with a dark and a light
+     layer, so they read on light and dark themes alike. */
+  .bar.split-part::after,
+  .legend i.split-part::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+      135deg,
+      rgba(0, 0, 0, 0.35) 0 3px,
+      rgba(255, 255, 255, 0.35) 3px 6px
+    );
+  }
+  .bar.split-local::after,
+  .legend i.split-local::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    box-shadow:
+      inset 0 0 0 1px #ffffff,
+      inset 0 0 0 3px #1f2937;
+  }
+  .legend i.split-part,
+  .legend i.split-local {
+    position: relative;
+    background: #9ca3af;
+    overflow: hidden;
+  }
+  .split-trace {
+    margin-left: 0.5rem;
+  }
+
   /* Highlight/filter result. Neither class is applied while every toolbar
      input is empty, so an untouched timeline is unaffected. */
   .bar.emph {
