@@ -173,9 +173,19 @@
     runTrace(parsed[0], parsed[1])
   }
 
+  // The loaded keys, plus the key of a deep-link even when the worker does not
+  // list it (or the list has not arrived yet), so its input is always there.
+  const shownLabelKeys = $derived(
+    labelPrefill && !labelKeys.includes(labelPrefill.key)
+      ? [labelPrefill.key, ...labelKeys]
+      : labelKeys,
+  )
+
   async function runLabelTrace(key: string, value: string) {
     if (!value) return
     labelVals[key] = value
+    // Set before setHash: the hash change feeds the prefill effect, which
+    // would otherwise run this same search a second time.
     lastRun = `label:${key}=${value}`
     statusMsg = `tracing ${key}=${value}…`
     setHash(traceLabelHash(key, value), { replace: true })
@@ -266,9 +276,9 @@
   </p>
 {/if}
 
-{#if labelKeys.length}
+{#if shownLabelKeys.length}
   <div class="labels">
-    {#each labelKeys as k}
+    {#each shownLabelKeys as k}
       <div class="label-row">
         <span class="label-name mono">{k}</span>
         <input

@@ -14,6 +14,14 @@ export function splitTaskKind(
   return /^\d+$/.test(value) ? 'part' : null
 }
 
+const LABEL_KEY_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/
+const FORBIDDEN_LABEL_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+
+/** A label key safe to use as an object key and in a link. */
+function isPlainLabelKey(key: string): boolean {
+  return LABEL_KEY_PATTERN.test(key) && !FORBIDDEN_LABEL_KEYS.has(key)
+}
+
 const TRACE_LABEL_PREFIX = '#trace-label/'
 
 /** The Trace tab link for a label search; the value is URL-encoded. */
@@ -30,7 +38,7 @@ export function parseTraceLabelHash(fragment: string): { key: string; value: str
   try {
     const key = decodeURIComponent(rest.slice(0, eq))
     const value = decodeURIComponent(rest.slice(eq + 1))
-    return value ? { key, value } : null
+    return value && isPlainLabelKey(key) ? { key, value } : null
   } catch {
     return null
   }

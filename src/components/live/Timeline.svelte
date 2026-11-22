@@ -213,6 +213,21 @@
     hoveredCluster = { decl, members }
   }
 
+  // A bar's detail carries a trace link for split jobs, so leaving a bar also
+  // waits the grace period: the pointer can travel into the strip and click.
+  function holdBarHover(task: TaskView) {
+    cancelEventHoverClear()
+    hovered = task
+  }
+
+  function releaseBarHover() {
+    cancelEventHoverClear()
+    eventHoverClearTimer = setTimeout(() => {
+      eventHoverClearTimer = undefined
+      hovered = null
+    }, EVENT_HOVER_GRACE_MS)
+  }
+
   // The pointer (or the keyboard) reached the strip: hold what it describes
   // until it leaves again, which clears at once — there is nowhere further to
   // travel from there.
@@ -223,6 +238,7 @@
   function leaveHoverStrip() {
     cancelEventHoverClear()
     hoveredEvent = null
+    hovered = null
   }
 
   // A pending clear must not outlive the component.
@@ -1505,8 +1521,8 @@
             style:width={`${b.width}px`}
             style:background={b.color}
             style:color={b.textColor}
-            onmouseenter={() => (hovered = b.task)}
-            onmouseleave={() => (hovered = null)}
+            onmouseenter={() => holdBarHover(b.task)}
+            onmouseleave={releaseBarHover}
             aria-label={b.task.task_id}
           >
             {#if b.caption}<span class="bar-caption">{b.caption}</span>{/if}

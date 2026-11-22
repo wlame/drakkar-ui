@@ -32,3 +32,12 @@ describe('trace label hash', () => {
     },
   )
 })
+
+describe('parseTraceLabelHash keys', () => {
+  it.each(['__proto__', 'constructor', 'prototype', 'a b', 'k%2Fx', 'x'.repeat(129)])(
+    'refuses the key %s',
+    (key) => {
+      expect(parseTraceLabelHash(`#trace-label/${key}=v`)).toBeNull()
+    },
+  )
+})

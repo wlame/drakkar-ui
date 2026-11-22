@@ -385,4 +385,22 @@ describe('TraceTab label deep-link', () => {
     unmount(app)
     target.remove()
   })
+
+  it('shows an input for a prefill key the worker does not list', async () => {
+    const { fetchMock } = stubFetch()
+    vi.stubGlobal('fetch', fetchMock)
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+    const app = mount(TraceTab, {
+      target,
+      props: { prefill: null, labelPrefill: { key: 'split_job', value: '7:500' } },
+    })
+    await settled()
+
+    expect(target.querySelector('.label-name')?.textContent).toBe('split_job')
+    const input = target.querySelector<HTMLInputElement>('.label-row input')!
+    expect(input.value).toBe('7:500')
+    unmount(app)
+    target.remove()
+  })
 })
