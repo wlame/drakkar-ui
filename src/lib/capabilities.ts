@@ -24,6 +24,20 @@ export function isRecorderOff(caps: Capabilities | null | undefined): boolean {
   return caps?.recorder?.enabled === false
 }
 
+/**
+ * True only when split mode is explicitly on. Unlike the other checks, a
+ * missing key means off (contract v1.34).
+ */
+export function isSplitEnabled(caps: Capabilities | null | undefined): boolean {
+  return caps?.split?.enabled === true
+}
+
+/** The number added to a parts partition, or null when split is off. */
+export function splitPartsBase(caps: Capabilities | null | undefined): number | null {
+  if (!isSplitEnabled(caps)) return null
+  return caps?.split?.parts_partition_base ?? null
+}
+
 function describeSeconds(seconds: number): string {
   if (seconds % 60 === 0) {
     const minutes = seconds / 60
@@ -50,3 +64,5 @@ export const capabilities: Readable<Capabilities | null> = derived(
 export const autodiscoverOn: Readable<boolean> = derived(capabilities, isAutodiscoverOn)
 export const historySearchOn: Readable<boolean> = derived(capabilities, isHistorySearchOn)
 export const memoryNote: Readable<string | null> = derived(capabilities, memoryWindowNote)
+export const isSplitOn: Readable<boolean> = derived(capabilities, isSplitEnabled)
+export const partsBase: Readable<number | null> = derived(capabilities, splitPartsBase)

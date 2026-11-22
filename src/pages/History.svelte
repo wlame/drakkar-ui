@@ -12,7 +12,8 @@
   import { api, type EventRow } from '../lib/api'
   import { link } from '../lib/router'
   import { runtimeConfig } from '../lib/config'
-  import { memoryNote } from '../lib/capabilities'
+  import { memoryNote, partsBase } from '../lib/capabilities'
+  import { partitionLabel } from '../lib/partitions'
   import { fmtTime, fmtTimeMs, dur2 } from '../lib/format'
   import { eventColor, EVENT_TYPES } from '../lib/events'
   import KafkaIcon from '../components/KafkaIcon.svelte'
@@ -182,7 +183,7 @@
         <tr>
           <td class="muted nowrap" title={fmtTimeMs(e.ts)}>{fmtTime(e.ts)}</td>
           <td><span class="evt" style:color={eventColor(e.event)}>{e.event}</span></td>
-          <td class="num mono">{e.partition ?? ''}</td>
+          <td class="num mono">{e.partition != null ? partitionLabel(e.partition, $partsBase) : ''}</td>
           <td class="num mono">
             {#if e.offset != null && e.partition != null && e.partition >= 0}
               <a href={`/debug#trace/${e.partition}/${e.offset}`} use:link>{e.offset}</a>

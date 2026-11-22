@@ -10,6 +10,8 @@
   import { COLOR } from '../../lib/events'
   import { NO_SORT, sortRows, type SortAccessor } from '../../lib/sort'
   import SortableTh from '../SortableTh.svelte'
+  import { partsBase } from '../../lib/capabilities'
+  import { partitionLabel } from '../../lib/partitions'
 
   let { rows, error = null }: { rows: Partition[] | null; error?: string | null } = $props()
 
@@ -70,7 +72,7 @@
     <tbody>
       {#each sortRows(rows, sort, ACCESSORS) as p (p.partition)}
         <tr>
-          <td class="mono">{p.partition}</td>
+          <td class="mono">{partitionLabel(p.partition, $partsBase)}</td>
           <td>
             <span class="dot" class:live={p.is_live}></span>
             <span class="muted">{p.is_live ? 'live' : 'history'}</span>

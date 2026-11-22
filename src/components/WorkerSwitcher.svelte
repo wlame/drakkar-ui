@@ -128,6 +128,9 @@
             {#if w.is_current}
               <div class="item current">
                 <span class="mono">{w.worker_name || '?'}</span>
+                {#if w.split === true}
+                  <span class="tag split" title="Runs the parts of split jobs">split</span>
+                {/if}
                 {#if isDetached(w)}
                   <span class="tag detached" title="Outside its consumer group: leaving it, away, or returning to it">detached</span>
                 {/if}
@@ -152,6 +155,9 @@
                 {/each}
                 {#if !w.debug_url && w.ip_address && w.debug_port}
                   <span class="addr">{w.ip_address}:{w.debug_port}</span>
+                {/if}
+                {#if w.split === true}
+                  <span class="tag split" title="Runs the parts of split jobs">split</span>
                 {/if}
                 {#if isDetached(w)}
                   <span class="tag detached" title="Outside its consumer group: leaving it, away, or returning to it">detached</span>
@@ -234,6 +240,9 @@
     color: #9ca3af;
   }
   /* v1.33: a worker outside its consumer group, in the pause amber. */
+  .tag.split {
+    color: #93c5fd;
+  }
   .tag.detached {
     color: #fcd34d;
   }

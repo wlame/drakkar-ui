@@ -4,8 +4,11 @@ import {
   isAutodiscoverOn,
   isHistorySearchOn,
   isRecorderOff,
+  isSplitEnabled,
   memoryWindowNote,
+  splitPartsBase,
 } from './capabilities'
+import type { Capabilities } from './types'
 
 describe('capability checks without capabilities', () => {
   it.each([null, undefined, {}])('treat %j as everything on', (caps) => {
@@ -45,5 +48,26 @@ describe('capability checks with explicit values', () => {
     expect(
       memoryWindowNote({ recorder: { enabled: true }, memory: { window_seconds: 120 } }),
     ).toBeNull()
+  })
+})
+
+describe('split capability', () => {
+  it('is off when the key is missing, unlike the other capabilities', () => {
+    expect(isSplitEnabled(null)).toBe(false)
+    expect(isSplitEnabled({} as Capabilities)).toBe(false)
+    expect(splitPartsBase({} as Capabilities)).toBeNull()
+  })
+
+  it('is on only when enabled, and gives the parts base', () => {
+    const on = {
+      split: { enabled: true, parts_topic: 'p', results_topic: 'r', parts_partition_base: 1000000 },
+    } as Capabilities
+    expect(isSplitEnabled(on)).toBe(true)
+    expect(splitPartsBase(on)).toBe(1000000)
+    const off = {
+      split: { enabled: false, parts_topic: null, results_topic: null, parts_partition_base: null },
+    } as Capabilities
+    expect(isSplitEnabled(off)).toBe(false)
+    expect(splitPartsBase(off)).toBeNull()
   })
 })

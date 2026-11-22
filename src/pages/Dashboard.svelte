@@ -7,6 +7,7 @@
   import { onMount } from 'svelte'
   import { api, type Dashboard, type Partition, type SinkStatus } from '../lib/api'
   import { identity } from '../lib/config'
+  import { isSplitOn } from '../lib/capabilities'
   import { fmtTime, fmtUptime } from '../lib/format'
   import { COLOR } from '../lib/events'
   import { normalizeRecentTasks, taskFromRecent, type TaskView } from '../lib/live'
@@ -171,7 +172,7 @@
   {#if since !== null}<span class="stale">stale since {fmtTime(since)}</span>{/if}
 {/snippet}
 
-<h1>Dashboard {@render staleMark(staleSince.dashboard)}</h1>
+<h1>Dashboard {@render staleMark(staleSince.dashboard)}{#if $isSplitOn} <span class="split-mode" title="This worker runs the parts of split jobs">split mode</span>{/if}</h1>
 
 <!-- Tiny external-link arrow shown next to a stat-tile label when the backend
      provides a Prometheus URL for it. -->
@@ -285,6 +286,15 @@
 <SinksTable rows={sinks} error={errors.sinks} />
 
 <style>
+  .split-mode {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #1d4ed8;
+    background: #dbeafe;
+    border-radius: 4px;
+    padding: 0.1rem 0.4rem;
+    vertical-align: middle;
+  }
   /* Stale marker: small, muted, normal weight so it never competes with the
      heading it hangs off. */
   .stale {
