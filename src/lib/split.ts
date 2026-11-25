@@ -27,8 +27,10 @@ export const SPLIT_STALE_AFTER_FAILED_ROUNDS = 2
 export const RESTORING_LIMIT_SECONDS = 120
 /** A job is near its timeout with less time left than this share of the timeout... */
 export const NEAR_TIMEOUT_SHARE = 0.1
-/** ...or than this many seconds, whichever is larger. */
+/** ...or than this many seconds, whichever is larger... */
 export const NEAR_TIMEOUT_MIN_SECONDS = 300
+/** ...but never more than this share of the timeout. */
+export const NEAR_TIMEOUT_MAX_SHARE = 0.25
 /** The label the backend stamps on every task of a split job. */
 export const SPLIT_JOB_LABEL = 'split_job'
 /** The reason of a worker whose answer is not a split state (a proxy page, say). */
@@ -191,9 +193,16 @@ function timeoutSeconds(job: SplitJob, settings: SplitState['settings']): number
 }
 
 /**
- * The health marks of a job: failed parts, and less time left than 10 % of
- * its timeout or 300 s (the near-timeout rule of the diagnose surface).
+ * The time left, in seconds, below which a job with this timeout is near it:
+ * min(max(10 % of the timeout, 300 s), 25 % of the timeout), the threshold of
+ * the diagnose rule `split-job-near-timeout`.
  */
+export function nearTimeoutThreshold(timeoutSeconds: number): number {
+  const floored = Math.max(NEAR_TIMEOUT_SHARE * timeoutSeconds, NEAR_TIMEOUT_MIN_SECONDS)
+  return Math.min(floored, NEAR_TIMEOUT_MAX_SHARE * timeoutSeconds)
+}
+
+/** The health marks of a job: failed parts, and less time left than the near-timeout threshold. */
 export function jobHealth(
   row: SplitRow,
   settings: SplitState['settings'],
@@ -203,11 +212,7 @@ export function jobHealth(
   if (row.failed > 0) marks.push('failed_parts')
   const left = timeLeftSeconds(row, nowMs)
   const timeout = timeoutSeconds(row, settings)
-  if (
-    left !== null &&
-    timeout !== null &&
-    left < Math.max(NEAR_TIMEOUT_SHARE * timeout, NEAR_TIMEOUT_MIN_SECONDS)
-  ) {
+  if (left !== null && timeout !== null && left < nearTimeoutThreshold(timeout)) {
     marks.push('near_timeout')
   }
   return marks
