@@ -323,10 +323,16 @@ function roundFailed(unanswered: Unreachable[]) {
   }
 }
 
+// True when every worker of the round answered 404: a cluster without the
+// route is a good round with no rows. One timeout, unreachable worker or
+// unreadable answer among them makes it a failed round.
+function everyWorkerLacksTheRoute(unanswered: Unreachable[]): boolean {
+  return unanswered.length > 0 && unanswered.every(isNotAvailable)
+}
+
 // One round over the cluster. A worker whose answer cannot be read is listed
-// with a reason. The round fails when no worker answered with a split state
-// and none answered 404 (workers without the route give a good round with no
-// rows, not an outage).
+// with a reason. The round fails when no worker answered with a split state,
+// unless every worker answered 404.
 async function round(gen: number): Promise<void> {
   const workers = await readWorkers()
   if (gen !== generation) return
@@ -342,7 +348,7 @@ async function round(gen: number): Promise<void> {
     }
     results.push({ worker: r.worker || r.value.worker.name, base: r.base, state: r.value })
   }
-  if (results.length === 0 && !answer.unreachable.some(isNotAvailable)) {
+  if (results.length === 0 && !everyWorkerLacksTheRoute(unanswered)) {
     roundFailed(unanswered)
     return
   }

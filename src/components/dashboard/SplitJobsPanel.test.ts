@@ -208,3 +208,19 @@ describe('SplitJobsPanel and workers without the split route', () => {
     expect(target.querySelector('.split-marks')).toBeNull()
   })
 })
+
+describe('SplitJobsPanel with no worker that has the route', () => {
+  it('is hidden after a round where every worker answered 404', () => {
+    const target = render({
+      view: view({
+        results: [],
+        unanswered: [
+          { worker: 'worker-1', reason: 'not available on this worker' },
+          { worker: 'worker-2', reason: 'not available on this worker' },
+        ],
+        anySplit: false,
+      }),
+    })
+    expect(target.querySelector('.split-jobs')).toBeNull()
+  })
+})
