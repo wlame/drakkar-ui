@@ -11,7 +11,7 @@ import { get, writable } from 'svelte/store'
 import { api } from './api'
 import { isSplitOn } from './capabilities'
 import { sameClusterPeers } from './cluster'
-import { fanOut, fanOutTargets, type Unreachable } from './fanout'
+import { NOT_AVAILABLE_REASON, fanOut, fanOutTargets, type Unreachable } from './fanout'
 import { fmtUptime } from './format'
 import { traceLabelHash } from './splitLabels'
 import { isHidden } from './visibility'
@@ -31,6 +31,8 @@ export const NEAR_TIMEOUT_SHARE = 0.1
 export const NEAR_TIMEOUT_MIN_SECONDS = 300
 /** The label the backend stamps on every task of a split job. */
 export const SPLIT_JOB_LABEL = 'split_job'
+/** The reason of a worker whose answer is not a split state (a proxy page, say). */
+export const MALFORMED_ANSWER_REASON = 'the answer cannot be read'
 
 /** One worker's answer. `base` is its origin ('' for the page's own worker). */
 export interface SplitWorkerState {
@@ -39,8 +41,11 @@ export interface SplitWorkerState {
   state: SplitState
 }
 
-/** One open job of the cluster, with every worker that reports it. */
-export type SplitRow = SplitJob & { owners: string[] }
+/**
+ * One open job of the cluster, with every worker that reports it.
+ * `reportedBy` is the worker whose report supplies the row's numbers.
+ */
+export type SplitRow = SplitJob & { owners: string[]; reportedBy: string }
 
 export type SplitHealth = 'failed_parts' | 'near_timeout'
 
@@ -49,7 +54,10 @@ export interface SplitSummary {
   partsLeft: number
   oldestAgeSeconds: number | null
   restoring: { worker: string; partition: number; seconds: number }[]
+  // Workers that did not answer, or whose answer cannot be read.
   unanswered: Unreachable[]
+  // Workers without the split route (a 404: an older release or another backend).
+  notAvailable: string[]
   writeFailures: { worker: string; count: number }[]
 }
 
@@ -94,11 +102,16 @@ export function mergeSplitJobs(results: { worker: string; state: SplitState }[])
       const key = jobKey(job)
       const known = rows.get(key)
       if (!known) {
-        rows.set(key, { ...job, owners: [worker] })
+        rows.set(key, { ...job, owners: [worker], reportedBy: worker })
         continue
       }
       const owners = [...known.owners, worker]
-      rows.set(key, job.received > known.received ? { ...job, owners } : { ...known, owners })
+      rows.set(
+        key,
+        job.received > known.received
+          ? { ...job, owners, reportedBy: worker }
+          : { ...known, owners },
+      )
     }
   }
   return [...rows.values()]
@@ -107,6 +120,11 @@ export function mergeSplitJobs(results: { worker: string; state: SplitState }[])
       (a, b) =>
         a.opened_at.localeCompare(b.opened_at) || a.partition - b.partition || a.offset - b.offset,
     )
+}
+
+/** True for a worker that answered 404: it has no split route. */
+export function isNotAvailable(entry: Unreachable): boolean {
+  return entry.reason === NOT_AVAILABLE_REASON
 }
 
 /** The numbers of the summary line and the worker-level health marks. */
@@ -132,7 +150,8 @@ export function splitSummary(
     partsLeft,
     oldestAgeSeconds: rows.length ? Math.max(...rows.map((r) => r.age_seconds)) : null,
     restoring,
-    unanswered: unreachable,
+    unanswered: unreachable.filter((u) => !isNotAvailable(u)),
+    notAvailable: unreachable.filter(isNotAvailable).map((u) => u.worker),
     writeFailures,
   }
 }
@@ -206,12 +225,57 @@ export function progressPercent(job: SplitJob): number | null {
   return Math.min(100, Math.floor((job.received / job.parts) * 100))
 }
 
-/** The answer of the first owner of a row (for its partition base and topic). */
+/** The answer that supplies the row's numbers (for its partition base, settings and topic). */
 export function ownerState(
   row: SplitRow,
   results: SplitWorkerState[],
 ): SplitWorkerState | undefined {
-  return results.find((r) => row.owners.includes(r.worker))
+  return results.find((r) => r.worker === row.reportedBy)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isSplitJob(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.partition === 'number' &&
+    typeof value.offset === 'number' &&
+    typeof value.attempt === 'number' &&
+    typeof value.received === 'number' &&
+    typeof value.failed === 'number' &&
+    typeof value.age_seconds === 'number' &&
+    typeof value.opened_at === 'string' &&
+    (value.parts === null || typeof value.parts === 'number')
+  )
+}
+
+function isSplitPartition(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.partition === 'number' &&
+    typeof value.state === 'string' &&
+    typeof value.state_seconds === 'number'
+  )
+}
+
+/**
+ * True when an answer has the fields the panel reads. Anything else (a proxy
+ * page, an empty object) counts as a worker that did not answer.
+ */
+export function isSplitState(value: unknown): value is SplitState {
+  return (
+    isRecord(value) &&
+    typeof value.enabled === 'boolean' &&
+    isRecord(value.worker) &&
+    typeof value.worker.name === 'string' &&
+    typeof value.result_write_failures_total === 'number' &&
+    Array.isArray(value.jobs) &&
+    value.jobs.every(isSplitJob) &&
+    Array.isArray(value.partitions) &&
+    value.partitions.every(isSplitPartition)
+  )
 }
 
 /** True when a worker of the cluster splits, by its card or by its answer. */
@@ -248,29 +312,40 @@ async function readWorkers(): Promise<WorkerPeer[]> {
   }
 }
 
-// One round over the cluster. It fails when no worker answered: the last rows
-// stay, with the new list of workers that did not answer.
+// A failed round: the last rows stay, with the new list of workers that did
+// not answer; the second failed round in a row marks the rows stale.
+function roundFailed(unanswered: Unreachable[]) {
+  failedRounds += 1
+  const last = get(splitView)
+  splitView.set({ results: last?.results ?? [], unanswered, anySplit: last?.anySplit ?? false })
+  if (failedRounds >= SPLIT_STALE_AFTER_FAILED_ROUNDS && lastGoodRoundMs !== null) {
+    splitStaleSince.set(lastGoodRoundMs)
+  }
+}
+
+// One round over the cluster. A worker whose answer cannot be read is listed
+// with a reason. The round fails when no worker answered with a split state
+// and none answered 404 (workers without the route give a good round with no
+// rows, not an outage).
 async function round(gen: number): Promise<void> {
   const workers = await readWorkers()
   if (gen !== generation) return
   const { targets, unreachable } = fanOutTargets(workers)
-  const answer = await fanOut(targets, (t, signal) => api.getSplitStateAt(t.base, signal))
+  const answer = await fanOut<unknown>(targets, (t, signal) => api.getSplitStateAt(t.base, signal))
   if (gen !== generation) return
+  const results: SplitWorkerState[] = []
   const unanswered = [...unreachable, ...answer.unreachable]
-  if (answer.results.length === 0) {
-    failedRounds += 1
-    const last = get(splitView)
-    splitView.set({ results: last?.results ?? [], unanswered, anySplit: last?.anySplit ?? false })
-    if (failedRounds >= SPLIT_STALE_AFTER_FAILED_ROUNDS && lastGoodRoundMs !== null) {
-      splitStaleSince.set(lastGoodRoundMs)
+  for (const r of answer.results) {
+    if (!isSplitState(r.value)) {
+      unanswered.push({ worker: r.worker, reason: MALFORMED_ANSWER_REASON })
+      continue
     }
+    results.push({ worker: r.worker || r.value.worker.name, base: r.base, state: r.value })
+  }
+  if (results.length === 0 && !answer.unreachable.some(isNotAvailable)) {
+    roundFailed(unanswered)
     return
   }
-  const results = answer.results.map((r) => ({
-    worker: r.worker || r.value.worker.name,
-    base: r.base,
-    state: r.value,
-  }))
   anySplit = anyWorkerSplits(workers, results)
   lastGoodRoundMs = Date.now()
   failedRounds = 0
@@ -288,8 +363,16 @@ function schedule(gen: number) {
 // A hidden tab skips the round and keeps the loop alive.
 async function poll(gen: number) {
   if (gen !== generation) return
-  if (!isHidden()) await round(gen)
-  schedule(gen)
+  try {
+    if (!isHidden()) await round(gen)
+  } catch (error) {
+    // An unexpected error must not end the loop: the round counts as failed,
+    // and the next one is scheduled as usual.
+    console.warn('split jobs round failed', error)
+    if (gen === generation) roundFailed(get(splitView)?.unanswered ?? [])
+  } finally {
+    schedule(gen)
+  }
 }
 
 function forget() {
