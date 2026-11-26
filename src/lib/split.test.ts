@@ -176,9 +176,23 @@ describe('splitSummary', () => {
     expect(summary.oldestAgeSeconds).toBeNull()
   })
 
+  it('counts the jobs a worker cut from its list', () => {
+    const summary = splitSummary(
+      [
+        { worker: 'worker-1', state: splitState({ jobs: [job()], jobs_total: 3 }) },
+        { worker: 'worker-2', state: splitState({ jobs: [job({ offset: 9 })], jobs_total: 1 }) },
+      ],
+      [],
+    )
+    expect(summary.openJobs).toBe(4)
+    expect(summary.shownJobs).toBe(2)
+    expect(summaryText(summary)).toContain('4 open jobs · showing 2 of 4')
+  })
+
   it('reads as one line', () => {
     const text = summaryText({
       openJobs: 2,
+      shownJobs: 2,
       partsLeft: 60,
       oldestAgeSeconds: 600,
       restoring: [{ worker: 'worker-1', partition: 4, seconds: 130 }],
@@ -195,6 +209,7 @@ describe('splitSummary', () => {
     expect(
       summaryText({
         openJobs: 0,
+        shownJobs: 0,
         partsLeft: 0,
         oldestAgeSeconds: null,
         restoring: [],
