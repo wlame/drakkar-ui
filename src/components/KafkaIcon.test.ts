@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushSync, mount, unmount } from 'svelte'
 import KafkaIcon from './KafkaIcon.svelte'
-import { setConfig } from '../lib/config'
+import { identity, setConfig } from '../lib/config'
 import { kafkaReadAvailable, resetKafkaReadProbeForTests } from '../lib/kafkaRead'
 
 type IconProps = { partition: number; offset: number; topic?: string; probeAlias?: string | null }
@@ -39,7 +39,31 @@ describe('KafkaIcon', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     setConfig({ kafkaUiBase: '', kafkaUiCluster: '', kafkaSourceTopic: '' })
+    identity.set(null)
     window.history.replaceState({}, '', '/')
+  })
+
+  it('renders nothing for a partition of the split parts topic', () => {
+    setConfig({
+      kafkaUiBase: 'http://kui:8080',
+      kafkaUiCluster: 'main',
+      kafkaSourceTopic: 'input-events',
+    })
+    kafkaReadAvailable.set(true)
+    identity.set({
+      capabilities: {
+        split: {
+          enabled: true,
+          parts_topic: 'p',
+          results_topic: 'r',
+          parts_partition_base: 1000000,
+        },
+      },
+    } as never)
+    const { target, cleanup } = renderMounted({ partition: 1000003, offset: 41337 })
+    flushSync()
+    expect(target.querySelector('a, button')).toBeNull()
+    cleanup()
   })
 
   it('renders nothing when neither Kafka-UI nor the read API is available', () => {

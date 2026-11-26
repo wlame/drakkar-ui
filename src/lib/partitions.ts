@@ -7,8 +7,16 @@
  * the backend (trace searches, links) keeps the raw number.
  */
 export function partitionLabel(partition: number, base: number | null | undefined): string {
-  if (typeof base === 'number' && partition >= base) return `parts ${partition - base}`
+  if (isPartsPartition(partition, base)) return `parts ${partition - (base as number)}`
   return String(partition)
+}
+
+/**
+ * True for a partition of the internal parts topic. Such a number is not a
+ * partition of the source topic, so no Kafka or probe link may point at it.
+ */
+export function isPartsPartition(partition: number, base: number | null | undefined): boolean {
+  return typeof base === 'number' && base > 0 && partition >= base
 }
 
 /**
