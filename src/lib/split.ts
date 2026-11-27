@@ -102,6 +102,13 @@ export function splitTraceHref(job: Pick<SplitJob, 'partition' | 'offset'>): str
  * job (a short overlap in a rebalance) give one row naming both; the row shows
  * the report with the most results.
  */
+// The later attempt wins (an owner that took the job over knows it), then the
+// report with more results.
+function isNewerReport(job: SplitJob, known: SplitJob): boolean {
+  if (job.attempt !== known.attempt) return job.attempt > known.attempt
+  return job.received > known.received
+}
+
 export function mergeSplitJobs(results: { worker: string; state: SplitState }[]): SplitRow[] {
   const rows = new Map<string, SplitRow>()
   for (const { worker, state } of results) {
@@ -115,9 +122,7 @@ export function mergeSplitJobs(results: { worker: string; state: SplitState }[])
       const owners = [...known.owners, worker]
       rows.set(
         key,
-        job.received > known.received
-          ? { ...job, owners, reportedBy: worker }
-          : { ...known, owners },
+        isNewerReport(job, known) ? { ...job, owners, reportedBy: worker } : { ...known, owners },
       )
     }
   }
@@ -193,17 +198,26 @@ export function summaryText(summary: SplitSummary): string {
   return pieces.join(' · ')
 }
 
-/** Seconds before the job's timeout, or null when no timeout applies. */
-export function timeLeftSeconds(job: SplitJob, nowMs: number = Date.now()): number | null {
+/**
+ * Seconds before the job's timeout, or null when no timeout applies. Read from
+ * the server's values only (the time between the open and the timeout, minus
+ * the age at the answer), so a browser clock that is off changes nothing.
+ */
+export function timeLeftSeconds(job: SplitJob): number | null {
   if (!job.timeout_at) return null
   const at = Date.parse(job.timeout_at)
-  return Number.isNaN(at) ? null : (at - nowMs) / 1000
+  const opened = Date.parse(job.opened_at)
+  if (Number.isNaN(at) || Number.isNaN(opened)) return null
+  return (at - opened) / 1000 - job.age_seconds
 }
 
 /** The timeout that `timeout_at` stands for, in seconds; null when unknown. */
 function timeoutSeconds(job: SplitJob, settings: SplitState['settings']): number | null {
-  if (!settings || !job.timeout_kind) return null
-  return job.timeout_kind === 'idle' ? settings.idle_timeout_seconds : settings.job_timeout_seconds
+  if (!settings) return null
+  if (job.timeout_kind === 'job') return settings.job_timeout_seconds
+  if (job.timeout_kind === 'idle') return settings.idle_timeout_seconds
+  // A kind this release does not know: no timeout, so no mark.
+  return null
 }
 
 /**
@@ -217,14 +231,10 @@ export function nearTimeoutThreshold(timeoutSeconds: number): number {
 }
 
 /** The health marks of a job: failed parts, and less time left than the near-timeout threshold. */
-export function jobHealth(
-  row: SplitRow,
-  settings: SplitState['settings'],
-  nowMs: number = Date.now(),
-): SplitHealth[] {
+export function jobHealth(row: SplitRow, settings: SplitState['settings']): SplitHealth[] {
   const marks: SplitHealth[] = []
   if (row.failed > 0) marks.push('failed_parts')
-  const left = timeLeftSeconds(row, nowMs)
+  const left = timeLeftSeconds(row)
   const timeout = timeoutSeconds(row, settings)
   if (left !== null && timeout !== null && left < nearTimeoutThreshold(timeout)) {
     marks.push('near_timeout')

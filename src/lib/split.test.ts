@@ -96,6 +96,17 @@ describe('mergeSplitJobs', () => {
     expect(ownerState(rows[0], results)?.base).toBe('')
   })
 
+  it('takes the row of the later attempt, even with fewer results', () => {
+    const rows = mergeSplitJobs([
+      { worker: 'worker-1', state: splitState({ jobs: [job({ attempt: 1, received: 90 })] }) },
+      { worker: 'worker-2', state: splitState({ jobs: [job({ attempt: 2, received: 5 })] }) },
+      { worker: 'worker-3', state: splitState({ jobs: [job({ attempt: 1, received: 95 })] }) },
+    ])
+    expect(rows[0].attempt).toBe(2)
+    expect(rows[0].received).toBe(5)
+    expect(rows[0].reportedBy).toBe('worker-2')
+  })
+
   it('orders the rows by opened_at, oldest first', () => {
     const rows = mergeSplitJobs([
       {
@@ -222,7 +233,8 @@ describe('splitSummary', () => {
 })
 
 describe('jobHealth', () => {
-  const now = Date.UTC(2026, 10, 21, 12, 0, 0)
+  // The server's clock at the answer: the default job opened at 10:00 and is 600 s old.
+  const now = Date.UTC(2026, 10, 21, 10, 10, 0)
   const at = (secondsLeft: number) => new Date(now + secondsLeft * 1000).toISOString()
   const settings = (jobTimeout: number) => ({
     job_timeout_seconds: jobTimeout,
@@ -238,35 +250,29 @@ describe('jobHealth', () => {
   it('marks a job with 9 % of its timeout left, not one with 11 %', () => {
     const day = 86400
     expect(
-      jobHealth(row({ timeout_at: at(day * 0.09), timeout_kind: 'job' }), settings(day), now),
+      jobHealth(row({ timeout_at: at(day * 0.09), timeout_kind: 'job' }), settings(day)),
     ).toEqual(['near_timeout'])
     expect(
-      jobHealth(row({ timeout_at: at(day * 0.11), timeout_kind: 'job' }), settings(day), now),
+      jobHealth(row({ timeout_at: at(day * 0.11), timeout_kind: 'job' }), settings(day)),
     ).toEqual([])
   })
 
   it('marks a job with 299 s left, not one with 301 s, by the 300 s floor', () => {
-    expect(
-      jobHealth(row({ timeout_at: at(299), timeout_kind: 'job' }), settings(1800), now),
-    ).toEqual(['near_timeout'])
-    expect(
-      jobHealth(row({ timeout_at: at(301), timeout_kind: 'job' }), settings(1800), now),
-    ).toEqual([])
+    expect(jobHealth(row({ timeout_at: at(299), timeout_kind: 'job' }), settings(1800))).toEqual([
+      'near_timeout',
+    ])
+    expect(jobHealth(row({ timeout_at: at(301), timeout_kind: 'job' }), settings(1800))).toEqual([])
   })
 
   it('caps the threshold at a quarter of a short timeout', () => {
-    expect(
-      jobHealth(row({ timeout_at: at(249), timeout_kind: 'job' }), settings(1000), now),
-    ).toEqual(['near_timeout'])
-    expect(
-      jobHealth(row({ timeout_at: at(251), timeout_kind: 'job' }), settings(1000), now),
-    ).toEqual([])
-    expect(jobHealth(row({ timeout_at: at(70), timeout_kind: 'job' }), settings(300), now)).toEqual(
-      ['near_timeout'],
-    )
-    expect(
-      jobHealth(row({ timeout_at: at(100), timeout_kind: 'job' }), settings(300), now),
-    ).toEqual([])
+    expect(jobHealth(row({ timeout_at: at(249), timeout_kind: 'job' }), settings(1000))).toEqual([
+      'near_timeout',
+    ])
+    expect(jobHealth(row({ timeout_at: at(251), timeout_kind: 'job' }), settings(1000))).toEqual([])
+    expect(jobHealth(row({ timeout_at: at(70), timeout_kind: 'job' }), settings(300))).toEqual([
+      'near_timeout',
+    ])
+    expect(jobHealth(row({ timeout_at: at(100), timeout_kind: 'job' }), settings(300))).toEqual([])
   })
 
   it.each([
@@ -280,20 +286,32 @@ describe('jobHealth', () => {
 
   it('takes the idle timeout for an idle deadline', () => {
     const idle = { job_timeout_seconds: 86400, idle_timeout_seconds: 10000, max_attempts: 3 }
-    expect(jobHealth(row({ timeout_at: at(900), timeout_kind: 'idle' }), idle, now)).toEqual([
+    expect(jobHealth(row({ timeout_at: at(900), timeout_kind: 'idle' }), idle)).toEqual([
       'near_timeout',
     ])
-    expect(jobHealth(row({ timeout_at: at(1100), timeout_kind: 'idle' }), idle, now)).toEqual([])
+    expect(jobHealth(row({ timeout_at: at(1100), timeout_kind: 'idle' }), idle)).toEqual([])
   })
 
   it('marks failed parts, and nothing without a timeout', () => {
-    expect(jobHealth(row({ failed: 2 }), settings(86400), now)).toEqual(['failed_parts'])
-    expect(jobHealth(row({}), null, now)).toEqual([])
+    expect(jobHealth(row({ failed: 2 }), settings(86400))).toEqual(['failed_parts'])
+    expect(jobHealth(row({}), null)).toEqual([])
   })
 
-  it('counts the time left from the timeout time', () => {
-    expect(timeLeftSeconds(job({ timeout_at: at(90) }), now)).toBe(90)
-    expect(timeLeftSeconds(job({ timeout_at: null }), now)).toBeNull()
+  it('counts the time left from the server values only', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(Date.UTC(2030, 0, 1))
+    try {
+      expect(timeLeftSeconds(job({ timeout_at: at(90) }))).toBe(90)
+      expect(timeLeftSeconds(job({ timeout_at: at(-30) }))).toBe(-30)
+      expect(timeLeftSeconds(job({ timeout_at: null }))).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('gives no mark for a timeout kind it does not know', () => {
+    const unknown = row({ timeout_at: at(10), timeout_kind: 'later' as never })
+    expect(jobHealth(unknown, settings(86400))).toEqual([])
   })
 })
 
