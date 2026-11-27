@@ -321,7 +321,7 @@ export const splitView = writable<SplitView | null>(null)
  * Epoch milliseconds of the last good round while no worker answers (two
  * failed rounds in a row); null otherwise. The last rows stay shown.
  */
-export const splitStaleSince = writable<number | null>(null)
+export const splitStaleSinceMs = writable<number | null>(null)
 
 let users = 0
 let lastGoodRoundMs: number | null = null
@@ -359,7 +359,7 @@ function roundFailed(unanswered: Unreachable[]) {
     answered: last?.answered ?? false,
   })
   if (failedRounds >= SPLIT_STALE_AFTER_FAILED_ROUNDS && lastGoodRoundMs !== null) {
-    splitStaleSince.set(lastGoodRoundMs)
+    splitStaleSinceMs.set(lastGoodRoundMs)
   }
 }
 
@@ -395,7 +395,7 @@ async function round(gen: number): Promise<void> {
   anySplit = anyWorkerSplits(workers, results)
   lastGoodRoundMs = Date.now()
   failedRounds = 0
-  splitStaleSince.set(null)
+  splitStaleSinceMs.set(null)
   splitView.set({ results, unanswered, anySplit, answered: true })
 }
 
@@ -465,7 +465,7 @@ function forget() {
   lastGoodRoundMs = null
   failedRounds = 0
   anySplit = false
-  splitStaleSince.set(null)
+  splitStaleSinceMs.set(null)
   splitView.set(null)
 }
 

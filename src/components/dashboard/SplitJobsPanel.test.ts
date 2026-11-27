@@ -213,7 +213,7 @@ describe('SplitJobsPanel', () => {
     })
     const marks = target.querySelector('.split-marks')?.textContent ?? ''
     expect(marks).toContain('worker-1 partition 4 restoring for 2m 10s')
-    expect(marks).toContain('worker-1: 3 result writes failed')
+    expect(marks).toContain('worker-1: 3 result writes failed since start')
   })
 
   it('shows the stale marker with the last rows', () => {

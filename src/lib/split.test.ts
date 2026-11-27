@@ -20,7 +20,7 @@ import {
   progressPercent,
   resetSplitForTests,
   restoringTooLong,
-  splitStaleSince,
+  splitStaleSinceMs,
   splitSummary,
   splitTraceHref,
   splitView,
@@ -394,10 +394,10 @@ describe('the shared poll loop', () => {
     const goodRoundAt = Date.now()
 
     await vi.advanceTimersByTimeAsync(SPLIT_POLL_MS)
-    expect(get(splitStaleSince)).toBeNull()
+    expect(get(splitStaleSinceMs)).toBeNull()
 
     await vi.advanceTimersByTimeAsync(SPLIT_POLL_MS)
-    expect(get(splitStaleSince)).toBe(goodRoundAt)
+    expect(get(splitStaleSinceMs)).toBe(goodRoundAt)
     expect(get(splitView)?.results[0].state.jobs).toHaveLength(1)
     expect(get(splitView)?.unanswered[0]).toEqual({ worker: 'worker-1', reason: 'HTTP 503' })
     leave()
@@ -408,9 +408,9 @@ describe('the shared poll loop', () => {
     serve([good, failure, failure, good])
     const leave = useSplitState()
     await vi.advanceTimersByTimeAsync(SPLIT_POLL_MS * 2)
-    expect(get(splitStaleSince)).not.toBeNull()
+    expect(get(splitStaleSinceMs)).not.toBeNull()
     await vi.advanceTimersByTimeAsync(SPLIT_POLL_MS)
-    expect(get(splitStaleSince)).toBeNull()
+    expect(get(splitStaleSinceMs)).toBeNull()
     leave()
   })
 
@@ -560,7 +560,7 @@ describe('the shared poll loop with peers', () => {
     serve(notFound, notFound)
     const leave = useSplitState()
     await vi.advanceTimersByTimeAsync(SPLIT_POLL_MS * 3)
-    expect(get(splitStaleSince)).toBeNull()
+    expect(get(splitStaleSinceMs)).toBeNull()
     expect(get(splitView)?.results).toEqual([])
     leave()
   })
@@ -743,13 +743,13 @@ describe('failed rounds with workers without the route', () => {
 
     // Round 2 starts at 5 s and times out at 10 s: the first failed round.
     await vi.advanceTimersByTimeAsync(10_500)
-    expect(get(splitStaleSince)).toBeNull()
+    expect(get(splitStaleSinceMs)).toBeNull()
     expect(get(splitView)?.unanswered).toContainEqual({ worker: 'worker-1', reason: 'timed out' })
     expect(get(splitView)?.results).toHaveLength(1)
 
     // Round 3 starts at 15 s and times out at 20 s: the second one.
     await vi.advanceTimersByTimeAsync(10_000)
-    expect(get(splitStaleSince)).not.toBeNull()
+    expect(get(splitStaleSinceMs)).not.toBeNull()
     leave()
   })
 
@@ -771,11 +771,11 @@ describe('failed rounds with workers without the route', () => {
 
     await vi.advanceTimersByTimeAsync(SPLIT_POLL_MS)
     expect(workersCall).toHaveBeenCalledTimes(2)
-    expect(get(splitStaleSince)).toBeNull()
+    expect(get(splitStaleSinceMs)).toBeNull()
 
     await vi.advanceTimersByTimeAsync(SPLIT_POLL_MS)
     expect(workersCall).toHaveBeenCalledTimes(3)
-    expect(get(splitStaleSince)).not.toBeNull()
+    expect(get(splitStaleSinceMs)).not.toBeNull()
     expect(get(splitView)?.results).toHaveLength(1)
     leave()
   })

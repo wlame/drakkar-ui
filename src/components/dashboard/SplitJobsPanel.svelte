@@ -75,7 +75,7 @@
             </li>
           {/each}
           {#each summary.writeFailures as f (f.worker)}
-            <li class="warn">{f.worker}: {f.count} result writes failed</li>
+            <li class="warn">{f.worker}: {f.count} result writes failed since start</li>
           {/each}
         </ul>
       {/if}
