@@ -7,7 +7,7 @@
   import { fmtTimeMs, dur3 } from '../../lib/format'
   import { durationColor } from '../../lib/events'
   import { partsBase } from '../../lib/capabilities'
-  import { partitionLabel } from '../../lib/partitions'
+  import { partitionLabel, prefixedPartitionLabel } from '../../lib/partitions'
   import {
     baseTaskId,
     annotationsForArrange,
@@ -129,7 +129,7 @@
 <div class="bar">
   <select bind:value={partitionFilter}>
     <option value="all">All partitions</option>
-    {#each partitionOptions as p}<option value={p}>P{p}</option>{/each}
+    {#each partitionOptions as p}<option value={p}>{prefixedPartitionLabel(p, $partsBase, 'P')}</option>{/each}
   </select>
   <input placeholder="search labels / offsets / task id" bind:value={searchTerm} />
   <label><input type="checkbox" bind:checked={issuesOnly} /> Issues only</label>
@@ -188,7 +188,7 @@
       <div class="chips">
         {#each selected.offsets as off}
           <span class="chip">
-            <a href={`/debug#trace/${selected.partition}/${off}`} use:link>{selected.partition}:{off}</a>
+            <a href={`/debug#trace/${selected.partition}/${off}`} use:link>{partitionLabel(selected.partition, $partsBase)}:{off}</a>
             <KafkaIcon partition={selected.partition} offset={off} />
           </span>
         {/each}
@@ -202,7 +202,7 @@
           <li>
             <span class="ann-kind mono">{a.kind}</span>
             <span class="ann-scope">{a.scope}</span>
-            {#if a.offset != null}<span class="muted mono">{selected.partition}:{a.offset}</span>{/if}
+            {#if a.offset != null}<span class="muted mono">{partitionLabel(selected.partition, $partsBase)}:{a.offset}</span>{/if}
             {#if a.task_id}<span class="muted mono">{a.task_id}</span>{/if}
             <Expandable text={JSON.stringify(a.data)} title="Click to expand annotation payload" />
           </li>
